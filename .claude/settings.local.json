@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cargo check:*)",
+      "Bash(python3:*)",
+      "Bash(grep -r \"get_config\\\\|update_config\" '/c/Users/rodri/OneDrive/Área de Trabalho/Jogos/iRacerApp V1/src-tauri/src' --include=*.rs)",
+      "Bash(find 'c:\\\\Users\\\\rodri\\\\OneDrive\\\\Área de Trabalho\\\\Jogos\\\\iRacerApp V1/src' -type f \\\\\\(-name *.js -o -name *.jsx -o -name *.ts -o -name *.tsx -o -name *.css -o -name *.json \\\\\\))",
+      "Bash(xargs grep:*)",
+      "Bash(find 'c:/Users/rodri/OneDrive/Área de Trabalho/Jogos/iRacerApp V1' -type f \\\\\\(-name *.md -o -name *.txt -o -name README* \\\\\\))",
+      "Bash(xargs wc:*)",
+      "Bash(cargo test:*)",
+      "Bash(grep -rn \"rivalries\\\\|Rivalry\\\\|rivalry\" 'c:/Users/rodri/OneDrive/Área de Trabalho/Jogos/iRacerApp V1/src-tauri/src' --include=*.rs)",
+      "Bash(cargo build:*)",
+      "Bash(grep -E \"^d|\\\\.py$|\\\\.json$\")",
+      "Bash(for f:*)",
+      "Bash(do echo:*)",
+      "Read(//c/Users/rodri/OneDrive/Área de Trabalho/Jogos/iRacerApp V1/src/pages/history/**)",
+      "Bash(done)",
+      "Bash(find 'c:/Users/rodri/OneDrive/Área de Trabalho/Jogos/iRacerApp V1/src-tauri/src/' -name *.rs -exec wc -l {} +)",
+      "Bash(gh auth:*)"
+    ]
+  }
+}

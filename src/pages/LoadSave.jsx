@@ -1,0 +1,166 @@
+import { useEffect, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { useNavigate } from "react-router-dom";
+
+import GlassButton from "../components/ui/GlassButton";
+import GlassCard from "../components/ui/GlassCard";
+import LoadingOverlay from "../components/ui/LoadingOverlay";
+import SaveCard from "../components/ui/SaveCard";
+import useCareerStore from "../stores/useCareerStore";
+
+function LoadSave() {
+  const navigate = useNavigate();
+  const loadCareer = useCareerStore((state) => state.loadCareer);
+  const [saves, setSaves] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [loadingMessage, setLoadingMessage] = useState("Buscando saves...");
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    loadSaves();
+  }, []);
+
+  async function loadSaves() {
+    setLoading(true);
+    setLoadingMessage("Buscando saves...");
+    setError("");
+
+    try {
+      const loadedSaves = await invoke("list_saves");
+      setSaves(loadedSaves);
+    } catch (invokeError) {
+      setError(
+        typeof invokeError === "string"
+          ? invokeError
+          : "Nao foi possivel carregar a lista de saves.",
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleLoad(careerId) {
+    setLoading(true);
+    setLoadingMessage("Carregando carreira...");
+    setError("");
+
+    try {
+      await loadCareer(careerId);
+      navigate("/dashboard");
+    } catch (invokeError) {
+      setError(
+        typeof invokeError === "string"
+          ? invokeError
+          : "Nao foi possivel abrir a carreira selecionada.",
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleDelete(careerId) {
+    const confirmed = window.confirm(`Tem certeza que deseja deletar ${careerId}?`);
+    if (!confirmed) return;
+
+    setLoading(true);
+    setLoadingMessage("Deletando save...");
+    setError("");
+
+    try {
+      await invoke("delete_career", { careerId });
+      await loadSaves();
+    } catch (invokeError) {
+      setError(
+        typeof invokeError === "string"
+          ? invokeError
+          : "Nao foi possivel deletar a carreira selecionada.",
+      );
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="app-shell px-4 py-6 text-text-primary sm:px-6 lg:px-10">
+      <div className="app-backdrop" />
+
+      <div className="relative mx-auto flex min-h-[calc(100vh-3rem)] max-w-7xl items-center justify-center">
+        <div className="wizard-panel glass-strong w-full overflow-hidden rounded-[32px] p-5 shadow-[0_30px_80px_rgba(0,0,0,0.42)] sm:p-8 lg:p-10">
+          <div className="relative z-10">
+            <div className="flex flex-col gap-6 xl:flex-row xl:items-end xl:justify-between">
+              <div>
+                <p className="text-[11px] uppercase tracking-[0.24em] text-accent-primary">
+                  Carregar carreira
+                </p>
+                <h1 className="mt-3 text-4xl font-semibold tracking-[-0.04em] text-text-primary sm:text-5xl">
+                  Retorne ao paddock.
+                </h1>
+                <p className="mt-4 max-w-2xl text-sm leading-7 text-text-secondary sm:text-base">
+                  Escolha um save existente para continuar sua jornada, revisar o grid e voltar
+                  direto para a próxima corrida.
+                </p>
+              </div>
+
+              <GlassCard
+                hover={false}
+                className="w-full max-w-xs rounded-3xl px-5 py-4 text-sm text-text-secondary"
+              >
+                <p className="text-[10px] uppercase tracking-[0.18em] text-text-muted">
+                  Biblioteca de saves
+                </p>
+                <p className="mt-2 text-base font-semibold text-text-primary">
+                  {saves.length} carreira{saves.length === 1 ? "" : "s"}
+                </p>
+                <p className="mt-1">Cada save abre direto no dashboard atual.</p>
+              </GlassCard>
+            </div>
+
+            {error ? (
+              <div className="mt-6 rounded-2xl border border-status-red/40 bg-status-red/10 px-4 py-3 text-sm text-status-red">
+                {error}
+              </div>
+            ) : null}
+
+            <div className="mt-8 space-y-4">
+              {saves.length === 0 && !loading ? (
+                <GlassCard hover={false} className="rounded-[28px] p-12 text-center">
+                  <div className="mb-4 text-6xl">🏎️</div>
+                  <h3 className="text-2xl font-semibold text-text-primary">
+                    Nenhuma carreira encontrada
+                  </h3>
+                  <p className="mt-3 text-sm text-text-secondary">
+                    Crie sua primeira carreira para começar a preencher o paddock.
+                  </p>
+                  <div className="mt-8">
+                    <GlassButton variant="primary" onClick={() => navigate("/new-career")}>
+                      Nova Carreira
+                    </GlassButton>
+                  </div>
+                </GlassCard>
+              ) : (
+                saves.map((save) => (
+                  <SaveCard
+                    key={save.career_id}
+                    save={save}
+                    loading={loading}
+                    onLoad={handleLoad}
+                    onDelete={handleDelete}
+                  />
+                ))
+              )}
+            </div>
+
+            <div className="mt-8 flex justify-start border-t border-white/10 pt-6">
+              <GlassButton variant="secondary" onClick={() => navigate("/menu")}>
+                Voltar ao menu
+              </GlassButton>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <LoadingOverlay open={loading} title="Gerenciando saves" message={loadingMessage} />
+    </div>
+  );
+}
+
+export default LoadSave;

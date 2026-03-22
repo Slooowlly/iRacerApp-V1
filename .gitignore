@@ -1,0 +1,36 @@
+# Node
+node_modules/
+dist/
+.env
+.env.local
+
+# Rust / Tauri
+src-tauri/target/
+src-tauri/target-verify/
+src-tauri/*.db
+src-tauri/*.db-wal
+src-tauri/*.db-shm
+
+# Tauri build outputs
+src-tauri/gen/
+
+# SQLite
+*.db
+*.db-wal
+*.db-shm
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Career saves (dados do jogador, não sobem ao repo)
+app_data/

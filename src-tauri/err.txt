@@ -1,0 +1,42 @@
+﻿cargo :    Compiling iracing-career-simulator 
+v0.1.0 (C:\Users\rodri\OneDrive\├ürea de 
+Trabalho\Jogos\iRacerApp V1\src-tauri)
+No linha:1 caractere:1
++ cargo check 2>&1 | out-file -encoding utf8 
+err.txt
++ ~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (  
+     Compiling ir...p V1\src-tauri):String) [  
+  ], RemoteException
+    + FullyQualifiedErrorId : NativeCommandErr 
+   or
+ 
+error[E0609]: no field `difficulty` on type 
+`app_config::AppConfig`
+   --> src\commands\career.rs:234:12
+    |
+234 |     config.difficulty = 
+meta.difficulty.clone();
+    |            ^^^^^^^^^^ unknown field
+    |
+    = note: available fields are: `version`, 
+`last_career`, `language`, `autosave_enabled`, 
+`window_width` ... and 5 others
+
+error[E0609]: no field `difficulty` on type 
+`app_config::AppConfig`
+   --> src\commands\career.rs:576:12
+    |
+576 |     config.difficulty = 
+meta.difficulty.clone();
+    |            ^^^^^^^^^^ unknown field
+    |
+    = note: available fields are: `version`, 
+`last_career`, `language`, `autosave_enabled`, 
+`window_width` ... and 5 others
+
+For more information about this error, try 
+`rustc --explain E0609`.
+error: could not compile 
+`iracing-career-simulator` (lib) due to 2 
+previous errors
