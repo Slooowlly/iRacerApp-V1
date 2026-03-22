@@ -11,7 +11,7 @@
 body {
   background-color: #0E0E10;
   color: #e6edf3;
-  font-family: 'Segoe UI', system-ui, sans-serif;
+  font-family: 'Space Grotesk Variable', 'Segoe UI', system-ui, sans-serif;
   font-size: 10px;
   overflow: hidden;
   user-select: none;
@@ -338,13 +338,13 @@ body {
 }
 
 .num-highlight {
-  font-family: 'Consolas', monospace;
+  font-family: 'Space Grotesk Variable', 'Segoe UI', system-ui, sans-serif;
   font-size: 22px;
   font-weight: 700;
 }
 
 .num-medium {
-  font-family: 'Consolas', monospace;
+  font-family: 'Space Grotesk Variable', 'Segoe UI', system-ui, sans-serif;
   font-size: 16px;
   font-weight: 700;
 }

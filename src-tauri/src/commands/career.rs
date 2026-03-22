@@ -275,6 +275,8 @@ pub(crate) fn load_career_in_base_dir(
             clima: race.clima.as_str().to_string(),
             duracao_corrida_min: race.duracao_corrida_min,
             status: race.status.as_str().to_string(),
+            temperatura: race.temperatura,
+            horario: race.horario.clone(),
         }),
         total_drivers,
         total_teams,
@@ -1682,6 +1684,8 @@ pub(crate) fn get_calendar_for_category_in_base_dir(
             clima: race.clima.as_str().to_string(),
             duracao_corrida_min: race.duracao_corrida_min,
             status: race.status.as_str().to_string(),
+            temperatura: race.temperatura,
+            horario: race.horario.clone(),
         })
         .collect())
 }

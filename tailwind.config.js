@@ -43,8 +43,8 @@ export default {
         },
       },
       fontFamily: {
-        sans: ['Segoe UI', 'system-ui', 'sans-serif'],
-        mono: ['Consolas', 'monospace'],
+        sans: ['Space Grotesk Variable', 'Segoe UI', 'system-ui', 'sans-serif'],
+        mono: ['Space Grotesk Variable', 'Segoe UI', 'system-ui', 'sans-serif'],
       },
       fontSize: {
         'title-lg': ['18px', { lineHeight: '1.3', fontWeight: '700' }],

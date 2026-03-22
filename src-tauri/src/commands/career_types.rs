@@ -108,6 +108,8 @@ pub struct RaceSummary {
     pub clima: String,
     pub duracao_corrida_min: i32,
     pub status: String,
+    pub temperatura: f64,
+    pub horario: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

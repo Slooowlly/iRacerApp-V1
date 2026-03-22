@@ -275,42 +275,56 @@ function StandingsTab() {
           </div>
 
           <div className="mt-6 space-y-2">
-            {teamStandings.map((team, index) => (
-              <div
-                key={team.id}
-                className="flex items-center justify-between rounded-2xl border border-white/6 bg-white/[0.03] px-4 py-3 transition-glass hover:bg-white/[0.05]"
-              >
-                <div className="flex min-w-0 items-center gap-3">
-                  <span className={["w-7 text-center text-sm font-semibold", podiumClass(index)].join(" ")}>
-                    {team.posicao}
-                  </span>
-                  <span
-                    className="h-8 w-2 rounded-full border border-white/10"
-                    style={{ backgroundColor: team.cor_primaria }}
-                  />
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-1.5">
-                      <p
-                        className="truncate text-sm font-semibold"
-                        style={{ color: getReadableTeamColor(team.cor_primaria) }}
-                      >
-                        {team.nome}
-                      </p>
-                      {(team.trofeus ?? []).map((trofeu, trophyIndex) => (
-                        <TrophyBadge key={`${team.id}-t${trophyIndex}`} trofeu={trofeu} />
-                      ))}
+            {(() => {
+              const { promotionCount, relegationCount } = getZoneCutoffs(playerTeam?.categoria);
+              const total = teamStandings.length;
+              const items = [];
+              teamStandings.forEach((team, index) => {
+                if (index === promotionCount && promotionCount > 0) {
+                  items.push(<ZoneDivider key="divider-promo" label="PROMOÇÃO ↑" variant="green" />);
+                }
+                if (relegationCount > 0 && index === total - relegationCount) {
+                  items.push(<ZoneDivider key="divider-relego" label="REBAIXAMENTO ↓" variant="red" />);
+                }
+                items.push(
+                  <div
+                    key={team.id}
+                    className="flex items-center justify-between rounded-2xl border border-white/6 bg-white/[0.03] px-4 py-3 transition-glass hover:bg-white/[0.05]"
+                  >
+                    <div className="flex min-w-0 items-center gap-3">
+                      <span className={["w-7 text-center text-sm font-semibold", podiumClass(index)].join(" ")}>
+                        {team.posicao}
+                      </span>
+                      <span
+                        className="h-8 w-2 rounded-full border border-white/10"
+                        style={{ backgroundColor: team.cor_primaria }}
+                      />
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <p
+                            className="truncate text-sm font-semibold"
+                            style={{ color: getReadableTeamColor(team.cor_primaria) }}
+                          >
+                            {team.nome}
+                          </p>
+                          {(team.trofeus ?? []).map((trofeu, trophyIndex) => (
+                            <TrophyBadge key={`${team.id}-t${trophyIndex}`} trofeu={trofeu} />
+                          ))}
+                        </div>
+                        <p className="truncate text-xs text-text-secondary">
+                          {team.piloto_1_nome ?? "—"} / {team.piloto_2_nome ?? "—"}
+                        </p>
+                      </div>
                     </div>
-                    <p className="truncate text-xs text-text-secondary">
-                      {team.piloto_1_nome ?? "—"} / {team.piloto_2_nome ?? "—"}
-                    </p>
+                    <div className="pl-4 text-right">
+                      <p className="font-mono text-base font-semibold text-text-primary">{team.pontos}</p>
+                      <p className="text-xs text-text-secondary">{team.vitorias} vit.</p>
+                    </div>
                   </div>
-                </div>
-                <div className="pl-4 text-right">
-                  <p className="font-mono text-base font-semibold text-text-primary">{team.pontos}</p>
-                  <p className="text-xs text-text-secondary">{team.vitorias} vit.</p>
-                </div>
-              </div>
-            ))}
+                );
+              });
+              return items;
+            })()}
           </div>
         </GlassCard>
       </div>
@@ -423,6 +437,30 @@ function pointsForResult(result) {
   }
 
   return STANDARD_POINTS[result.position] ?? 0;
+}
+
+function getZoneCutoffs(categoria) {
+  if (categoria === "mazda_rookie" || categoria === "toyota_rookie") {
+    return { promotionCount: 1, relegationCount: 0 };
+  }
+  if (categoria === "endurance_elite") {
+    return { promotionCount: 0, relegationCount: 1 };
+  }
+  return { promotionCount: 1, relegationCount: 1 };
+}
+
+function ZoneDivider({ label, variant }) {
+  const colorClass = variant === "green" ? "text-status-green border-status-green/30" : "text-status-red border-status-red/30";
+  const lineClass = variant === "green" ? "border-status-green/20" : "border-status-red/20";
+  return (
+    <div className="flex items-center gap-3 py-1">
+      <div className={["flex-1 border-t border-dashed", lineClass].join(" ")} />
+      <span className={["text-[10px] font-semibold uppercase tracking-[0.18em] px-2 py-0.5 rounded border", colorClass].join(" ")}>
+        {label}
+      </span>
+      <div className={["flex-1 border-t border-dashed", lineClass].join(" ")} />
+    </div>
+  );
 }
 
 function PositionDelta({ delta }) {
