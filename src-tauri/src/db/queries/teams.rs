@@ -119,6 +119,51 @@ pub fn get_teams_by_category(conn: &Connection, category_id: &str) -> Result<Vec
     Ok(teams)
 }
 
+/// Equipes de uma categoria filtradas por classe, ordenadas por desempenho desc.
+/// Usado na convocação especial para montar o grid classe a classe.
+pub fn get_teams_by_category_and_class(
+    conn: &Connection,
+    categoria: &str,
+    classe: &str,
+) -> Result<Vec<crate::models::team::Team>, DbError> {
+    let mut stmt = conn.prepare(
+        "SELECT * FROM teams WHERE categoria = ?1 AND classe = ?2 ORDER BY car_performance DESC",
+    )?;
+    let mapped = stmt.query_map(params![categoria, classe], team_from_row)?;
+    collect_teams(mapped)
+}
+
+/// Limpa `piloto_1_id` e `piloto_2_id` de todas as equipes especiais.
+/// Afeta production_challenger (mazda/toyota/bmw) e endurance (gt4/gt3/lmp2).
+/// Equipes LMP2 nunca recebem lineup neste redesign inicial, portanto a operação
+/// sobre elas é inócua — o WHERE não as exclui explicitamente para manter a
+/// semântica de "limpar tudo das categorias especiais".
+pub fn clear_special_team_lineups(conn: &Connection) -> Result<usize, DbError> {
+    let n = conn.execute(
+        "UPDATE teams SET piloto_1_id = NULL, piloto_2_id = NULL
+         WHERE categoria IN ('production_challenger', 'endurance')",
+        [],
+    )?;
+    Ok(n)
+}
+
+/// Reseta todos os campos de hierarquia das equipes especiais.
+/// Mesma nota de LMP2: afeta toda a categoria endurance, mas LMP2 está sempre
+/// sem lineup, então o reset é inócuo para essas equipes.
+pub fn reset_special_team_hierarchies(conn: &Connection) -> Result<(), DbError> {
+    conn.execute(
+        "UPDATE teams SET
+            hierarquia_n1_id = NULL, hierarquia_n2_id = NULL,
+            hierarquia_status = 'estavel', hierarquia_tensao = 0.0,
+            hierarquia_duelos_total = 0, hierarquia_duelos_n2_vencidos = 0,
+            hierarquia_sequencia_n2 = 0, hierarquia_sequencia_n1 = 0,
+            hierarquia_inversoes_temporada = 0
+         WHERE categoria IN ('production_challenger', 'endurance')",
+        [],
+    )?;
+    Ok(())
+}
+
 pub fn update_team(conn: &Connection, team: &Team) -> Result<(), DbError> {
     conn.execute(
         "UPDATE teams SET

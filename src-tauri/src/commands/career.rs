@@ -6,7 +6,7 @@ use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
-use crate::calendar::{generate_all_calendars, CalendarEntry};
+use crate::calendar::{generate_all_calendars_with_year, CalendarEntry};
 use crate::commands::career_detail::build_driver_detail_payload;
 use crate::commands::career_types::{
     CareerData, CreateCareerResult, DriverDetail, DriverSummary, RaceSummary, SaveInfo,
@@ -25,7 +25,12 @@ use crate::db::queries::drivers as driver_queries;
 use crate::db::queries::market_proposals as market_proposal_queries;
 use crate::db::queries::news as news_queries;
 use crate::db::queries::seasons as season_queries;
+use crate::db::queries::standings as standings_queries;
 use crate::db::queries::teams as team_queries;
+use crate::event_interest::{
+    calculate_expected_event_interest, to_summary, EventInterestContext, EventInterestSummary,
+};
+use crate::db::queries::standings::ChampionshipContext;
 use crate::evolution::pipeline::{run_end_of_season, EndOfSeasonResult};
 use crate::generators::ids::{next_id, next_ids, IdType};
 use crate::generators::nationality::{format_nationality, get_nationality};
@@ -36,7 +41,7 @@ use crate::market::preseason::{
 };
 use crate::market::proposals::{MarketProposal, ProposalStatus};
 use crate::models::driver::Driver;
-use crate::models::enums::{ContractStatus, TeamRole};
+use crate::models::enums::{ContractStatus, SeasonPhase, TeamRole};
 use crate::models::season::Season;
 use crate::models::team::{HierarchyStatus, Team};
 use crate::news::generator::{
@@ -119,7 +124,7 @@ pub(crate) fn create_career_in_base_dir(
         let season_id = next_id(&db.conn, IdType::Season)
             .map_err(|e| format!("Falha ao gerar ID da temporada: {e}"))?;
         let season = Season::new(season_id.clone(), 1, 2024);
-        let calendars = generate_all_calendars(&season_id, &mut rand::thread_rng())?;
+        let calendars = generate_all_calendars_with_year(&season_id, season.ano, &mut rand::thread_rng())?;
         let total_races = count_total_races(&calendars);
         let all_calendar_entries: Vec<CalendarEntry> = calendars
             .values()
@@ -227,6 +232,42 @@ pub(crate) fn load_career_in_base_dir(
     let total_rodadas = count_calendar_entries(&db.conn, &active_season.id, &player_team.categoria)
         .map_err(|e| format!("Falha ao contar corridas da temporada: {e}"))?;
 
+    // Calcular interesse esperado da próxima corrida (fallback silencioso se falhar).
+    // Usa race.categoria como fonte semântica do campeonato do evento.
+    let event_interest_summary: Option<EventInterestSummary> = next_race.as_ref().map(|race| {
+        let champ = standings_queries::get_championship_context(&db.conn, &race.categoria)
+            .unwrap_or(ChampionshipContext { player_position: 0, gap_to_leader: 0 });
+        let remaining = total_rodadas - race.rodada;
+        let is_title_decider = remaining <= 2
+            && champ.gap_to_leader <= 50
+            && champ.player_position > 0;
+        let ctx = EventInterestContext {
+            categoria: race.categoria.clone(),
+            season_phase: race.season_phase,
+            rodada: race.rodada,
+            total_rodadas,
+            week_of_year: race.week_of_year,
+            track_id: race.track_id as i32,
+            track_name: race.track_name.clone(),
+            is_player_event: true,
+            player_championship_position: if champ.player_position > 0 {
+                Some(champ.player_position)
+            } else {
+                None
+            },
+            player_media: Some(player.atributos.midia as f32),
+            championship_gap_to_leader: if champ.gap_to_leader > 0 || champ.player_position == 1 {
+                Some(champ.gap_to_leader)
+            } else {
+                None
+            },
+            is_title_decider_candidate: is_title_decider,
+            thematic_slot: race.thematic_slot,
+        };
+        let result = calculate_expected_event_interest(&ctx);
+        to_summary(&result)
+    });
+
     let now = Local::now().format("%Y-%m-%dT%H:%M:%S").to_string();
     meta.last_played = now.clone();
     write_save_meta(&meta_path, &meta)?;
@@ -277,6 +318,10 @@ pub(crate) fn load_career_in_base_dir(
             status: race.status.as_str().to_string(),
             temperatura: race.temperatura,
             horario: race.horario.clone(),
+            week_of_year: race.week_of_year,
+            season_phase: race.season_phase.as_str().to_string(),
+            display_date: race.display_date.clone(),
+            event_interest: event_interest_summary,
         }),
         total_drivers,
         total_teams,
@@ -543,6 +588,20 @@ pub(crate) fn advance_season_in_base_dir(
     let season = season_queries::get_active_season(&db.conn)
         .map_err(|e| format!("Falha ao buscar temporada ativa: {e}"))?
         .ok_or_else(|| "Temporada ativa nao encontrada.".to_string())?;
+
+    // Bloqueia avanço se o bloco especial ainda não foi encerrado formalmente.
+    // O ciclo correto é: BlocoEspecial → encerrar_bloco_especial → PosEspecial
+    //                    → run_pos_especial → advance_season.
+    match season.fase {
+        SeasonPhase::JanelaConvocacao | SeasonPhase::BlocoEspecial => {
+            return Err(format!(
+                "Nao e possivel avançar a temporada na fase '{}'. Encerre o bloco especial primeiro.",
+                season.fase
+            ));
+        }
+        SeasonPhase::BlocoRegular | SeasonPhase::PosEspecial => {} // permitido
+    }
+
     let pending_races = calendar_queries::get_pending_races(&db.conn, &season.id)
         .map_err(|e| format!("Falha ao verificar corridas pendentes: {e}"))?;
     if !pending_races.is_empty() {
@@ -1686,6 +1745,10 @@ pub(crate) fn get_calendar_for_category_in_base_dir(
             status: race.status.as_str().to_string(),
             temperatura: race.temperatura,
             horario: race.horario.clone(),
+            week_of_year: race.week_of_year,
+            season_phase: race.season_phase.as_str().to_string(),
+            display_date: race.display_date.clone(),
+            event_interest: None,
         })
         .collect())
 }
@@ -1944,7 +2007,9 @@ mod tests {
         assert!(result.success);
         assert_eq!(result.total_drivers, 196);
         assert_eq!(result.total_teams, 98);
-        assert_eq!(result.total_races, 74);
+        // Categorias especiais (production_challenger=10, endurance=6) não geram calendário
+        // no BlocoRegular — calendário delas é criado na JanelaConvocação (Passos 6+).
+        assert_eq!(result.total_races, 58);
 
         let db_path = std::path::PathBuf::from(&result.save_path).join("career.db");
         assert!(db_path.exists());
@@ -1975,9 +2040,11 @@ mod tests {
 
         assert_eq!(drivers_count, 196);
         assert_eq!(teams_count, 98);
-        assert_eq!(contracts_count, 196);
+        // 132 contratos: categorias especiais (production_challenger, endurance) não geram contratos
+        assert_eq!(contracts_count, 132);
         assert_eq!(seasons_count, 1);
-        assert_eq!(calendar_count, 74);
+        // 58 corridas: sem as 16 das categorias especiais (10+6), geradas na JanelaConvocação
+        assert_eq!(calendar_count, 58);
 
         let _ = fs::remove_dir_all(base_dir);
     }

@@ -187,7 +187,7 @@ mod tests {
         let mut next_id = id_gen();
         let mut timestamp = 200;
 
-        let news = generate_news_from_race(&race_result, 2, 3, "gt4", &mut next_id, &mut timestamp);
+        let news = generate_news_from_race(&race_result, 2, 3, "gt4", crate::models::enums::ThematicSlot::NaoClassificado, &mut next_id, &mut timestamp);
 
         assert!(news.iter().any(|item| {
             item.tipo == NewsType::Corrida && item.titulo.contains("Voce terminou em P2")
@@ -291,6 +291,7 @@ mod tests {
 }
 use crate::evolution::pipeline::EndOfSeasonResult;
 use crate::market::preseason::{MarketEvent, MarketEventType};
+use crate::models::enums::ThematicSlot;
 use crate::news::{NewsImportance, NewsItem, NewsType};
 use crate::promotion::{MovementType, PilotEffectType};
 use crate::simulation::race::RaceResult;
@@ -614,6 +615,7 @@ pub fn generate_news_from_race(
     temporada: i32,
     rodada: i32,
     categoria: &str,
+    thematic_slot: ThematicSlot,
     next_id: &mut impl FnMut() -> String,
     timestamp: &mut i64,
 ) -> Vec<NewsItem> {
@@ -625,13 +627,46 @@ pub fn generate_news_from_race(
         .iter()
         .find(|result| result.finish_position == 1)
     {
+        // Tom narrativo baseado no papel temático da corrida
+        let (titulo, importancia_base) = match thematic_slot {
+            ThematicSlot::FinalDaTemporada => (
+                format!("Grande Final: {} vence em {}", winner.pilot_name, race_result.track_name),
+                NewsImportance::Alta,
+            ),
+            ThematicSlot::FinalEspecial => (
+                format!("Encerramento especial: {} vence em {}", winner.pilot_name, race_result.track_name),
+                NewsImportance::Alta,
+            ),
+            ThematicSlot::AberturaDaTemporada => (
+                format!("Temporada abre em {}: {} vence", race_result.track_name, winner.pilot_name),
+                NewsImportance::Alta,
+            ),
+            ThematicSlot::TensaoPreFinal => (
+                format!("Tensão antes da decisão: {} vence em {}", winner.pilot_name, race_result.track_name),
+                NewsImportance::Alta,
+            ),
+            ThematicSlot::VisitanteRegional => (
+                format!("Visita especial a {}: {} vence", race_result.track_name, winner.pilot_name),
+                NewsImportance::Alta,
+            ),
+            ThematicSlot::MidpointPrestigio => (
+                format!("{} vence na pista de prestígio em {}", winner.pilot_name, race_result.track_name),
+                NewsImportance::Alta,
+            ),
+            // Slots regulares, especiais sem distinção ou não classificado: tom neutro
+            _ => (
+                format!("{} vence em {}", winner.pilot_name, race_result.track_name),
+                NewsImportance::Alta,
+            ),
+        };
+
         news.push(build_news_item(
             next_id,
             timestamp,
             NewsType::Corrida,
-            NewsImportance::Alta,
+            importancia_base,
             "🏆".to_string(),
-            format!("{} vence em {}", winner.pilot_name, race_result.track_name),
+            titulo,
             format!(
                 "{} venceu a corrida em {} partindo de P{}.",
                 winner.pilot_name, race_result.track_name, winner.grid_position
@@ -819,4 +854,50 @@ pub fn generate_player_rejection_news(
         driver_id: None,
         team_id: None,
     }
+}
+
+/// Gera notícias de encerramento do bloco especial.
+///
+/// `campeoes` é uma lista de `(categoria, classe, Option<driver_nome>)` representando
+/// o piloto com mais pontos por classe. Se `driver_nome` for None, nenhuma notícia
+/// de campeão é gerada para aquela classe.
+pub fn generate_news_from_pos_especial(
+    campeoes: &[(String, String, Option<String>)],
+    temporada: i32,
+    next_id: &mut impl FnMut() -> String,
+    timestamp: &mut i64,
+) -> Vec<NewsItem> {
+    let mut items = Vec::new();
+
+    for (categoria, classe, maybe_nome) in campeoes {
+        if let Some(nome) = maybe_nome {
+            let cat_nome = format_category_name(categoria);
+            let titulo = format!("Campeao do {} — {}", cat_nome, classe.to_uppercase());
+            let texto = format!(
+                "{} se sagra campeao da classe {} no {} da temporada {}.",
+                nome,
+                classe.to_uppercase(),
+                cat_nome,
+                temporada,
+            );
+            items.push(build_news_item(
+                next_id,
+                timestamp,
+                NewsType::Corrida,
+                NewsImportance::Destaque,
+                "🏆".to_string(),
+                titulo,
+                texto,
+                None,
+                None,
+                temporada,
+                Some(categoria.clone()),
+                Some(cat_nome),
+                None,
+                None,
+            ));
+        }
+    }
+
+    items
 }

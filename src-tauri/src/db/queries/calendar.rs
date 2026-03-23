@@ -2,7 +2,8 @@ use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::calendar::CalendarEntry;
 use crate::db::connection::DbError;
-use crate::models::enums::{RaceStatus, WeatherCondition};
+use crate::models::enums::{RaceStatus, SeasonPhase, ThematicSlot, WeatherCondition};
+use crate::models::temporal::SeasonTemporalSummary;
 
 pub fn insert_calendar_entry(conn: &Connection, entry: &CalendarEntry) -> Result<(), DbError> {
     conn.execute(
@@ -10,12 +11,12 @@ pub fn insert_calendar_entry(conn: &Connection, entry: &CalendarEntry) -> Result
             id, temporada_id, season_id, categoria, rodada, nome,
             pista, track_id, track_name, track_config, clima, temperatura,
             voltas, duracao, duracao_corrida_min, duracao_classificacao_min,
-            status, horario, data
+            status, horario, data, week_of_year, season_phase, thematic_slot
         ) VALUES (
             :id, :temporada_id, :season_id, :categoria, :rodada, :nome,
             :pista, :track_id, :track_name, :track_config, :clima, :temperatura,
             :voltas, :duracao, :duracao_corrida_min, :duracao_classificacao_min,
-            :status, :horario, :data
+            :status, :horario, :data, :week_of_year, :season_phase, :thematic_slot
         )",
         rusqlite::named_params! {
             ":id": &entry.id,
@@ -36,7 +37,10 @@ pub fn insert_calendar_entry(conn: &Connection, entry: &CalendarEntry) -> Result
             ":duracao_classificacao_min": entry.duracao_classificacao_min,
             ":status": entry.status.as_str(),
             ":horario": &entry.horario,
-            ":data": "",
+            ":data": &entry.display_date,
+            ":week_of_year": entry.week_of_year,
+            ":season_phase": entry.season_phase.as_str(),
+            ":thematic_slot": entry.thematic_slot.as_str(),
         },
     )?;
     Ok(())
@@ -132,6 +136,27 @@ pub fn get_pending_races_for_category(
     collect_entries(mapped)
 }
 
+/// Retorna corridas pendentes de uma categoria com week_of_year entre 1 e target_week,
+/// ordenadas cronologicamente. Entradas com week_of_year = 0 (saves legados) são ignoradas.
+pub fn get_pending_races_up_to_week(
+    conn: &Connection,
+    season_id: &str,
+    category_id: &str,
+    target_week: i32,
+) -> Result<Vec<CalendarEntry>, DbError> {
+    let mut stmt = conn.prepare(
+        "SELECT * FROM calendar
+         WHERE COALESCE(season_id, temporada_id) = ?1
+           AND categoria = ?2
+           AND status = 'Pendente'
+           AND week_of_year > 0
+           AND week_of_year <= ?3
+         ORDER BY week_of_year ASC, rodada ASC",
+    )?;
+    let mapped = stmt.query_map(params![season_id, category_id, target_week], calendar_from_row)?;
+    collect_entries(mapped)
+}
+
 pub fn count_races_by_status(
     conn: &Connection,
     season_id: &str,
@@ -147,6 +172,59 @@ pub fn count_races_by_status(
         |row| row.get(0),
     )?;
     Ok(count)
+}
+
+/// MAX(week_of_year) das corridas concluídas na temporada (todas as categorias).
+/// None se nenhuma corrida foi concluída ainda.
+pub fn get_current_effective_week(
+    conn: &Connection,
+    season_id: &str,
+) -> Result<Option<i32>, DbError> {
+    let result = conn.query_row(
+        "SELECT MAX(week_of_year) FROM calendar
+         WHERE COALESCE(season_id, temporada_id) = ?1
+           AND status = 'Concluida'
+           AND week_of_year > 0",
+        params![season_id],
+        |row| row.get::<_, Option<i32>>(0),
+    )?;
+    Ok(result)
+}
+
+/// COUNT de corridas Pendente para a fase informada.
+pub fn count_pending_races_in_phase(
+    conn: &Connection,
+    season_id: &str,
+    phase: &SeasonPhase,
+) -> Result<i32, DbError> {
+    let count = conn.query_row(
+        "SELECT COUNT(*) FROM calendar
+         WHERE COALESCE(season_id, temporada_id) = ?1
+           AND status = 'Pendente'
+           AND season_phase = ?2",
+        params![season_id, phase.as_str()],
+        |row| row.get(0),
+    )?;
+    Ok(count)
+}
+
+/// Monta SeasonTemporalSummary combinando as funções existentes.
+/// current_phase é passado pelo chamador (já carregou a Season).
+pub fn get_season_temporal_summary(
+    conn: &Connection,
+    season_id: &str,
+    player_category: &str,
+    current_phase: &SeasonPhase,
+) -> Result<SeasonTemporalSummary, DbError> {
+    let effective_week = get_current_effective_week(conn, season_id)?;
+    let next_player_event = get_next_race(conn, season_id, player_category)?;
+    let pending_in_phase = count_pending_races_in_phase(conn, season_id, current_phase)?;
+    Ok(SeasonTemporalSummary {
+        fase: *current_phase, // SeasonPhase é Copy
+        effective_week,
+        next_player_event,
+        pending_in_phase,
+    })
 }
 
 pub fn delete_calendar_for_season(conn: &Connection, season_id: &str) -> Result<(), DbError> {
@@ -205,6 +283,18 @@ fn calendar_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<CalendarEntry>
             &optional_string(row, "status")?.unwrap_or_else(|| "Pendente".to_string()),
         ),
         horario: optional_string(row, "horario")?.unwrap_or_else(|| "14:00".to_string()),
+        week_of_year: optional_i64(row, "week_of_year")?.unwrap_or(0) as i32,
+        season_phase: optional_string(row, "season_phase")?
+            .and_then(|s| SeasonPhase::from_str_strict(&s).ok())
+            .unwrap_or(SeasonPhase::BlocoRegular),
+        display_date: optional_string(row, "data")?.unwrap_or_default(),
+        thematic_slot: match optional_string(row, "thematic_slot")? {
+            // NULL no banco (saves pré-v12) → NaoClassificado
+            None => ThematicSlot::NaoClassificado,
+            // string presente: parse estrito — string inválida é erro, não fallback silencioso
+            Some(s) => ThematicSlot::from_str_strict(&s)
+                .map_err(|e| rusqlite::Error::InvalidColumnName(e))?,
+        },
     })
 }
 
@@ -235,7 +325,7 @@ mod tests {
     use rusqlite::Connection;
 
     use super::*;
-    use crate::calendar::generate_calendar_for_category;
+    use crate::calendar::{generate_and_insert_special_calendars, generate_calendar_for_category};
     use crate::db::migrations;
     use crate::db::queries::seasons::insert_season;
     use crate::models::season::Season;
@@ -291,6 +381,96 @@ mod tests {
     }
 
     #[test]
+    fn test_get_pending_races_up_to_week_basic() {
+        let conn = Connection::open_in_memory().expect("db");
+        migrations::run_all(&conn).expect("schema");
+        insert_season(&conn, &Season::new("S001".to_string(), 1, 2024)).expect("season");
+        let mut rng = StdRng::seed_from_u64(20);
+        let entries =
+            generate_calendar_for_category("S001", "gt3", &mut rng).expect("gt3 calendar");
+        insert_calendar_entries(&conn, &entries).expect("insert");
+
+        // A primeira corrida tem week_of_year >= 2 (REGULAR_SEASON_START).
+        // Com target=1 não deve retornar nada; com target=52 deve retornar todas.
+        let none = get_pending_races_up_to_week(&conn, "S001", "gt3", 1).expect("query");
+        assert!(none.is_empty(), "target_week=1 should return nothing for gt3");
+
+        let all = get_pending_races_up_to_week(&conn, "S001", "gt3", 52).expect("query");
+        assert_eq!(all.len(), entries.len());
+    }
+
+    #[test]
+    fn test_get_pending_races_up_to_week_ordering() {
+        let conn = Connection::open_in_memory().expect("db");
+        migrations::run_all(&conn).expect("schema");
+        insert_season(&conn, &Season::new("S001".to_string(), 1, 2024)).expect("season");
+        let mut rng = StdRng::seed_from_u64(21);
+        let entries =
+            generate_calendar_for_category("S001", "gt3", &mut rng).expect("gt3 calendar");
+        insert_calendar_entries(&conn, &entries).expect("insert");
+
+        let all = get_pending_races_up_to_week(&conn, "S001", "gt3", 52).expect("query");
+        for window in all.windows(2) {
+            assert!(
+                window[0].week_of_year <= window[1].week_of_year,
+                "results must be ordered by week_of_year ASC"
+            );
+        }
+    }
+
+    #[test]
+    fn test_get_pending_races_up_to_week_skips_zero() {
+        let conn = Connection::open_in_memory().expect("db");
+        migrations::run_all(&conn).expect("schema");
+        insert_season(&conn, &Season::new("S001".to_string(), 1, 2024)).expect("season");
+        let mut rng = StdRng::seed_from_u64(22);
+        let mut entries =
+            generate_calendar_for_category("S001", "gt3", &mut rng).expect("gt3 calendar");
+        // Forçar week_of_year=0 para simular dado legado
+        for e in &mut entries {
+            e.week_of_year = 0;
+        }
+        insert_calendar_entries(&conn, &entries).expect("insert");
+
+        let result = get_pending_races_up_to_week(&conn, "S001", "gt3", 52).expect("query");
+        assert!(
+            result.is_empty(),
+            "entries with week_of_year=0 must be ignored"
+        );
+    }
+
+    #[test]
+    fn test_specials_excluded_below_41() {
+        use crate::calendar::generate_and_insert_special_calendars;
+        let conn = Connection::open_in_memory().expect("db");
+        migrations::run_all(&conn).expect("schema");
+        insert_season(&conn, &Season::new("S001".to_string(), 1, 2024)).expect("season");
+        // Precisa inserir pilotos/equipes mínimos para o guard não falhar?
+        // Não — generate_and_insert_special_calendars só precisa do conn + season_id.
+        let mut rng = StdRng::seed_from_u64(23);
+        generate_and_insert_special_calendars(&conn, "S001", 2024, &mut rng)
+            .expect("special calendars");
+
+        // Com target_week=40 (máx do bloco regular) não deve retornar nenhuma corrida especial
+        let pc = get_pending_races_up_to_week(&conn, "S001", "production_challenger", 40)
+            .expect("query pc");
+        let end = get_pending_races_up_to_week(&conn, "S001", "endurance", 40).expect("query end");
+        assert!(
+            pc.is_empty(),
+            "production_challenger should not appear before week 41"
+        );
+        assert!(
+            end.is_empty(),
+            "endurance should not appear before week 41"
+        );
+
+        // Com target_week=50 deve retornar todas
+        let pc_all = get_pending_races_up_to_week(&conn, "S001", "production_challenger", 50)
+            .expect("query pc all");
+        assert_eq!(pc_all.len(), 10, "production_challenger should have 10 races");
+    }
+
+    #[test]
     fn test_get_pending_races_for_category_filters_and_orders() {
         let conn = Connection::open_in_memory().expect("db");
         migrations::run_all(&conn).expect("schema");
@@ -314,5 +494,106 @@ mod tests {
         assert_eq!(pending.len(), gt3_entries.len() - 1);
         assert!(pending.iter().all(|entry| entry.categoria == "gt3"));
         assert_eq!(pending[0].rodada, 2);
+    }
+
+    #[test]
+    fn test_get_current_effective_week_empty() {
+        let conn = Connection::open_in_memory().expect("db");
+        migrations::run_all(&conn).expect("schema");
+        insert_season(&conn, &Season::new("S001".to_string(), 1, 2024)).expect("season");
+        let result = get_current_effective_week(&conn, "S001").expect("query");
+        assert_eq!(result, None, "no completed races should return None");
+    }
+
+    #[test]
+    fn test_get_current_effective_week_with_completions() {
+        let conn = Connection::open_in_memory().expect("db");
+        migrations::run_all(&conn).expect("schema");
+        insert_season(&conn, &Season::new("S001".to_string(), 1, 2024)).expect("season");
+        let mut rng = StdRng::seed_from_u64(40);
+        let entries =
+            generate_calendar_for_category("S001", "gt3", &mut rng).expect("calendar");
+        insert_calendar_entries(&conn, &entries).expect("insert");
+
+        // Mark first and last as completed
+        mark_race_completed(&conn, &entries[0].id).expect("complete first");
+        mark_race_completed(&conn, &entries[entries.len() - 1].id).expect("complete last");
+
+        let result = get_current_effective_week(&conn, "S001")
+            .expect("query")
+            .expect("should have a value");
+
+        let expected_max = entries[0]
+            .week_of_year
+            .max(entries[entries.len() - 1].week_of_year);
+        assert_eq!(result, expected_max);
+    }
+
+    #[test]
+    fn test_count_pending_in_phase_regular() {
+        let conn = Connection::open_in_memory().expect("db");
+        migrations::run_all(&conn).expect("schema");
+        insert_season(&conn, &Season::new("S001".to_string(), 1, 2024)).expect("season");
+        let mut rng = StdRng::seed_from_u64(41);
+        let entries =
+            generate_calendar_for_category("S001", "gt3", &mut rng).expect("calendar");
+        insert_calendar_entries(&conn, &entries).expect("insert");
+
+        let count = count_pending_races_in_phase(
+            &conn,
+            "S001",
+            &crate::models::enums::SeasonPhase::BlocoRegular,
+        )
+        .expect("count");
+
+        assert_eq!(count, entries.len() as i32);
+    }
+
+    #[test]
+    fn test_count_pending_in_phase_zero() {
+        let conn = Connection::open_in_memory().expect("db");
+        migrations::run_all(&conn).expect("schema");
+        insert_season(&conn, &Season::new("S001".to_string(), 1, 2024)).expect("season");
+        let mut rng = StdRng::seed_from_u64(42);
+        let entries =
+            generate_calendar_for_category("S001", "gt3", &mut rng).expect("calendar");
+        insert_calendar_entries(&conn, &entries).expect("insert");
+
+        let count = count_pending_races_in_phase(
+            &conn,
+            "S001",
+            &crate::models::enums::SeasonPhase::BlocoEspecial,
+        )
+        .expect("count");
+
+        assert_eq!(count, 0, "BlocoEspecial has no entries");
+    }
+
+    #[test]
+    fn test_get_temporal_summary_basic() {
+        let conn = Connection::open_in_memory().expect("db");
+        migrations::run_all(&conn).expect("schema");
+        insert_season(&conn, &Season::new("S001".to_string(), 1, 2024)).expect("season");
+        let mut rng = StdRng::seed_from_u64(43);
+        let entries =
+            generate_calendar_for_category("S001", "gt3", &mut rng).expect("calendar");
+        insert_calendar_entries(&conn, &entries).expect("insert");
+
+        mark_race_completed(&conn, &entries[0].id).expect("complete 0");
+        mark_race_completed(&conn, &entries[1].id).expect("complete 1");
+
+        let phase = crate::models::enums::SeasonPhase::BlocoRegular;
+        let summary =
+            get_season_temporal_summary(&conn, "S001", "gt3", &phase).expect("summary");
+
+        assert_eq!(summary.fase, crate::models::enums::SeasonPhase::BlocoRegular);
+
+        let expected_week = entries[0].week_of_year.max(entries[1].week_of_year);
+        assert_eq!(summary.effective_week, Some(expected_week));
+
+        assert!(summary.next_player_event.is_some());
+        assert_eq!(summary.next_player_event.unwrap().id, entries[2].id);
+
+        assert_eq!(summary.pending_in_phase, (entries.len() - 2) as i32);
     }
 }

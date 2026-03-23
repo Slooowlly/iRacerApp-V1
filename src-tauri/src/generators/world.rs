@@ -3,7 +3,7 @@ use std::collections::HashSet;
 
 use rand::Rng;
 
-use crate::constants::categories::{get_all_categories, get_category_config};
+use crate::constants::categories::{get_all_categories, get_category_config, is_especial};
 use crate::models::contract::{generate_initial_contract, Contract};
 use crate::models::driver::Driver;
 use crate::models::enums::TeamRole;
@@ -116,6 +116,13 @@ pub(crate) fn generate_world_with_rng<R: Rng>(
         let mut team_id_generator = || ids.next_team_id();
         let mut category_teams =
             generate_teams_for_category(category.id, 1, &mut team_id_generator);
+
+        // Categorias especiais existem desde o início do ano, mas montam lineup
+        // apenas na janela de convocação (Passos 6+). Geram equipes sem pilotos.
+        if is_especial(category.id) {
+            teams.extend(category_teams);
+            continue;
+        }
 
         let selected_player_team_id = if category.id == player_category {
             if player_team_index >= category_teams.len() {
@@ -240,6 +247,12 @@ pub(crate) fn generate_world_with_rng<R: Rng>(
         teams.extend(category_teams);
     }
 
+    // Gerar pool de especialistas livres para convocação especial de meio de ano.
+    // Para cada categoria especial, gerar drivers por classe com categoria_atual
+    // apontando para a categoria regular de referência da classe (sem equipe nem contrato).
+    let pool_drivers = generate_specialist_pool(&mut ids, &mut existing_names, difficulty, rng);
+    drivers.extend(pool_drivers);
+
     let player_team_id =
         player_team_id.ok_or_else(|| "Player team was not assigned".to_string())?;
     let player_contract =
@@ -255,6 +268,51 @@ pub(crate) fn generate_world_with_rng<R: Rng>(
     })
 }
 
+/// Gera pilotos livres para o pool de convocação especial.
+/// Para cada categoria especial, itera sobre suas classes e gera drivers
+/// usando a categoria regular de referência da classe como `categoria_atual`.
+/// Os drivers não têm equipe nem contrato — ficam disponíveis para a janela
+/// de convocação de meio de ano (Passos 6+).
+fn generate_specialist_pool<R: Rng>(
+    ids: &mut LocalIdAllocator,
+    existing_names: &mut HashSet<String>,
+    difficulty: &str,
+    rng: &mut R,
+) -> Vec<Driver> {
+    let mut pool = Vec::new();
+
+    for category in get_all_categories().iter().filter(|c| is_especial(c.id)) {
+        for class in category.classes {
+            let count = (class.num_equipes * category.pilotos_por_equipe) as usize;
+            let ref_tier = get_category_config(class.car_categoria)
+                .map(|c| c.tier)
+                .unwrap_or(2);
+
+            let mut driver_id_gen = || ids.next_driver_id();
+            // Os drivers são gerados com categoria_atual = Some(class.car_categoria)
+            // definida dentro de generate_for_category_with_id_factory.
+            let mut class_drivers = Driver::generate_for_category_with_id_factory(
+                class.car_categoria,
+                ref_tier,
+                difficulty,
+                count,
+                existing_names,
+                &mut driver_id_gen,
+                rng,
+            );
+            // Pilotos do pool são livres — sem contrato e sem categoria ativa.
+            // categoria_atual é limpa para evitar que apareçam nas simulações regulares.
+            // Seu nível de habilidade reflete o tier de referência da classe.
+            for driver in &mut class_drivers {
+                driver.categoria_atual = None;
+            }
+            pool.extend(class_drivers);
+        }
+    }
+
+    pool
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::{HashMap, HashSet};
@@ -262,7 +320,7 @@ mod tests {
     use rand::{rngs::StdRng, SeedableRng};
 
     use super::*;
-    use crate::constants::categories::get_all_categories;
+    use crate::constants::categories::{get_all_categories, is_especial};
 
     fn sample_world() -> WorldData {
         let mut rng = StdRng::seed_from_u64(20260318);
@@ -281,9 +339,13 @@ mod tests {
     #[test]
     fn test_generate_world_total_counts() {
         let world = sample_world();
+        // 98 equipes no total (incluindo especiais sem lineup)
         assert_eq!(world.teams.len(), 98);
+        // 196 pilotos: 132 com contrato (regular) + 64 no pool (livres)
+        // production_challenger: 15 equipes × 2 = 30; endurance: 17 equipes × 2 = 34 → 64 pool
         assert_eq!(world.drivers.len(), 196);
-        assert_eq!(world.contracts.len(), 196);
+        // Apenas 132 contratos — categorias especiais não geram contratos
+        assert_eq!(world.contracts.len(), 132);
     }
 
     #[test]
@@ -303,12 +365,23 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_world_all_teams_have_two_pilots() {
+    fn test_regular_teams_have_two_pilots() {
         let world = sample_world();
         assert!(world
             .teams
             .iter()
+            .filter(|team| !is_especial(&team.categoria))
             .all(|team| team.piloto_1_id.is_some() && team.piloto_2_id.is_some()));
+    }
+
+    #[test]
+    fn test_special_teams_have_no_pilots() {
+        let world = sample_world();
+        assert!(world
+            .teams
+            .iter()
+            .filter(|team| is_especial(&team.categoria))
+            .all(|team| team.piloto_1_id.is_none() && team.piloto_2_id.is_none()));
     }
 
     #[test]
@@ -370,7 +443,8 @@ mod tests {
             .map(|driver| (driver.id.clone(), driver))
             .collect();
 
-        for team in &world.teams {
+        // Equipes especiais não têm lineup — ignorar hierarquia delas neste teste.
+        for team in world.teams.iter().filter(|t| !is_especial(&t.categoria)) {
             let n1_id = team.hierarquia_n1_id.as_ref().expect("n1 id should be set");
             let n2_id = team.hierarquia_n2_id.as_ref().expect("n2 id should be set");
             let n1 = driver_map.get(n1_id).expect("n1 driver should exist");

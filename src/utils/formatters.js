@@ -95,6 +95,16 @@ export function formatPreseasonPhase(value) {
   return labels[value] || value || "-";
 }
 
+export function formatSeasonPhase(value) {
+  const labels = {
+    BlocoRegular: "Bloco Regular",
+    JanelaConvocacao: "Convocação",
+    BlocoEspecial: "Bloco Especial",
+    PosEspecial: "Pós-Especial",
+  };
+  return labels[value] || value || "—";
+}
+
 export function formatAttributeName(value) {
   const labels = {
     skill: "skill",

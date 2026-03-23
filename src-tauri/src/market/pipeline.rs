@@ -293,6 +293,7 @@ fn get_season_by_number(
             ano: row.get(2)?,
             status: crate::models::enums::SeasonStatus::from_str(&row.get::<_, String>(3)?),
             rodada_atual: row.get(4)?,
+            fase: crate::models::enums::SeasonPhase::BlocoRegular,
             created_at: row.get(5)?,
             updated_at: row.get(6)?,
         })

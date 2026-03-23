@@ -128,6 +128,8 @@ pub struct Driver {
     pub nacionalidade: String,
     pub genero: String,
     pub categoria_atual: Option<String>,
+    #[serde(default)]
+    pub categoria_especial_ativa: Option<String>,
     pub status: DriverStatus,
     pub personalidade_primaria: Option<PrimaryPersonality>,
     pub personalidade_secundaria: Option<SecondaryPersonality>,
@@ -167,6 +169,7 @@ impl Driver {
             nacionalidade,
             genero,
             categoria_atual: None,
+            categoria_especial_ativa: None,
             status: DriverStatus::Ativo,
             personalidade_primaria: None,
             personalidade_secundaria: None,

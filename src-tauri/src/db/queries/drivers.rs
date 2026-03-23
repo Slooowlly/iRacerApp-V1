@@ -15,6 +15,7 @@ pub fn insert_driver(conn: &Connection, driver: &Driver) -> Result<(), DbError> 
     conn.execute(
         "INSERT INTO drivers (
             id, nome, is_jogador, idade, nacionalidade, genero, categoria_atual,
+            categoria_especial_ativa,
             status, personalidade_primaria, personalidade_secundaria, ano_inicio_carreira,
             skill, consistencia, racecraft, defesa, ritmo_classificacao, gestao_pneus,
             habilidade_largada, adaptabilidade, fator_chuva, fitness, experiencia,
@@ -27,6 +28,7 @@ pub fn insert_driver(conn: &Connection, driver: &Driver) -> Result<(), DbError> 
             temporadas_motivacao_baixa
         ) VALUES (
             :id, :nome, :is_jogador, :idade, :nacionalidade, :genero, :categoria_atual,
+            :categoria_especial_ativa,
             :status, :personalidade_primaria, :personalidade_secundaria, :ano_inicio_carreira,
             :skill, :consistencia, :racecraft, :defesa, :ritmo_classificacao, :gestao_pneus,
             :habilidade_largada, :adaptabilidade, :fator_chuva, :fitness, :experiencia,
@@ -39,55 +41,56 @@ pub fn insert_driver(conn: &Connection, driver: &Driver) -> Result<(), DbError> 
             :temporadas_motivacao_baixa
         )",
         rusqlite::named_params! {
-            ":id":                       &driver.id,
-            ":nome":                     &driver.nome,
-            ":is_jogador":               driver.is_jogador as i64,
-            ":idade":                    driver.idade as i64,
-            ":nacionalidade":            &driver.nacionalidade,
-            ":genero":                   &driver.genero,
-            ":categoria_atual":          &driver.categoria_atual,
-            ":status":                   driver.status.as_str(),
-            ":personalidade_primaria":   driver.personalidade_primaria.as_ref().map(|p| p.as_str()),
-            ":personalidade_secundaria": driver.personalidade_secundaria.as_ref().map(|p| p.as_str()),
-            ":ano_inicio_carreira":      driver.ano_inicio_carreira as i64,
-            ":skill":                    driver.atributos.skill,
-            ":consistencia":             driver.atributos.consistencia,
-            ":racecraft":                driver.atributos.racecraft,
-            ":defesa":                   driver.atributos.defesa,
-            ":ritmo_classificacao":      driver.atributos.ritmo_classificacao,
-            ":gestao_pneus":             driver.atributos.gestao_pneus,
-            ":habilidade_largada":       driver.atributos.habilidade_largada,
-            ":adaptabilidade":           driver.atributos.adaptabilidade,
-            ":fator_chuva":              driver.atributos.fator_chuva,
-            ":fitness":                  driver.atributos.fitness,
-            ":experiencia":              driver.atributos.experiencia,
-            ":desenvolvimento":          driver.atributos.desenvolvimento,
-            ":aggression":               driver.atributos.aggression,
-            ":smoothness":               driver.atributos.smoothness,
-            ":midia":                    driver.atributos.midia,
-            ":mentalidade":              driver.atributos.mentalidade,
-            ":confianca":                driver.atributos.confianca,
-            ":temp_pontos":              driver.stats_temporada.pontos,
-            ":temp_vitorias":            driver.stats_temporada.vitorias as i64,
-            ":temp_podios":              driver.stats_temporada.podios as i64,
-            ":temp_poles":               driver.stats_temporada.poles as i64,
-            ":temp_corridas":            driver.stats_temporada.corridas as i64,
-            ":temp_dnfs":                driver.stats_temporada.dnfs as i64,
-            ":temp_posicao_media":       driver.stats_temporada.posicao_media,
-            ":carreira_pontos_total":    driver.stats_carreira.pontos_total,
-            ":carreira_vitorias":        driver.stats_carreira.vitorias as i64,
-            ":carreira_podios":          driver.stats_carreira.podios as i64,
-            ":carreira_poles":           driver.stats_carreira.poles as i64,
-            ":carreira_corridas":        driver.stats_carreira.corridas as i64,
-            ":carreira_temporadas":      driver.stats_carreira.temporadas as i64,
-            ":carreira_titulos":         driver.stats_carreira.titulos as i64,
-            ":carreira_dnfs":            driver.stats_carreira.dnfs as i64,
-            ":motivacao":                driver.motivacao,
-            ":historico_circuitos":      &historico,
-            ":ultimos_resultados":       &ultimos,
-            ":melhor_resultado_temp":    driver.melhor_resultado_temp.map(|v| v as i64),
-            ":temporadas_na_categoria":  driver.temporadas_na_categoria as i64,
-            ":corridas_na_categoria":    driver.corridas_na_categoria as i64,
+            ":id":                        &driver.id,
+            ":nome":                      &driver.nome,
+            ":is_jogador":                driver.is_jogador as i64,
+            ":idade":                     driver.idade as i64,
+            ":nacionalidade":             &driver.nacionalidade,
+            ":genero":                    &driver.genero,
+            ":categoria_atual":           &driver.categoria_atual,
+            ":categoria_especial_ativa":  &driver.categoria_especial_ativa,
+            ":status":                    driver.status.as_str(),
+            ":personalidade_primaria":    driver.personalidade_primaria.as_ref().map(|p| p.as_str()),
+            ":personalidade_secundaria":  driver.personalidade_secundaria.as_ref().map(|p| p.as_str()),
+            ":ano_inicio_carreira":       driver.ano_inicio_carreira as i64,
+            ":skill":                     driver.atributos.skill,
+            ":consistencia":              driver.atributos.consistencia,
+            ":racecraft":                 driver.atributos.racecraft,
+            ":defesa":                    driver.atributos.defesa,
+            ":ritmo_classificacao":       driver.atributos.ritmo_classificacao,
+            ":gestao_pneus":              driver.atributos.gestao_pneus,
+            ":habilidade_largada":        driver.atributos.habilidade_largada,
+            ":adaptabilidade":            driver.atributos.adaptabilidade,
+            ":fator_chuva":               driver.atributos.fator_chuva,
+            ":fitness":                   driver.atributos.fitness,
+            ":experiencia":               driver.atributos.experiencia,
+            ":desenvolvimento":           driver.atributos.desenvolvimento,
+            ":aggression":                driver.atributos.aggression,
+            ":smoothness":                driver.atributos.smoothness,
+            ":midia":                     driver.atributos.midia,
+            ":mentalidade":               driver.atributos.mentalidade,
+            ":confianca":                 driver.atributos.confianca,
+            ":temp_pontos":               driver.stats_temporada.pontos,
+            ":temp_vitorias":             driver.stats_temporada.vitorias as i64,
+            ":temp_podios":               driver.stats_temporada.podios as i64,
+            ":temp_poles":                driver.stats_temporada.poles as i64,
+            ":temp_corridas":             driver.stats_temporada.corridas as i64,
+            ":temp_dnfs":                 driver.stats_temporada.dnfs as i64,
+            ":temp_posicao_media":        driver.stats_temporada.posicao_media,
+            ":carreira_pontos_total":     driver.stats_carreira.pontos_total,
+            ":carreira_vitorias":         driver.stats_carreira.vitorias as i64,
+            ":carreira_podios":           driver.stats_carreira.podios as i64,
+            ":carreira_poles":            driver.stats_carreira.poles as i64,
+            ":carreira_corridas":         driver.stats_carreira.corridas as i64,
+            ":carreira_temporadas":       driver.stats_carreira.temporadas as i64,
+            ":carreira_titulos":          driver.stats_carreira.titulos as i64,
+            ":carreira_dnfs":             driver.stats_carreira.dnfs as i64,
+            ":motivacao":                 driver.motivacao,
+            ":historico_circuitos":       &historico,
+            ":ultimos_resultados":        &ultimos,
+            ":melhor_resultado_temp":     driver.melhor_resultado_temp.map(|v| v as i64),
+            ":temporadas_na_categoria":   driver.temporadas_na_categoria as i64,
+            ":corridas_na_categoria":     driver.corridas_na_categoria as i64,
             ":temporadas_motivacao_baixa": driver.temporadas_motivacao_baixa as i64,
         },
     )?;
@@ -155,6 +158,28 @@ pub fn get_free_drivers(conn: &Connection) -> Result<Vec<Driver>, DbError> {
     result
 }
 
+/// Pool global de convocação especial.
+/// "Livre" = sem contrato Regular ativo E sem contrato Especial ativo.
+/// Diferente de `get_free_drivers` que usa `categoria_atual IS NULL`
+/// (que pode ser referência histórica preservada, não indica disponibilidade real).
+pub fn get_drivers_without_active_contract(conn: &Connection) -> Result<Vec<Driver>, DbError> {
+    let mut stmt = conn.prepare(
+        "SELECT d.* FROM drivers d
+         WHERE d.status = 'Ativo'
+           AND NOT EXISTS (
+               SELECT 1 FROM contracts c
+               WHERE c.piloto_id = d.id AND c.status = 'Ativo' AND c.tipo = 'Regular'
+           )
+           AND NOT EXISTS (
+               SELECT 1 FROM contracts c
+               WHERE c.piloto_id = d.id AND c.status = 'Ativo' AND c.tipo = 'Especial'
+           )
+         ORDER BY d.nome",
+    )?;
+    let rows = stmt.query_map([], driver_from_row)?;
+    collect_drivers(rows)
+}
+
 // ── UPDATE ────────────────────────────────────────────────────────────────────
 
 pub fn update_driver(conn: &Connection, driver: &Driver) -> Result<(), DbError> {
@@ -167,7 +192,9 @@ pub fn update_driver(conn: &Connection, driver: &Driver) -> Result<(), DbError> 
         "UPDATE drivers SET
             nome = :nome, is_jogador = :is_jogador, idade = :idade,
             nacionalidade = :nacionalidade, genero = :genero,
-            categoria_atual = :categoria_atual, status = :status,
+            categoria_atual = :categoria_atual,
+            categoria_especial_ativa = :categoria_especial_ativa,
+            status = :status,
             personalidade_primaria = :personalidade_primaria,
             personalidade_secundaria = :personalidade_secundaria,
             ano_inicio_carreira = :ano_inicio_carreira,
@@ -196,18 +223,19 @@ pub fn update_driver(conn: &Connection, driver: &Driver) -> Result<(), DbError> 
             temporadas_motivacao_baixa = :temporadas_motivacao_baixa
         WHERE id = :id",
         rusqlite::named_params! {
-            ":id":                       &driver.id,
-            ":nome":                     &driver.nome,
-            ":is_jogador":               driver.is_jogador as i64,
-            ":idade":                    driver.idade as i64,
-            ":nacionalidade":            &driver.nacionalidade,
-            ":genero":                   &driver.genero,
-            ":categoria_atual":          &driver.categoria_atual,
-            ":status":                   driver.status.as_str(),
-            ":personalidade_primaria":   driver.personalidade_primaria.as_ref().map(|p| p.as_str()),
-            ":personalidade_secundaria": driver.personalidade_secundaria.as_ref().map(|p| p.as_str()),
-            ":ano_inicio_carreira":      driver.ano_inicio_carreira as i64,
-            ":skill":                    driver.atributos.skill,
+            ":id":                        &driver.id,
+            ":nome":                      &driver.nome,
+            ":is_jogador":                driver.is_jogador as i64,
+            ":idade":                     driver.idade as i64,
+            ":nacionalidade":             &driver.nacionalidade,
+            ":genero":                    &driver.genero,
+            ":categoria_atual":           &driver.categoria_atual,
+            ":categoria_especial_ativa":  &driver.categoria_especial_ativa,
+            ":status":                    driver.status.as_str(),
+            ":personalidade_primaria":    driver.personalidade_primaria.as_ref().map(|p| p.as_str()),
+            ":personalidade_secundaria":  driver.personalidade_secundaria.as_ref().map(|p| p.as_str()),
+            ":ano_inicio_carreira":       driver.ano_inicio_carreira as i64,
+            ":skill":                     driver.atributos.skill,
             ":consistencia":             driver.atributos.consistencia,
             ":racecraft":                driver.atributos.racecraft,
             ":defesa":                   driver.atributos.defesa,
@@ -346,6 +374,30 @@ pub fn update_driver_attributes(
     Ok(())
 }
 
+/// Define ou limpa a categoria especial ativa do piloto.
+/// Deve ser chamada ao assinar/encerrar contrato Especial.
+pub fn update_driver_especial_category(
+    conn: &Connection,
+    driver_id: &str,
+    categoria_especial: Option<&str>,
+) -> Result<(), DbError> {
+    conn.execute(
+        "UPDATE drivers SET categoria_especial_ativa = ?1 WHERE id = ?2",
+        rusqlite::params![categoria_especial, driver_id],
+    )?;
+    Ok(())
+}
+
+/// Remove `categoria_especial_ativa` de todos os pilotos que a possuem.
+/// Chamado durante PosEspecial para liberar os pilotos do bloco especial encerrado.
+pub fn clear_all_categoria_especial_ativa(conn: &Connection) -> Result<usize, DbError> {
+    let n = conn.execute(
+        "UPDATE drivers SET categoria_especial_ativa = NULL WHERE categoria_especial_ativa IS NOT NULL",
+        [],
+    )?;
+    Ok(n)
+}
+
 pub fn update_driver_status(
     conn: &Connection,
     id: &str,
@@ -364,6 +416,14 @@ pub fn update_driver_motivation(conn: &Connection, id: &str, motivacao: f64) -> 
     conn.execute(
         "UPDATE drivers SET motivacao = ?1 WHERE id = ?2",
         rusqlite::params![motivacao.clamp(0.0, 100.0), id],
+    )?;
+    Ok(())
+}
+
+pub fn update_driver_midia(conn: &Connection, id: &str, midia: f64) -> Result<(), DbError> {
+    conn.execute(
+        "UPDATE drivers SET midia = ?1 WHERE id = ?2",
+        rusqlite::params![midia.clamp(0.0, 100.0), id],
     )?;
     Ok(())
 }
@@ -413,6 +473,7 @@ fn driver_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Driver> {
         nacionalidade: row.get("nacionalidade")?,
         genero: row.get("genero")?,
         categoria_atual: row.get("categoria_atual")?,
+        categoria_especial_ativa: row.get("categoria_especial_ativa")?,
         status: DriverStatus::from_str(
             &row.get::<_, String>("status")
                 .unwrap_or_else(|_| "Ativo".to_string()),

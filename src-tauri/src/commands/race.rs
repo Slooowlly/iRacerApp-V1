@@ -14,14 +14,17 @@ use crate::db::queries::calendar as calendar_queries;
 use crate::db::queries::drivers as driver_queries;
 use crate::db::queries::news as news_queries;
 use crate::db::queries::seasons as season_queries;
+use crate::db::queries::standings as standings_queries;
+use crate::db::queries::standings::ChampionshipContext;
+use crate::event_interest::{
+    calculate_expected_event_interest, calculate_realized_event_interest, EventInterestContext,
+    RealizedEventInterest,
+};
 use crate::db::queries::teams as team_queries;
 use crate::generators::ids::{next_ids, IdType};
 use crate::news::generator::generate_news_from_race;
 use crate::news::{NewsImportance, NewsItem, NewsType};
-use crate::simulation::batch::{
-    races_should_be_completed, BriefRaceResult, CategorySimResult, SimHighlight,
-    SimultaneousResults,
-};
+use crate::simulation::batch::{BriefRaceResult, CategorySimResult, SimHighlight, SimultaneousResults};
 use crate::simulation::context::{SimDriver, SimulationContext};
 use crate::simulation::engine::run_full_race;
 use crate::simulation::race::RaceResult;
@@ -31,6 +34,58 @@ use crate::{calendar::CalendarEntry, models::team::Team};
 pub struct RaceWeekendResult {
     pub player_race: RaceResult,
     pub other_categories: SimultaneousResults,
+}
+
+fn compute_post_race_impact(
+    conn: &rusqlite::Connection,
+    race_entry: &CalendarEntry,
+    player_race: &RaceResult,
+) -> Option<RealizedEventInterest> {
+    let category = get_category_config(&race_entry.categoria)?;
+    let total_rodadas = category.corridas_por_temporada as i32;
+    let player = driver_queries::get_player_driver(conn).ok()?;
+    let champ = standings_queries::get_championship_context(conn, &race_entry.categoria)
+        .unwrap_or(ChampionshipContext { player_position: 0, gap_to_leader: 0 });
+    let player_result = player_race.race_results.iter().find(|r| r.is_jogador)?;
+
+    let remaining = total_rodadas - race_entry.rodada;
+    let is_title_decider = remaining <= 2 && champ.gap_to_leader <= 50 && champ.player_position > 0;
+    let is_final_round_decider = race_entry.rodada == total_rodadas && is_title_decider;
+
+    let ctx = EventInterestContext {
+        categoria: race_entry.categoria.clone(),
+        season_phase: race_entry.season_phase,
+        rodada: race_entry.rodada,
+        total_rodadas,
+        week_of_year: race_entry.week_of_year,
+        track_id: race_entry.track_id as i32,
+        track_name: race_entry.track_name.clone(),
+        is_player_event: true,
+        player_championship_position: if champ.player_position > 0 {
+            Some(champ.player_position)
+        } else {
+            None
+        },
+        player_media: Some(player.atributos.midia as f32),
+        championship_gap_to_leader: if champ.gap_to_leader > 0 || champ.player_position == 1 {
+            Some(champ.gap_to_leader)
+        } else {
+            None
+        },
+        is_title_decider_candidate: is_title_decider,
+        thematic_slot: race_entry.thematic_slot,
+    };
+    let expected = calculate_expected_event_interest(&ctx);
+    Some(calculate_realized_event_interest(
+        &expected,
+        &ctx,
+        Some(player_result.finish_position),
+        Some(player_result.grid_position),
+        player_result.finish_position == 1,
+        player_result.finish_position <= 3 && !player_result.is_dnf,
+        player_result.is_dnf,
+        is_final_round_decider,
+    ))
 }
 
 #[tauri::command]
@@ -77,10 +132,50 @@ pub(crate) fn simulate_race_weekend_in_base_dir(
     let active_season = season_queries::get_active_season(&db.conn)
         .map_err(|e| format!("Falha ao buscar temporada ativa: {e}"))?
         .ok_or_else(|| "Temporada ativa nao encontrada.".to_string())?;
-    let player_total_races = get_category_config(&race_entry.categoria)
-        .ok_or_else(|| "Categoria da corrida nao encontrada.".to_string())?
-        .corridas_por_temporada as i32;
     let player_race = simulate_category_race(&mut db, &race_entry, true)?;
+
+    // Calcular repercussão pós-corrida e aplicar efeitos (fallback silencioso)
+    let post_race_bias = if let Some(realized) =
+        compute_post_race_impact(&db.conn, &race_entry, &player_race)
+    {
+        if let Ok(player) = driver_queries::get_player_driver(&db.conn) {
+            let player_result = player_race.race_results.iter().find(|r| r.is_jogador);
+            let base_midia_delta = if player_result.map_or(false, |r| r.finish_position == 1) {
+                3.0
+            } else if player_result.map_or(false, |r| r.finish_position <= 3 && !r.is_dnf) {
+                2.0
+            } else if player_result.map_or(false, |r| r.finish_position <= 5) {
+                1.0
+            } else if player_result.map_or(false, |r| r.is_dnf) {
+                -2.0
+            } else {
+                -1.0
+            };
+            let new_midia = (player.atributos.midia
+                + base_midia_delta * realized.media_delta_modifier as f64)
+                .clamp(0.0, 100.0);
+            let _ = driver_queries::update_driver_midia(&db.conn, &player.id, new_midia);
+
+            let base_mot_delta = if player_result.map_or(false, |r| r.finish_position == 1) {
+                4.0
+            } else if player_result.map_or(false, |r| r.finish_position <= 3 && !r.is_dnf) {
+                2.5
+            } else if player_result.map_or(false, |r| r.finish_position <= 5) {
+                1.0
+            } else if player_result.map_or(false, |r| r.is_dnf) {
+                -3.5
+            } else {
+                -0.5
+            };
+            let new_motivacao = (player.motivacao
+                + base_mot_delta * realized.motivation_delta_modifier as f64)
+                .clamp(0.0, 100.0);
+            let _ = driver_queries::update_driver_motivation(&db.conn, &player.id, new_motivacao);
+        }
+        realized.news_importance_bias
+    } else {
+        0
+    };
 
     append_race_result(
         &career_dir,
@@ -94,13 +189,14 @@ pub(crate) fn simulate_race_weekend_in_base_dir(
         active_season.numero,
         race_entry.rodada,
         &race_entry.categoria,
+        post_race_bias,
+        race_entry.thematic_slot,
     )?;
     let other_categories = simulate_other_categories(
         &mut db,
         &career_dir,
         &race_entry.categoria,
-        race_entry.rodada,
-        player_total_races,
+        race_entry.week_of_year,
         &active_season.id,
         active_season.numero,
     )?;
@@ -214,8 +310,7 @@ fn simulate_other_categories(
     db: &mut Database,
     career_dir: &Path,
     player_category: &str,
-    player_race_number: i32,
-    player_total_races: i32,
+    target_week: i32,
     season_id: &str,
     season_number: i32,
 ) -> Result<SimultaneousResults, String> {
@@ -228,35 +323,23 @@ fn simulate_other_categories(
             continue;
         }
 
-        let pending =
-            calendar_queries::get_pending_races_for_category(&db.conn, season_id, category.id)
-                .map_err(|e| {
-                    format!("Falha ao buscar corridas pendentes de {}: {e}", category.id)
-                })?;
+        // Busca corridas pendentes com week_of_year <= target_week, em ordem cronológica.
+        // Categorias especiais (weeks 41–50) são excluídas naturalmente durante o BlocoRegular
+        // (target_week ≤ 40) e incluídas automaticamente no BlocoEspecial.
+        let pending = calendar_queries::get_pending_races_up_to_week(
+            &db.conn,
+            season_id,
+            category.id,
+            target_week,
+        )
+        .map_err(|e| format!("Falha ao buscar corridas pendentes de {}: {e}", category.id))?;
+
         if pending.is_empty() {
             continue;
         }
 
-        let already_completed = category.corridas_por_temporada as i32 - pending.len() as i32;
-        let target_completed = races_should_be_completed(
-            player_race_number,
-            player_total_races,
-            category.corridas_por_temporada as i32,
-        );
-        let to_simulate = if player_race_number >= player_total_races {
-            pending.len() as i32
-        } else {
-            (target_completed - already_completed)
-                .max(0)
-                .min(pending.len() as i32)
-        };
-
-        if to_simulate <= 0 {
-            continue;
-        }
-
         let mut summaries = Vec::new();
-        for entry in pending.into_iter().take(to_simulate as usize) {
+        for entry in pending {
             let result = simulate_category_race(db, &entry, false)?;
             append_race_result(
                 career_dir,
@@ -292,10 +375,11 @@ fn simulate_other_categories(
             });
         }
 
+        let races_simulated = summaries.len() as i32;
         categories_simulated.push(CategorySimResult {
             category_id: category.id.to_string(),
             category_name: category.nome.to_string(),
-            races_simulated: to_simulate,
+            races_simulated,
             results: summaries,
         });
     }
@@ -458,6 +542,8 @@ fn persist_race_news(
     season_number: i32,
     round: i32,
     category_id: &str,
+    news_importance_bias: i32,
+    thematic_slot: crate::models::enums::ThematicSlot,
 ) -> Result<(), String> {
     let mut temp_id = temp_news_id_generator();
     let mut timestamp = news_queries::get_latest_news_timestamp(conn)
@@ -468,9 +554,19 @@ fn persist_race_news(
         season_number,
         round,
         category_id,
+        thematic_slot,
         &mut temp_id,
         &mut timestamp,
     );
+    // Em eventos principais (bias >= 2), elevar a primeira notícia de Corrida de Alta → Destaque
+    if news_importance_bias >= 2 {
+        for item in items.iter_mut() {
+            if item.tipo == NewsType::Corrida && item.importancia == NewsImportance::Alta {
+                item.importancia = NewsImportance::Destaque;
+                break;
+            }
+        }
+    }
     persist_generated_news(conn, &mut items)
 }
 

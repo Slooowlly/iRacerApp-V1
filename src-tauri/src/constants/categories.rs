@@ -293,6 +293,10 @@ pub fn get_feeder_categories(id: &str) -> Vec<&'static str> {
     }
 }
 
+pub fn is_especial(cat_id: &str) -> bool {
+    matches!(cat_id, "production_challenger" | "endurance")
+}
+
 pub fn get_target_categories(id: &str) -> Vec<&'static str> {
     match id {
         "mazda_rookie" => vec!["mazda_amador"],
@@ -358,5 +362,13 @@ mod tests {
     #[test]
     fn test_all_categories_count() {
         assert_eq!(get_all_categories().len(), 9);
+    }
+
+    #[test]
+    fn test_is_especial() {
+        assert!(is_especial("production_challenger"));
+        assert!(is_especial("endurance"));
+        assert!(!is_especial("gt3"));
+        assert!(!is_especial("mazda_rookie"));
     }
 }

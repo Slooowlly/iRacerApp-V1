@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
+import { formatDate } from "../../utils/formatters";
 import GlassButton from "../../components/ui/GlassButton";
 import GlassCard from "../../components/ui/GlassCard";
 import LoadingOverlay from "../../components/ui/LoadingOverlay";
@@ -143,7 +144,29 @@ function NextRaceTab() {
           <InfoBlock label="Clima" value={weatherLabel(nextRace.clima)} />
           <InfoBlock label="Duracao" value={`${nextRace.duracao_corrida_min} min`} />
           <InfoBlock label="Status" value={raceStatusLabel(nextRace.status)} />
+          <InfoBlock
+            label="Data"
+            value={nextRace.display_date ? formatDate(nextRace.display_date) : "—"}
+          />
         </div>
+
+        {nextRace.event_interest && (
+          <div className="mt-4 rounded-2xl border border-accent-primary/20 bg-accent-primary/5 px-4 py-4">
+            <p className="text-[10px] uppercase tracking-[0.18em] text-text-muted">
+              Interesse do evento
+            </p>
+            <div className="mt-2 flex items-baseline gap-3">
+              <span className="text-2xl font-semibold text-text-primary">
+                {nextRace.event_interest.display_value.toLocaleString("pt-BR")}
+              </span>
+              <span className="text-sm text-text-secondary">
+                {nextRace.event_interest.tier_label}
+              </span>
+            </div>
+          </div>
+        )}
+
+        {thematicBadge(nextRace.thematic_slot)}
 
         {error ? (
           <div className="mt-6 rounded-2xl border border-status-red/30 bg-status-red/10 px-4 py-4 text-sm text-status-red">
@@ -212,6 +235,26 @@ function weatherLabel(value) {
 
 function raceStatusLabel(value) {
   return value === "Concluida" ? "Concluida" : "Pendente";
+}
+
+const THEMATIC_BADGE_CONFIG = {
+  AberturaDaTemporada:  { label: "Abertura da Temporada", color: "border-status-green/30 bg-status-green/10 text-status-green" },
+  FinalDaTemporada:     { label: "Grande Final",           color: "border-accent-gold/40 bg-accent-gold/10 text-accent-gold" },
+  TensaoPreFinal:       { label: "Tensao Pre-Final",       color: "border-status-yellow/30 bg-status-yellow/10 text-status-yellow" },
+  MidpointPrestigio:    { label: "Etapa de Prestigio",     color: "border-accent-primary/30 bg-accent-primary/10 text-accent-primary" },
+  VisitanteRegional:    { label: "Visita Especial",        color: "border-accent-primary/20 bg-accent-primary/5 text-text-secondary" },
+  AberturaEspecial:     { label: "Abertura do Bloco Especial", color: "border-status-green/30 bg-status-green/10 text-status-green" },
+  FinalEspecial:        { label: "Final do Bloco Especial",    color: "border-accent-gold/40 bg-accent-gold/10 text-accent-gold" },
+};
+
+function thematicBadge(slot) {
+  const config = THEMATIC_BADGE_CONFIG[slot];
+  if (!config) return null;
+  return (
+    <div className={`mt-4 inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-medium tracking-wide ${config.color}`}>
+      {config.label}
+    </div>
+  );
 }
 
 export default NextRaceTab;

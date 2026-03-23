@@ -4,7 +4,7 @@ use crate::db::connection::DbError;
 
 // ── Versão atual do schema ────────────────────────────────────────────────────
 
-const CURRENT_VERSION: u32 = 8;
+const CURRENT_VERSION: u32 = 12;
 
 // ── API pública ───────────────────────────────────────────────────────────────
 
@@ -18,6 +18,10 @@ pub fn run_all(conn: &Connection) -> Result<(), DbError> {
     migrate_v6(conn)?;
     migrate_v7(conn)?;
     migrate_v8(conn)?;
+    migrate_v9(conn)?;
+    migrate_v10(conn)?;
+    migrate_v11(conn)?;
+    migrate_v12(conn)?;
     set_schema_version(conn, CURRENT_VERSION)?;
     Ok(())
 }
@@ -56,6 +60,22 @@ pub fn run_pending(conn: &Connection) -> Result<(), DbError> {
     if version < 8 {
         migrate_v8(conn)?;
         set_schema_version(conn, 8)?;
+    }
+    if version < 9 {
+        migrate_v9(conn)?;
+        set_schema_version(conn, 9)?;
+    }
+    if version < 10 {
+        migrate_v10(conn)?;
+        set_schema_version(conn, 10)?;
+    }
+    if version < 11 {
+        migrate_v11(conn)?;
+        set_schema_version(conn, 11)?;
+    }
+    if version < 12 {
+        migrate_v12(conn)?;
+        set_schema_version(conn, 12)?;
     }
     Ok(())
 }
@@ -520,29 +540,83 @@ fn migrate_v6(conn: &Connection) -> Result<(), DbError> {
 }
 
 fn migrate_v7(conn: &Connection) -> Result<(), DbError> {
-    ensure_column(conn, "teams", "hierarquia_duelos_total", "INTEGER NOT NULL DEFAULT 0")?;
-    ensure_column(conn, "teams", "hierarquia_duelos_n2_vencidos", "INTEGER NOT NULL DEFAULT 0")?;
-    ensure_column(conn, "teams", "hierarquia_sequencia_n2", "INTEGER NOT NULL DEFAULT 0")?;
-    ensure_column(conn, "teams", "hierarquia_sequencia_n1", "INTEGER NOT NULL DEFAULT 0")?;
-    ensure_column(conn, "teams", "hierarquia_inversoes_temporada", "INTEGER NOT NULL DEFAULT 0")?;
+    if table_exists(conn, "teams")? {
+        ensure_column(conn, "teams", "hierarquia_duelos_total", "INTEGER NOT NULL DEFAULT 0")?;
+        ensure_column(conn, "teams", "hierarquia_duelos_n2_vencidos", "INTEGER NOT NULL DEFAULT 0")?;
+        ensure_column(conn, "teams", "hierarquia_sequencia_n2", "INTEGER NOT NULL DEFAULT 0")?;
+        ensure_column(conn, "teams", "hierarquia_sequencia_n1", "INTEGER NOT NULL DEFAULT 0")?;
+        ensure_column(conn, "teams", "hierarquia_inversoes_temporada", "INTEGER NOT NULL DEFAULT 0")?;
+    }
     Ok(())
 }
 
 fn migrate_v8(conn: &Connection) -> Result<(), DbError> {
-    // Adiciona os dois eixos de intensidade ao modelo dual
-    ensure_column(conn, "rivalries", "historical_intensity", "REAL NOT NULL DEFAULT 0.0")?;
-    ensure_column(conn, "rivalries", "recent_activity",      "REAL NOT NULL DEFAULT 0.0")?;
-    // Temporada do último reforço — base para decisão de decaimento
-    ensure_column(conn, "rivalries", "temporada_update",     "INTEGER NOT NULL DEFAULT 0")?;
+    if table_exists(conn, "rivalries")? {
+        // Adiciona os dois eixos de intensidade ao modelo dual
+        ensure_column(conn, "rivalries", "historical_intensity", "REAL NOT NULL DEFAULT 0.0")?;
+        ensure_column(conn, "rivalries", "recent_activity",      "REAL NOT NULL DEFAULT 0.0")?;
+        // Temporada do último reforço — base para decisão de decaimento
+        ensure_column(conn, "rivalries", "temporada_update",     "INTEGER NOT NULL DEFAULT 0")?;
 
-    // Migra dados existentes: histórico recebe intensidade antiga; recente recebe 30% como calor residual
-    conn.execute_batch(
-        "UPDATE rivalries SET
-             historical_intensity = intensidade,
-             recent_activity      = ROUND(intensidade * 0.3, 2)
-         WHERE historical_intensity = 0.0 AND intensidade > 0.0;"
-    )?;
+        // Migra dados existentes: histórico recebe intensidade antiga; recente recebe 30% como calor residual
+        conn.execute_batch(
+            "UPDATE rivalries SET
+                 historical_intensity = intensidade,
+                 recent_activity      = ROUND(intensidade * 0.3, 2)
+             WHERE historical_intensity = 0.0 AND intensidade > 0.0;"
+        )?;
+    }
 
+    Ok(())
+}
+
+fn migrate_v9(conn: &Connection) -> Result<(), DbError> {
+    // Guards necessários para testes de migração parcial que criam schemas sem todas as tabelas.
+    if table_exists(conn, "contracts")? {
+        // Tipo de contrato: Regular (padrão) ou Especial (sazonal de meio de ano)
+        ensure_column(conn, "contracts", "tipo", "TEXT NOT NULL DEFAULT 'Regular'")?;
+    }
+    if table_exists(conn, "drivers")? {
+        // Categoria especial ativa do piloto — separada da categoria regular de carreira
+        ensure_column(conn, "drivers", "categoria_especial_ativa", "TEXT")?;
+    }
+    if table_exists(conn, "seasons")? {
+        // Fase da temporada: BlocoRegular | JanelaConvocacao | BlocoEspecial
+        ensure_column(conn, "seasons", "fase", "TEXT NOT NULL DEFAULT 'BlocoRegular'")?;
+    }
+    Ok(())
+}
+
+fn migrate_v10(conn: &Connection) -> Result<(), DbError> {
+    if table_exists(conn, "contracts")? {
+        // Classe do contrato especial (ex: "gt3", "mazda").
+        // NULL em contratos regulares; preenchido em contratos especiais de categorias multi-classe.
+        ensure_column(conn, "contracts", "classe", "TEXT")?;
+    }
+    Ok(())
+}
+
+fn migrate_v11(conn: &Connection) -> Result<(), DbError> {
+    if table_exists(conn, "calendar")? {
+        // Semana do ano (1-52) — unidade temporal interna do sistema.
+        // Categorias regulares: semanas 2-40. Especiais: semanas 41-50.
+        // Linhas existentes ficam com 0 (semana não atribuída — saves antigos).
+        ensure_column(conn, "calendar", "week_of_year", "INTEGER NOT NULL DEFAULT 0")?;
+
+        // Fase da temporada em que o evento ocorre.
+        // BlocoRegular para categorias regulares; BlocoEspecial para especiais.
+        ensure_column(conn, "calendar", "season_phase", "TEXT NOT NULL DEFAULT 'BlocoRegular'")?;
+    }
+    Ok(())
+}
+
+fn migrate_v12(conn: &Connection) -> Result<(), DbError> {
+    if table_exists(conn, "calendar")? {
+        // Papel narrativo fixo da corrida dentro da temporada (ThematicSlot).
+        // NULL para saves pré-v12 — lidos como NaoClassificado pelo domain layer.
+        // Sem DEFAULT: NULL é o estado semântico correto para saves legados.
+        ensure_column(conn, "calendar", "thematic_slot", "TEXT")?;
+    }
     Ok(())
 }
 
@@ -988,7 +1062,7 @@ mod tests {
 
         run_pending(&conn).expect("migration should succeed");
 
-        assert_eq!(get_schema_version(&conn).expect("schema version"), 6);
+        assert_eq!(get_schema_version(&conn).expect("schema version"), 11);
         assert!(column_exists(&conn, "teams", "nome_curto"));
         assert!(column_exists(&conn, "teams", "stats_vitorias"));
         assert!(column_exists(&conn, "teams", "stats_pontos"));
@@ -1068,7 +1142,7 @@ mod tests {
 
         run_pending(&conn).expect("migration should succeed");
 
-        assert_eq!(get_schema_version(&conn).expect("schema version"), 6);
+        assert_eq!(get_schema_version(&conn).expect("schema version"), 11);
         assert!(column_exists(&conn, "contracts", "piloto_nome"));
         assert!(column_exists(&conn, "contracts", "equipe_nome"));
         assert!(column_exists(&conn, "contracts", "duracao_anos"));
@@ -1141,7 +1215,7 @@ mod tests {
 
         run_pending(&conn).expect("migration should succeed");
 
-        assert_eq!(get_schema_version(&conn).expect("schema version"), 6);
+        assert_eq!(get_schema_version(&conn).expect("schema version"), 11);
         assert!(column_exists(&conn, "seasons", "rodada_atual"));
         assert!(column_exists(&conn, "seasons", "updated_at"));
         assert!(column_exists(&conn, "calendar", "season_id"));

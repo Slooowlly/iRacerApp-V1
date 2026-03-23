@@ -1,15 +1,15 @@
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::db::connection::DbError;
-use crate::models::enums::SeasonStatus;
+use crate::models::enums::{SeasonPhase, SeasonStatus};
 use crate::models::season::Season;
 
 pub fn insert_season(conn: &Connection, season: &Season) -> Result<(), DbError> {
     conn.execute(
         "INSERT INTO seasons (
-            id, numero, ano, status, rodada_atual, created_at, updated_at
+            id, numero, ano, status, rodada_atual, fase, created_at, updated_at
         ) VALUES (
-            :id, :numero, :ano, :status, :rodada_atual, :created_at, :updated_at
+            :id, :numero, :ano, :status, :rodada_atual, :fase, :created_at, :updated_at
         )",
         rusqlite::named_params! {
             ":id": &season.id,
@@ -17,6 +17,7 @@ pub fn insert_season(conn: &Connection, season: &Season) -> Result<(), DbError> 
             ":ano": season.ano,
             ":status": season.status.as_str(),
             ":rodada_atual": season.rodada_atual,
+            ":fase": season.fase.as_str(),
             ":created_at": &season.created_at,
             ":updated_at": &season.updated_at,
         },
@@ -72,15 +73,34 @@ pub fn get_all_seasons(conn: &Connection) -> Result<Vec<Season>, DbError> {
 }
 
 fn season_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Season> {
+    let fase_str = optional_string(row, "fase")?.unwrap_or_else(|| "BlocoRegular".to_string());
+    let fase = SeasonPhase::from_str_strict(&fase_str)
+        .map_err(rusqlite::Error::InvalidParameterName)?;
+
     Ok(Season {
         id: row.get("id")?,
         numero: row.get("numero")?,
         ano: row.get("ano")?,
         status: SeasonStatus::from_str(&row.get::<_, String>("status")?),
         rodada_atual: optional_i32(row, "rodada_atual")?.unwrap_or(1),
+        fase,
         created_at: optional_string(row, "created_at")?.unwrap_or_default(),
         updated_at: optional_string(row, "updated_at")?.unwrap_or_default(),
     })
+}
+
+pub fn update_season_fase(
+    conn: &Connection,
+    id: &str,
+    fase: &SeasonPhase,
+) -> Result<(), DbError> {
+    conn.execute(
+        "UPDATE seasons
+         SET fase = ?1, updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?2",
+        params![fase.as_str(), id],
+    )?;
+    Ok(())
 }
 
 fn optional_string(row: &rusqlite::Row<'_>, column_name: &str) -> rusqlite::Result<Option<String>> {
@@ -117,6 +137,7 @@ mod tests {
             .expect("season");
         assert_eq!(loaded.numero, 1);
         assert_eq!(loaded.status, SeasonStatus::EmAndamento);
+        assert_eq!(loaded.fase, SeasonPhase::BlocoRegular);
     }
 
     #[test]

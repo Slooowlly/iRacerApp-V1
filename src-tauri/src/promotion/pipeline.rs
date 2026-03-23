@@ -3,6 +3,7 @@ use rusqlite::Connection;
 
 use std::collections::HashSet;
 
+use crate::constants::categories::is_especial;
 use crate::db::queries::drivers as driver_queries;
 use crate::db::queries::teams as team_queries;
 use crate::promotion::block1::execute_block1;
@@ -107,6 +108,30 @@ fn verify_team_driver_consistency(conn: &Connection, movements: &[TeamMovement])
         let Ok(Some(team)) = team_queries::get_team_by_id(conn, &movement.team_id) else {
             continue;
         };
+        // Equipes especiais usam categoria_especial_ativa em vez de categoria_atual
+        if is_especial(&team.categoria) {
+            for pilot_id in [team.piloto_1_id.as_deref(), team.piloto_2_id.as_deref()]
+                .into_iter()
+                .flatten()
+            {
+                match driver_queries::get_driver(conn, pilot_id) {
+                    Err(_) => errors.push(format!(
+                        "CONSISTENCIA: equipe especial '{}' referencia piloto '{pilot_id}' inexistente",
+                        team.nome
+                    )),
+                    Ok(driver) => {
+                        if driver.categoria_especial_ativa.as_deref() != Some(team.categoria.as_str()) {
+                            errors.push(format!(
+                                "CONSISTENCIA: piloto '{}' em especial sem categoria_especial_ativa correta (tem '{:?}', equipe '{}')",
+                                driver.nome, driver.categoria_especial_ativa, team.categoria
+                            ));
+                        }
+                    }
+                }
+            }
+            continue;
+        }
+
         for pilot_id in [team.piloto_1_id.as_deref(), team.piloto_2_id.as_deref()]
             .into_iter()
             .flatten()

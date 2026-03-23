@@ -8,3 +8,4 @@ pub mod race;
 pub mod rivalry;
 pub mod season;
 pub mod team;
+pub mod temporal;

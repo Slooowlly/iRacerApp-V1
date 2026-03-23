@@ -3,7 +3,7 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 
 use crate::constants::categories::get_category_config;
-use crate::models::enums::{ContractStatus, TeamRole};
+use crate::models::enums::{ContractStatus, ContractType, TeamRole};
 
 // Formula de atratividade de proposta (uso futuro no modulo de mercado):
 // score = (car_performance / 100) * 30
@@ -26,7 +26,12 @@ pub struct Contract {
     pub salario_anual: f64,
     pub papel: TeamRole,
     pub status: ContractStatus,
+    pub tipo: ContractType,
     pub categoria: String,
+    /// Classe específica em categorias multi-classe (ex: "gt3", "mazda").
+    /// Preenchido apenas em contratos especiais; None em contratos regulares.
+    #[serde(default)]
+    pub classe: Option<String>,
     pub created_at: String,
 }
 
@@ -56,7 +61,9 @@ impl Contract {
             salario_anual,
             papel,
             status: ContractStatus::Ativo,
+            tipo: ContractType::Regular,
             categoria,
+            classe: None,
             created_at: current_timestamp(),
         }
     }

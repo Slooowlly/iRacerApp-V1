@@ -1,5 +1,5 @@
 import useCareerStore from "../../stores/useCareerStore";
-import { categoryLabel } from "../../utils/formatters";
+import { categoryLabel, formatDate } from "../../utils/formatters";
 import TabNavigation from "./TabNavigation";
 
 function Header({ activeTab, onTabChange }) {
@@ -51,7 +51,12 @@ function Header({ activeTab, onTabChange }) {
                 <h2 className="mt-1 truncate text-3xl font-bold tracking-[-0.02em] text-text-primary sm:text-4xl">
                   {nextRace.track_name}
                 </h2>
-                <div className="mt-1.5 flex items-center gap-3 text-sm text-text-secondary">
+                {nextRace.display_date && (
+                  <div className="mt-1.5 text-xs text-text-muted">
+                    {formatDate(nextRace.display_date)}
+                  </div>
+                )}
+                <div className="mt-1 flex items-center gap-3 text-sm text-text-secondary">
                   <span className="flex items-center gap-1.5">
                     <span className="opacity-60">🕐</span>
                     {nextRace.horario} Local

@@ -25,6 +25,7 @@ use crate::models::enums::DriverStatus;
 use crate::models::season::Season;
 use crate::promotion::pipeline::run_promotion_relegation;
 use crate::promotion::PromotionResult;
+use crate::rivalry::apply_season_end_rivalry_decay;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EndOfSeasonResult {
@@ -228,6 +229,9 @@ pub fn run_end_of_season(
     let promotion_result = run_promotion_relegation(conn, season.numero, &mut rng)
         .map_err(|e| format!("Erro na promocao/rebaixamento: {e}"))?;
 
+    apply_season_end_rivalry_decay(conn, season.numero)
+        .map_err(|e| format!("Erro no decaimento de rivalidades: {e}"))?;
+
     let new_season_id = next_id(conn, IdType::Season)
         .map_err(|e| format!("Falha ao gerar ID da nova temporada: {e}"))?;
     let new_year = season.ano + 1;
@@ -264,6 +268,7 @@ pub fn run_end_of_season(
     let mut race_ids_iter = race_ids.into_iter();
     let calendars = generate_all_calendars_with_id_factory(
         &new_season_id,
+        new_year,
         &mut || race_ids_iter.next().expect("calendar race id"),
         &mut rng,
     )?;

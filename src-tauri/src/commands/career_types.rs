@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::commands::race_history::{RoundResult, TrophyInfo};
+use crate::event_interest::EventInterestSummary;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateCareerInput {
@@ -110,6 +111,10 @@ pub struct RaceSummary {
     pub status: String,
     pub temperatura: f64,
     pub horario: String,
+    pub week_of_year: i32,
+    pub season_phase: String,
+    pub display_date: String,
+    pub event_interest: Option<EventInterestSummary>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

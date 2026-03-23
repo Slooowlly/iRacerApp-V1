@@ -1,5 +1,7 @@
+pub mod calendar;
 pub mod career;
 pub mod career_commands;
+pub mod convocation;
 pub mod career_detail;
 pub mod career_types;
 pub mod config;

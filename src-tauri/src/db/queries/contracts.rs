@@ -1,19 +1,20 @@
 use rusqlite::{params, types::ValueRef, Connection, OptionalExtension};
 
+use crate::constants::categories::get_category_config;
 use crate::db::connection::DbError;
 use crate::models::contract::Contract;
-use crate::models::enums::{ContractStatus, TeamRole};
+use crate::models::enums::{ContractStatus, ContractType, TeamRole};
 
 pub fn insert_contract(conn: &Connection, contract: &Contract) -> Result<(), DbError> {
     conn.execute(
         "INSERT INTO contracts (
             id, piloto_id, piloto_nome, equipe_id, equipe_nome,
             temporada_inicio, duracao_anos, temporada_fim,
-            salario, salario_anual, papel, status, categoria, created_at
+            salario, salario_anual, papel, status, tipo, categoria, classe, created_at
         ) VALUES (
             :id, :piloto_id, :piloto_nome, :equipe_id, :equipe_nome,
             :temporada_inicio, :duracao_anos, :temporada_fim,
-            :salario, :salario_anual, :papel, :status, :categoria, :created_at
+            :salario, :salario_anual, :papel, :status, :tipo, :categoria, :classe, :created_at
         )",
         rusqlite::named_params! {
             ":id": &contract.id,
@@ -28,7 +29,9 @@ pub fn insert_contract(conn: &Connection, contract: &Contract) -> Result<(), DbE
             ":salario_anual": contract.salario_anual,
             ":papel": contract.papel.as_str(),
             ":status": contract.status.as_str(),
+            ":tipo": contract.tipo.as_str(),
             ":categoria": &contract.categoria,
+            ":classe": &contract.classe,
             ":created_at": &contract.created_at,
         },
     )?;
@@ -48,6 +51,10 @@ pub fn get_contract_by_id(conn: &Connection, id: &str) -> Result<Option<Contract
     Ok(contract)
 }
 
+/// Retorna o contrato ativo mais recente para o piloto (qualquer tipo).
+/// ATENÇÃO: com dual contrato (Regular + Especial), esta função pode retornar
+/// qualquer um dos dois. Para semântica precisa, use
+/// `get_active_regular_contract_for_pilot` ou `get_active_especial_contract_for_pilot`.
 pub fn get_active_contract_for_pilot(
     conn: &Connection,
     piloto_id: &str,
@@ -135,6 +142,21 @@ pub fn update_contract_status(
     Ok(())
 }
 
+/// Expira todos os contratos Especial ativos da temporada indicada.
+/// Chamado durante PosEspecial — nenhum contrato Especial deve sobreviver ao bloco.
+///
+/// Filtra por `temporada_inicio = season_number` para precisão semântica e proteção
+/// contra bugs futuros. No modelo atual só existe um ciclo especial ativo por vez,
+/// portanto o resultado seria idêntico sem o filtro.
+pub fn expire_especial_contracts(conn: &Connection, season_number: i32) -> Result<usize, DbError> {
+    let n = conn.execute(
+        "UPDATE contracts SET status = 'Expirado'
+         WHERE tipo = 'Especial' AND status = 'Ativo' AND temporada_inicio = ?1",
+        params![season_number],
+    )?;
+    Ok(n)
+}
+
 pub fn expire_ending_contracts(conn: &Connection, temporada_atual: i32) -> Result<i32, DbError> {
     let updated = conn.execute(
         "UPDATE contracts
@@ -172,6 +194,177 @@ pub fn get_free_pilots(conn: &Connection) -> Result<Vec<String>, DbError> {
     Ok(pilots)
 }
 
+/// Retorna true se o piloto já possui um contrato Especial ativo.
+pub fn has_active_especial_contract(
+    conn: &Connection,
+    piloto_id: &str,
+) -> Result<bool, DbError> {
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM contracts
+         WHERE piloto_id = ?1 AND status = 'Ativo' AND tipo = 'Especial'",
+        params![piloto_id],
+        |row| row.get(0),
+    )?;
+    Ok(count > 0)
+}
+
+/// Retorna true se o piloto já possui um contrato Regular ativo.
+pub fn has_active_regular_contract(
+    conn: &Connection,
+    piloto_id: &str,
+) -> Result<bool, DbError> {
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM contracts
+         WHERE piloto_id = ?1 AND status = 'Ativo' AND tipo = 'Regular'",
+        params![piloto_id],
+        |row| row.get(0),
+    )?;
+    Ok(count > 0)
+}
+
+/// Retorna o contrato Regular ativo do piloto, se houver.
+pub fn get_active_regular_contract_for_pilot(
+    conn: &Connection,
+    piloto_id: &str,
+) -> Result<Option<Contract>, DbError> {
+    let mut stmt = conn.prepare(
+        "SELECT * FROM contracts
+         WHERE piloto_id = ?1 AND status = 'Ativo' AND tipo = 'Regular'
+         ORDER BY temporada_inicio DESC, created_at DESC
+         LIMIT 1",
+    )?;
+    let contract = stmt
+        .query_row(params![piloto_id], contract_from_row)
+        .optional()?;
+    Ok(contract)
+}
+
+/// Retorna o contrato Especial ativo do piloto, se houver.
+pub fn get_active_especial_contract_for_pilot(
+    conn: &Connection,
+    piloto_id: &str,
+) -> Result<Option<Contract>, DbError> {
+    let mut stmt = conn.prepare(
+        "SELECT * FROM contracts
+         WHERE piloto_id = ?1 AND status = 'Ativo' AND tipo = 'Especial'
+         ORDER BY temporada_inicio DESC, created_at DESC
+         LIMIT 1",
+    )?;
+    let contract = stmt
+        .query_row(params![piloto_id], contract_from_row)
+        .optional()?;
+    Ok(contract)
+}
+
+/// Pilotos com contrato Regular ativo e sem contrato Especial ativo.
+/// Representa elegibilidade mínima para convocação especial.
+/// A seleção final (score, classe, wildcards) é responsabilidade dos Passos 6+.
+pub fn get_pilots_available_for_especial(conn: &Connection) -> Result<Vec<String>, DbError> {
+    let mut stmt = conn.prepare(
+        "SELECT d.id
+         FROM drivers d
+         INNER JOIN contracts c_reg
+           ON c_reg.piloto_id = d.id AND c_reg.status = 'Ativo' AND c_reg.tipo = 'Regular'
+         LEFT JOIN contracts c_esp
+           ON c_esp.piloto_id = d.id AND c_esp.status = 'Ativo' AND c_esp.tipo = 'Especial'
+         WHERE c_esp.id IS NULL
+         ORDER BY d.nome",
+    )?;
+    let mapped = stmt.query_map([], |row| row.get::<_, String>(0))?;
+    let mut pilots = Vec::new();
+    for row in mapped {
+        pilots.push(row?);
+    }
+    Ok(pilots)
+}
+
+/// Retorna IDs de pilotos que já tiveram contrato Especial numa categoria+classe específica.
+/// Usado para montar a Fonte B (ContinuidadeHistorica) da convocação especial.
+pub fn get_pilots_with_especial_history(
+    conn: &Connection,
+    special_category: &str,
+    class_name: &str,
+) -> Result<Vec<String>, DbError> {
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT piloto_id FROM contracts
+         WHERE tipo = 'Especial' AND categoria = ?1 AND classe = ?2
+         ORDER BY piloto_id",
+    )?;
+    let mapped = stmt.query_map(params![special_category, class_name], |row| {
+        row.get::<_, String>(0)
+    })?;
+    let mut pilots = Vec::new();
+    for row in mapped {
+        pilots.push(row?);
+    }
+    Ok(pilots)
+}
+
+/// Contagem de contratos especiais anteriores de um piloto em categoria+classe.
+/// Usado no cálculo do score da Fonte B.
+pub fn get_especial_contract_count(
+    conn: &Connection,
+    piloto_id: &str,
+    special_category: &str,
+    class_name: &str,
+) -> Result<u32, DbError> {
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM contracts
+         WHERE piloto_id = ?1 AND tipo = 'Especial' AND categoria = ?2 AND classe = ?3",
+        params![piloto_id, special_category, class_name],
+        |row| row.get(0),
+    )?;
+    Ok(count as u32)
+}
+
+/// Gera um contrato especial sazonal.
+/// tipo = Especial, duracao_anos = 1 (placeholder: válido até fim do BlocoEspecial).
+/// Salário ≈ 50% do range regular do tier correspondente.
+/// O pipeline de encerramento do bloco especial expirará esses contratos explicitamente.
+pub fn generate_especial_contract(
+    id: String,
+    piloto_id: &str,
+    piloto_nome: &str,
+    equipe_id: &str,
+    equipe_nome: &str,
+    papel: TeamRole,
+    categoria: &str,
+    classe: &str,
+    temporada: i32,
+) -> Contract {
+    let tier = get_category_config(categoria)
+        .map(|c| c.tier)
+        .unwrap_or(2);
+    let salario_anual = salary_midpoint_for_tier(tier) * 0.5;
+    let mut contract = Contract::new(
+        id,
+        piloto_id.to_string(),
+        piloto_nome.to_string(),
+        equipe_id.to_string(),
+        equipe_nome.to_string(),
+        temporada,
+        1,
+        salario_anual,
+        papel,
+        categoria.to_string(),
+    );
+    contract.tipo = ContractType::Especial;
+    contract.classe = Some(classe.to_string());
+    contract
+}
+
+fn salary_midpoint_for_tier(tier: u8) -> f64 {
+    match tier {
+        0 => 10_000.0,
+        1 => 27_500.0,
+        2 => 55_000.0,
+        3 => 105_000.0,
+        4 => 200_000.0,
+        5 => 165_000.0,
+        _ => 10_000.0,
+    }
+}
+
 pub fn delete_contract(conn: &Connection, id: &str) -> Result<(), DbError> {
     conn.execute("DELETE FROM contracts WHERE id = ?1", params![id])?;
     Ok(())
@@ -192,11 +385,12 @@ fn contract_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Contract> {
         .or_else(|| optional_f64(row, "salario").ok().flatten())
         .unwrap_or(0.0);
 
-    // status e papel são campos obrigatórios com semântica crítica.
+    // status, papel e tipo são campos obrigatórios com semântica crítica.
     // Erros de leitura (NULL, coluna ausente, valor desconhecido) devem ser
     // propagados, não silenciados em defaults que distorcem o estado do mundo.
     let status_str: String = row.get("status")?;
     let papel_str: String = row.get("papel")?;
+    let tipo_str: String = row.get("tipo")?;
 
     Ok(Contract {
         id: row.get("id")?,
@@ -210,7 +404,9 @@ fn contract_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Contract> {
         salario_anual,
         papel: parse_contract_role(&papel_str)?,
         status: parse_contract_status(&status_str)?,
+        tipo: parse_contract_tipo(&tipo_str)?,
         categoria: optional_string(row, "categoria")?.unwrap_or_default(),
+        classe: optional_string(row, "classe")?,
         created_at: optional_string(row, "created_at")?.unwrap_or_default(),
     })
 }
@@ -225,6 +421,10 @@ fn parse_contract_status(s: &str) -> rusqlite::Result<ContractStatus> {
             "status de contrato desconhecido: '{other}'"
         ))),
     }
+}
+
+fn parse_contract_tipo(s: &str) -> rusqlite::Result<ContractType> {
+    ContractType::from_str_strict(s).map_err(rusqlite::Error::InvalidParameterName)
 }
 
 fn parse_contract_role(s: &str) -> rusqlite::Result<TeamRole> {
@@ -409,7 +609,9 @@ mod tests {
             salario_anual: 100_000.0,
             papel: TeamRole::Numero1,
             status,
+            tipo: ContractType::Regular,
             categoria: "gt3".to_string(),
+            classe: None,
             created_at: "2026-01-01T12:00:00".to_string(),
         }
     }
@@ -421,9 +623,9 @@ mod tests {
             "INSERT INTO contracts (
                 id, piloto_id, piloto_nome, equipe_id, equipe_nome,
                 temporada_inicio, duracao_anos, temporada_fim,
-                salario, salario_anual, papel, status, categoria, created_at
+                salario, salario_anual, papel, status, tipo, categoria, created_at
              ) VALUES ('C_BAD', 'P001', 'Piloto 1', 'T001', 'Equipe', 1, 1, 2,
-                       100000, 100000, 'Numero1', 'Suspenso', 'gt3', '2026-01-01')",
+                       100000, 100000, 'Numero1', 'Suspenso', 'Regular', 'gt3', '2026-01-01')",
             [],
         )
         .expect("insert contract with unknown status");
@@ -442,9 +644,9 @@ mod tests {
             "INSERT INTO contracts (
                 id, piloto_id, piloto_nome, equipe_id, equipe_nome,
                 temporada_inicio, duracao_anos, temporada_fim,
-                salario, salario_anual, papel, status, categoria, created_at
+                salario, salario_anual, papel, status, tipo, categoria, created_at
              ) VALUES ('C_BAD2', 'P001', 'Piloto 1', 'T001', 'Equipe', 1, 1, 2,
-                       100000, 100000, 'Wildcard', 'Ativo', 'gt3', '2026-01-01')",
+                       100000, 100000, 'Wildcard', 'Ativo', 'Regular', 'gt3', '2026-01-01')",
             [],
         )
         .expect("insert contract with unknown role");
@@ -481,7 +683,9 @@ mod tests {
                 salario_anual REAL NOT NULL DEFAULT 0.0,
                 papel TEXT NOT NULL DEFAULT 'Numero2',
                 status TEXT NOT NULL DEFAULT 'Ativo',
+                tipo TEXT NOT NULL DEFAULT 'Regular',
                 categoria TEXT NOT NULL,
+                classe TEXT,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );",
         )?;

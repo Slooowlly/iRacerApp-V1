@@ -1,7 +1,7 @@
 use chrono::Local;
 use serde::{Deserialize, Serialize};
 
-use crate::models::enums::SeasonStatus;
+use crate::models::enums::{SeasonPhase, SeasonStatus};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Season {
@@ -10,6 +10,7 @@ pub struct Season {
     pub ano: i32,
     pub status: SeasonStatus,
     pub rodada_atual: i32,
+    pub fase: SeasonPhase,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -23,6 +24,7 @@ impl Season {
             ano,
             status: SeasonStatus::EmAndamento,
             rodada_atual: 1,
+            fase: SeasonPhase::BlocoRegular,
             created_at: now.clone(),
             updated_at: now,
         }
@@ -40,6 +42,28 @@ impl Season {
 
     pub fn is_ativa(&self) -> bool {
         self.status == SeasonStatus::EmAndamento
+    }
+
+    /// Transição: BlocoRegular → JanelaConvocacao.
+    /// Chamado após o fim de todas as rodadas regulares.
+    pub fn avancar_para_janela(&mut self) {
+        self.fase = SeasonPhase::JanelaConvocacao;
+        self.updated_at = current_timestamp();
+    }
+
+    /// Transição: JanelaConvocacao → BlocoEspecial.
+    /// Chamado após a janela de convocação ser processada.
+    pub fn iniciar_bloco_especial(&mut self) {
+        self.fase = SeasonPhase::BlocoEspecial;
+        self.updated_at = current_timestamp();
+    }
+
+    pub fn is_janela_convocacao(&self) -> bool {
+        self.fase == SeasonPhase::JanelaConvocacao
+    }
+
+    pub fn is_bloco_especial(&self) -> bool {
+        self.fase == SeasonPhase::BlocoEspecial
     }
 }
 
@@ -59,6 +83,7 @@ mod tests {
         assert_eq!(season.ano, 2024);
         assert_eq!(season.status, SeasonStatus::EmAndamento);
         assert_eq!(season.rodada_atual, 1);
+        assert_eq!(season.fase, SeasonPhase::BlocoRegular);
     }
 
     #[test]
@@ -81,5 +106,23 @@ mod tests {
         assert!(season.is_ativa());
         season.finalizar();
         assert!(!season.is_ativa());
+    }
+
+    #[test]
+    fn test_season_fase_transitions() {
+        let mut season = Season::new("S001".to_string(), 1, 2024);
+        assert_eq!(season.fase, SeasonPhase::BlocoRegular);
+        assert!(!season.is_janela_convocacao());
+        assert!(!season.is_bloco_especial());
+
+        season.avancar_para_janela();
+        assert_eq!(season.fase, SeasonPhase::JanelaConvocacao);
+        assert!(season.is_janela_convocacao());
+        assert!(!season.is_bloco_especial());
+
+        season.iniciar_bloco_especial();
+        assert_eq!(season.fase, SeasonPhase::BlocoEspecial);
+        assert!(!season.is_janela_convocacao());
+        assert!(season.is_bloco_especial());
     }
 }

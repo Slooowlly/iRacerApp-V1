@@ -132,6 +132,9 @@ mod tests {
             duracao_classificacao_min: 15,
             status: RaceStatus::Pendente,
             horario: "14:00".to_string(),
+            week_of_year: 5,
+            season_phase: crate::models::enums::SeasonPhase::BlocoRegular,
+            display_date: "2024-02-03".to_string(),
         };
 
         let ctx = SimulationContext::from_calendar_entry(&entry, 4, true);

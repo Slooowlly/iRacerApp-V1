@@ -9,7 +9,9 @@ mod calendar;
 mod commands;
 mod config;
 mod constants;
+mod convocation;
 mod db;
+mod event_interest;
 mod evolution;
 mod export;
 mod generators;
@@ -109,6 +111,12 @@ pub fn run() {
             commands::save::create_season_backup,
             commands::save::list_backups,
             commands::save::restore_backup,
+            commands::convocation::advance_to_convocation_window,
+            commands::convocation::run_convocation_window,
+            commands::convocation::iniciar_bloco_especial,
+            commands::convocation::encerrar_bloco_especial,
+            commands::convocation::run_pos_especial,
+            commands::calendar::get_temporal_summary,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
