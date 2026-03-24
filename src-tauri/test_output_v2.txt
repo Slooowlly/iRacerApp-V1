@@ -1,0 +1,1115 @@
+cargo :    Compiling iracing-career-simulator 
+v0.1.0 (C:\Users\rodri\OneDrive\??rea de 
+Trabalho\Jogos\iRacerApp V1\src-tauri)
+No linha:1 caractere:1
++ cargo test --lib -- commands::race::tests::te
+st_simulate_race_weekend ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (  
+     Compiling ir...p V1\src-tauri):String) [  
+  ], RemoteException
+    + FullyQualifiedErrorId : NativeCommandErr 
+   or
+ 
+warning: unused import: `run_market`
+  --> src\commands\career.rs:38:61
+   |
+38 | use crate::market::pipeline::{fill_all_rem
+aining_vacancies, run_market};
+   |                                           
+                  ^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of 
+`#[warn(unused)]`) on by default
+
+warning: unused import: `next_id`
+ --> src\convocation\pipeline.rs:8:30
+  |
+8 | use crate::generators::ids::{next_id, 
+next_ids, IdType};
+  |                              ^^^^^^^
+
+warning: unused imports: `Candidato`, 
+`FonteConvocacao`, and `coletar_candidatos`
+ --> src\convocation\mod.rs:6:23
+  |
+6 | pub use eligibility::{coletar_candidatos, 
+Candidato, FonteConvocacao};
+  |                       ^^^^^^^^^^^^^^^^^^  
+^^^^^^^^^  ^^^^^^^^^^^^^^^
+
+warning: unused import: `GridClasse`
+ --> src\convocation\mod.rs:9:66
+  |
+9 |     run_convocation_window, 
+run_pos_especial, ConvocationResult, 
+GridClasse, PosEspecialResult,
+  |                                            
+                      ^^^^^^^^^^
+
+warning: unused imports: `Cotas` and 
+`calcular_cotas`
+  --> src\convocation\mod.rs:11:18
+   |
+11 | pub use quotas::{calcular_cotas, Cotas};
+   |                  ^^^^^^^^^^^^^^  ^^^^^
+
+warning: unused import: 
+`scoring::calcular_score`
+  --> src\convocation\mod.rs:12:9
+   |
+12 | pub use scoring::calcular_score;
+   |         ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: 
+`generate_and_insert_special_calendars`
+   --> src\db\queries\calendar.rs:328:27
+    |
+328 |     use crate::calendar::{generate_and_in
+sert_special_calendars, 
+generate_calendar_for_category};
+    |                           
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `tier_label`
+ --> src\event_interest\mod.rs:5:75
+  |
+5 |     calculate_expected_event_interest, 
+calculate_realized_event_interest, tier_label, 
+to_summary,
+  |                                            
+                               ^^^^^^^^^^
+
+warning: unused imports: 
+`ExpectedEventInterest`, `HeadlineStrength`, 
+and `InterestTier`
+ --> src\event_interest\mod.rs:8:49
+  |
+8 |     EventInterestContext, 
+EventInterestSummary, ExpectedEventInterest, 
+HeadlineStrength,
+  |                                            
+     ^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^
+9 |     InterestTier, RealizedEventInterest,
+  |     ^^^^^^^^^^^^
+
+warning: unused import: 
+`build_incident_news_item`
+  --> src\news\generator.rs:14:9
+   |
+14 |         build_incident_news_item, 
+build_injury_news_items, 
+generate_news_from_end_of_season,
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused variable: `season_number`
+   --> src\convocation\pipeline.rs:161:5
+    |
+161 |     season_number: i32,
+    |     ^^^^^^^^^^^^^ help: if this is 
+intentional, prefix it with an underscore: 
+`_season_number`
+    |
+    = note: `#[warn(unused_variables)]` (part 
+of `#[warn(unused)]`) on by default
+
+warning: function `all_free_regional_ids` is 
+never used
+    --> src\calendar\mod.rs:1061:8
+     |
+1061 |     fn all_free_regional_ids() -> 
+HashSet<u32> {
+     |        ^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: `#[warn(dead_code)]` (part of 
+`#[warn(unused)]`) on by default
+
+warning: function `verify_database` is never 
+used
+   --> src\commands\career.rs:463:15
+    |
+463 | pub(crate) fn verify_database(
+    |               ^^^^^^^^^^^^^^^
+
+warning: function `test_create_driver` is 
+never used
+   --> src\commands\career.rs:495:15
+    |
+495 | pub(crate) fn test_create_driver(
+    |               ^^^^^^^^^^^^^^^^^^
+
+warning: function `test_list_drivers` is never 
+used
+   --> src\commands\career.rs:554:15
+    |
+554 | pub(crate) fn test_list_drivers(app: 
+AppHandle, career_number: u32) -> 
+Result<Vec<Driver>, String> {
+    |               ^^^^^^^^^^^^^^^^^
+
+warning: struct `VerifyDatabaseResponse` is 
+never constructed
+   --> src\commands\career_types.rs:329:12
+    |
+329 | pub struct VerifyDatabaseResponse {
+    |            ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: method `next_career_number` is never 
+used
+   --> src\config\app_config.rs:122:12
+    |
+ 69 | impl AppConfig {
+    | -------------- method in this 
+implementation
+...
+122 |     pub fn next_career_number(&self) -> 
+u32 {
+    |            ^^^^^^^^^^^^^^^^^^
+
+warning: fields `nome`, `car_path`, `car_id`, 
+`car_class_id`, and `marca` are never read
+ --> src\constants\cars.rs:2:9
+  |
+1 | pub struct CarInfo {
+  |            ------- fields in this struct
+2 |     pub nome: &'static str,
+  |         ^^^^
+3 |     pub car_path: &'static str,
+  |         ^^^^^^^^
+4 |     pub car_id: u32,
+  |         ^^^^^^
+5 |     pub car_class_id: u32,
+  |         ^^^^^^^^^^^^
+...
+8 |     pub marca: &'static str,
+  |         ^^^^^
+
+warning: type alias `CarDefinition` is never 
+used
+  --> src\constants\cars.rs:11:10
+   |
+11 | pub type CarDefinition = CarInfo;
+   |          ^^^^^^^^^^^^^
+
+warning: function `get_car` is never used
+   --> src\constants\cars.rs:212:8
+    |
+212 | pub fn get_car(car_path: &str) -> 
+Option<&'static CarInfo> {
+    |        ^^^^^^^
+
+warning: function `get_all_cars` is never used
+   --> src\constants\cars.rs:216:8
+    |
+216 | pub fn get_all_cars() -> &'static 
+[CarInfo] {
+    |        ^^^^^^^^^^^^
+
+warning: function `get_cars_by_class` is never 
+used
+   --> src\constants\cars.rs:226:8
+    |
+226 | pub fn get_cars_by_class(classe: &str) 
+-> Vec<&'static CarInfo> {
+    |        ^^^^^^^^^^^^^^^^^
+
+warning: function `get_cars_by_brand` is never 
+used
+   --> src\constants\cars.rs:230:8
+    |
+230 | pub fn get_cars_by_brand(marca: &str) -> 
+Vec<&'static CarInfo> {
+    |        ^^^^^^^^^^^^^^^^^
+
+warning: fields `class_name` and 
+`multiplicador` are never read
+ --> src\constants\categories.rs:2:9
+  |
+1 | pub struct MultiClassInfo {
+  |            -------------- fields in this 
+struct
+2 |     pub class_name: &'static str,
+  |         ^^^^^^^^^^
+...
+5 |     pub multiplicador: f64,
+  |         ^^^^^^^^^^^^^
+
+warning: fields `monomarca`, 
+`usa_pistas_gratuitas`, and `pistas_variaveis` 
+are never read
+  --> src\constants\categories.rs:19:9
+   |
+ 8 | pub struct CategoryConfig {
+   |            -------------- fields in this 
+struct
+...
+19 |     pub monomarca: bool,
+   |         ^^^^^^^^^
+...
+22 |     pub usa_pistas_gratuitas: bool,
+   |         ^^^^^^^^^^^^^^^^^^^^
+23 |     pub pistas_fixas: u8,
+24 |     pub pistas_variaveis: u8,
+   |         ^^^^^^^^^^^^^^^^
+
+warning: type alias `CategoryDefinition` is 
+never used
+  --> src\constants\categories.rs:28:10
+   |
+28 | pub type CategoryDefinition = 
+CategoryConfig;
+   |          ^^^^^^^^^^^^^^^^^^
+
+warning: function `get_category` is never used
+   --> src\constants\categories.rs:253:8
+    |
+253 | pub fn get_category(id: &str) -> 
+Option<&'static CategoryConfig> {
+    |        ^^^^^^^^^^^^
+
+warning: function `get_feeder_categories` is 
+never used
+   --> src\constants\categories.rs:278:8
+    |
+278 | pub fn get_feeder_categories(id: &str) 
+-> Vec<&'static str> {
+    |        ^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `get_target_categories` is 
+never used
+   --> src\constants\categories.rs:300:8
+    |
+300 | pub fn get_target_categories(id: &str) 
+-> Vec<&'static str> {
+    |        ^^^^^^^^^^^^^^^^^^^^^
+
+warning: constant `BONUS_OVERALL_1ST` is never 
+used
+  --> src\constants\scoring.rs:19:11
+   |
+19 | pub const BONUS_OVERALL_1ST: u8 = 5;
+   |           ^^^^^^^^^^^^^^^^^
+
+warning: constant `BONUS_OVERALL_2ND` is never 
+used
+  --> src\constants\scoring.rs:20:11
+   |
+20 | pub const BONUS_OVERALL_2ND: u8 = 3;
+   |           ^^^^^^^^^^^^^^^^^
+
+warning: constant `BONUS_OVERALL_3RD` is never 
+used
+  --> src\constants\scoring.rs:21:11
+   |
+21 | pub const BONUS_OVERALL_3RD: u8 = 1;
+   |           ^^^^^^^^^^^^^^^^^
+
+warning: field `nome` is never read
+  --> src\constants\scoring.rs:25:9
+   |
+23 | pub struct DifficultyConfig {
+   |            ---------------- field in this 
+struct
+24 |     pub id: &'static str,
+25 |     pub nome: &'static str,
+   |         ^^^^
+
+warning: struct `WeatherPenalty` is never 
+constructed
+  --> src\constants\scoring.rs:30:12
+   |
+30 | pub struct WeatherPenalty {
+   |            ^^^^^^^^^^^^^^
+
+warning: constant 
+`RAIN_INTENSITY_DISTRIBUTION` is never used
+  --> src\constants\scoring.rs:63:11
+   |
+63 | pub const RAIN_INTENSITY_DISTRIBUTION: 
+[(WeatherCondition, f64); 3] = [
+   |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `get_points` is never used
+  --> src\constants\scoring.rs:83:8
+   |
+83 | pub fn get_points(position: u8, 
+is_endurance: bool) -> u8 {
+   |        ^^^^^^^^^^
+
+warning: function `get_fastest_lap_bonus` is 
+never used
+  --> src\constants\scoring.rs:87:8
+   |
+87 | pub fn get_fastest_lap_bonus(position: 
+u8) -> u8 {
+   |        ^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `get_overall_bonus` is never 
+used
+  --> src\constants\scoring.rs:95:8
+   |
+95 | pub fn 
+get_overall_bonus(overall_position: u8) -> u8 {
+   |        ^^^^^^^^^^^^^^^^^
+
+warning: function `get_difficulty` is never 
+used
+   --> src\constants\scoring.rs:108:8
+    |
+108 | pub fn get_difficulty(id: &str) -> (i32, 
+i32) {
+    |        ^^^^^^^^^^^^^^
+
+warning: function `get_all_difficulties` is 
+never used
+   --> src\constants\scoring.rs:117:8
+    |
+117 | pub fn get_all_difficulties() -> 
+&'static [DifficultyConfig] {
+    |        ^^^^^^^^^^^^^^^^^^^^
+
+warning: function 
+`rain_intensity_distribution` is never used
+   --> src\constants\scoring.rs:121:8
+    |
+121 | pub fn rain_intensity_distribution() -> 
+&'static [(WeatherCondition, f64); 3] {
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `get_rain_penalty` is never 
+used
+   --> src\constants\scoring.rs:134:8
+    |
+134 | pub fn get_rain_penalty(condition: 
+&WeatherCondition) -> (f64, f64) {
+    |        ^^^^^^^^^^^^^^^^
+
+warning: field `skill_media` is never read
+  --> src\constants\skill_ranges.rs:17:9
+   |
+13 | pub struct SkillRangeConfig {
+   |            ---------------- field in this 
+struct
+...
+17 |     pub skill_media: u8,
+   |         ^^^^^^^^^^^
+
+warning: function `get_teams_for_category` is 
+never used
+    --> src\constants\teams.rs:1299:8
+     |
+1299 | pub fn 
+get_teams_for_category(category_id: &str) -> 
+Vec<&'static TeamTemplate> {
+     |        ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `get_all_team_templates` is 
+never used
+    --> src\constants\teams.rs:1303:8
+     |
+1303 | pub fn get_all_team_templates() -> 
+&'static [TeamTemplate] {
+     |        ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `count_teams` is never used
+    --> src\constants\teams.rs:1307:8
+     |
+1307 | pub fn count_teams() -> usize {
+     |        ^^^^^^^^^^^
+
+warning: function 
+`get_teams_by_endurance_class` is never used
+    --> src\constants\teams.rs:1311:8
+     |
+1311 | pub fn 
+get_teams_by_endurance_class(classe: &str) -> 
+Vec<&'static TeamTemplate> {
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `get_teams_by_brand` is 
+never used
+    --> src\constants\teams.rs:1318:8
+     |
+1318 | pub fn get_teams_by_brand(marca: &str) 
+-> Vec<&'static TeamTemplate> {
+     |        ^^^^^^^^^^^^^^^^^^
+
+warning: fields `pais` and `tipo` are never 
+read
+  --> src\constants\tracks.rs:8:9
+   |
+ 4 | pub struct TrackInfo {
+   |            --------- fields in this struct
+...
+ 8 |     pub pais: &'static str,
+   |         ^^^^
+...
+12 |     pub tipo: TrackType,
+   |         ^^^^
+
+warning: type alias `TrackDefinition` is never 
+used
+  --> src\constants\tracks.rs:15:10
+   |
+15 | pub type TrackDefinition = TrackInfo;
+   |          ^^^^^^^^^^^^^^^
+
+warning: function `get_all_tracks` is never 
+used
+   --> src\constants\tracks.rs:754:8
+    |
+754 | pub fn get_all_tracks() -> &'static 
+[TrackInfo] {
+    |        ^^^^^^^^^^^^^^
+
+warning: function `get_tracks_for_category` is 
+never used
+   --> src\constants\tracks.rs:770:8
+    |
+770 | pub fn 
+get_tracks_for_category(category_id: &str) -> 
+Vec<&'static TrackInfo> {
+    |        ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `duracao_classificacao_para` 
+is never used
+   --> src\constants\tracks.rs:801:8
+    |
+801 | pub fn 
+duracao_classificacao_para(comprimento_km: 
+f64, track_id: u32) -> u32 {
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: fields `team_id` and `papel` are 
+never read
+   --> src\convocation\pipeline.rs:353:9
+    |
+349 |     struct PendingOp {
+    |            --------- fields in this 
+struct
+...
+353 |         team_id: String,
+    |         ^^^^^^^
+354 |         papel: TeamRole,
+    |         ^^^^^
+
+warning: function `count_races_by_status` is 
+never used
+   --> src\db\queries\calendar.rs:160:8
+    |
+160 | pub fn count_races_by_status(
+    |        ^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `delete_calendar_for_season` 
+is never used
+   --> src\db\queries\calendar.rs:230:8
+    |
+230 | pub fn delete_calendar_for_season(conn: 
+&Connection, season_id: &str) -> Result<(), 
+DbError> {
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `get_contracts_for_pilot` is 
+never used
+  --> src\db\queries\contracts.rs:74:8
+   |
+74 | pub fn get_contracts_for_pilot(
+   |        ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `get_contracts_by_category` 
+is never used
+   --> src\db\queries\contracts.rs:120:8
+    |
+120 | pub fn get_contracts_by_category(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `get_free_pilots` is never 
+used
+   --> src\db\queries\contracts.rs:179:8
+    |
+179 | pub fn get_free_pilots(conn: 
+&Connection) -> Result<Vec<String>, DbError> {
+    |        ^^^^^^^^^^^^^^^
+
+warning: function 
+`get_active_regular_contract_for_pilot` is 
+never used
+   --> src\db\queries\contracts.rs:226:8
+    |
+226 | pub fn 
+get_active_regular_contract_for_pilot(
+    |        
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function 
+`get_active_especial_contract_for_pilot` is 
+never used
+   --> src\db\queries\contracts.rs:243:8
+    |
+243 | pub fn 
+get_active_especial_contract_for_pilot(
+    |        
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function 
+`get_pilots_available_for_especial` is never 
+used
+   --> src\db\queries\contracts.rs:262:8
+    |
+262 | pub fn 
+get_pilots_available_for_especial(conn: 
+&Connection) -> Result<Vec<String>, DbError> {
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `delete_contract` is never 
+used
+   --> src\db\queries\contracts.rs:368:8
+    |
+368 | pub fn delete_contract(conn: 
+&Connection, id: &str) -> Result<(), DbError> {
+    |        ^^^^^^^^^^^^^^^
+
+warning: function `get_driver_by_name` is 
+never used
+   --> src\db\queries\drivers.rs:113:8
+    |
+113 | pub fn get_driver_by_name(conn: 
+&Connection, nome: &str) -> Result<Driver, 
+DbError> {
+    |        ^^^^^^^^^^^^^^^^^^
+
+warning: function `get_drivers_by_status` is 
+never used
+   --> src\db\queries\drivers.rs:137:8
+    |
+137 | pub fn get_drivers_by_status(conn: 
+&Connection, status: &str) -> 
+Result<Vec<Driver>, DbError> {
+    |        ^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `get_free_drivers` is never 
+used
+   --> src\db\queries\drivers.rs:153:8
+    |
+153 | pub fn get_free_drivers(conn: 
+&Connection) -> Result<Vec<Driver>, DbError> {
+    |        ^^^^^^^^^^^^^^^^
+
+warning: function `update_driver_attributes` 
+is never used
+   --> src\db\queries\drivers.rs:337:8
+    |
+337 | pub fn update_driver_attributes(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `delete_driver` is never used
+   --> src\db\queries\drivers.rs:431:8
+    |
+431 | pub fn delete_driver(conn: &Connection, 
+id: &str) -> Result<(), DbError> {
+    |        ^^^^^^^^^^^^^
+
+warning: function `count_drivers_by_category` 
+is never used
+   --> src\db\queries\drivers.rs:443:8
+    |
+443 | pub fn count_drivers_by_category(conn: 
+&Connection, categoria: &str) -> Result<u32, 
+DbError> {
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `get_news_by_driver` is 
+never used
+   --> src\db\queries\news.rs:279:8
+    |
+279 | pub fn get_news_by_driver(
+    |        ^^^^^^^^^^^^^^^^^^
+
+warning: function `get_news_by_team` is never 
+used
+   --> src\db\queries\news.rs:292:8
+    |
+292 | pub fn get_news_by_team(
+    |        ^^^^^^^^^^^^^^^^
+
+warning: function `delete_all_news` is never 
+used
+   --> src\db\queries\news.rs:329:8
+    |
+329 | pub fn delete_all_news(conn: 
+&Connection) -> Result<(), DbError> {
+    |        ^^^^^^^^^^^^^^^
+
+warning: function `get_all_seasons` is never 
+used
+  --> src\db\queries\seasons.rs:65:8
+   |
+65 | pub fn get_all_seasons(conn: &Connection) 
+-> Result<Vec<Season>, DbError> {
+   |        ^^^^^^^^^^^^^^^
+
+warning: function `update_team_duel_counters` 
+is never used
+   --> src\db\queries\teams.rs:347:8
+    |
+347 | pub fn update_team_duel_counters(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `update_team_morale` is 
+never used
+   --> src\db\queries\teams.rs:439:8
+    |
+439 | pub fn update_team_morale(conn: 
+&Connection, team_id: &str, morale: f64) -> 
+Result<(), DbError> {
+    |        ^^^^^^^^^^^^^^^^^^
+
+warning: function `delete_team` is never used
+   --> src\db\queries\teams.rs:447:8
+    |
+447 | pub fn delete_team(conn: &Connection, 
+id: &str) -> Result<(), DbError> {
+    |        ^^^^^^^^^^^
+
+warning: fields `week_of_year`, `track_id`, 
+and `track_name` are never read
+  --> src\event_interest\models.rs:24:9
+   |
+19 | pub struct EventInterestContext {
+   |            -------------------- fields in 
+this struct
+...
+24 |     pub week_of_year: i32,
+   |         ^^^^^^^^^^^^
+25 |     pub track_id: i32,
+   |         ^^^^^^^^
+26 |     pub track_name: String,
+   |         ^^^^^^^^^^
+   |
+   = note: `EventInterestContext` has derived 
+impls for the traits `Clone` and `Debug`, but 
+these are intentionally ignored during dead 
+code analysis
+
+warning: fields `team_id` and `total_drivers` 
+are never read
+  --> src\evolution\pipeline.rs:75:5
+   |
+71 | struct StandingEntry {
+   |        ------------- fields in this struct
+...
+75 |     team_id: Option<String>,
+   |     ^^^^^^^
+76 |     position: i32,
+77 |     total_drivers: i32,
+   |     ^^^^^^^^^^^^^
+   |
+   = note: `StandingEntry` has derived impls 
+for the traits `Clone` and `Debug`, but these 
+are intentionally ignored during dead code 
+analysis
+
+warning: variant `Team` is never constructed
+  --> src\generators\ids.rs:10:5
+   |
+ 8 | pub enum IdType {
+   |          ------ variant in this enum
+ 9 |     Driver,
+10 |     Team,
+   |     ^^^^
+   |
+   = note: `IdType` has derived impls for the 
+traits `Clone` and `Debug`, but these are 
+intentionally ignored during dead code analysis
+
+warning: field `player_contract` is never read
+  --> src\generators\world.rs:19:9
+   |
+13 | pub struct WorldData {
+   |            --------- field in this struct
+...
+19 |     pub player_contract: Contract,
+   |         ^^^^^^^^^^^^^^^
+   |
+   = note: `WorldData` has derived impls for 
+the traits `Clone` and `Debug`, but these are 
+intentionally ignored during dead code analysis
+
+warning: fields `team_id`, `n1_id`, and 
+`n2_id` are never read
+  --> src\hierarchy\orders.rs:29:9
+   |
+28 | pub struct DuelResult {
+   |            ---------- fields in this 
+struct
+29 |     pub team_id: String,
+   |         ^^^^^^^
+30 |     pub n1_id: String,
+   |         ^^^^^
+31 |     pub n2_id: String,
+   |         ^^^^^
+   |
+   = note: `DuelResult` has derived impls for 
+the traits `Clone` and `Debug`, but these are 
+intentionally ignored during dead code analysis
+
+warning: field `piloto_existente_id` is never 
+read
+  --> src\market\proposals.rs:91:9
+   |
+82 | pub struct Vacancy {
+   |            ------- field in this struct
+...
+91 |     pub piloto_existente_id: 
+Option<String>,
+   |         ^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `Vacancy` has derived impls for the 
+traits `Clone` and `Debug`, but these are 
+intentionally ignored during dead code analysis
+
+warning: fields `posicao_campeonato` and 
+`categoria_atual` are never read
+  --> src\market\team_ai.rs:11:9
+   |
+ 8 | pub struct AvailableDriver {
+   |            --------------- fields in this 
+struct
+...
+11 |     pub posicao_campeonato: i32,
+   |         ^^^^^^^^^^^^^^^^^^
+12 |     pub categoria_atual: String,
+   |         ^^^^^^^^^^^^^^^
+   |
+   = note: `AvailableDriver` has derived impls 
+for the traits `Clone` and `Debug`, but these 
+are intentionally ignored during dead code 
+analysis
+
+warning: associated items `get_all_tags` and 
+`attribute_tag` are never used
+   --> src\models\driver.rs:362:12
+    |
+155 | impl Driver {
+    | ----------- associated items in this 
+implementation
+...
+362 |     pub fn get_all_tags(&self) -> 
+Vec<AttributeTag> {
+    |            ^^^^^^^^^^^^
+...
+366 |     pub fn attribute_tag(attribute_name: 
+&'static str, value: f64) -> 
+Option<AttributeTag> {
+    |            ^^^^^^^^^^^^^
+
+warning: associated function `from_str` is 
+never used
+   --> src\models\enums.rs:127:12
+    |
+117 | impl ContractStatus {
+    | ------------------- associated function 
+in this implementation
+...
+127 |     pub fn from_str(s: &str) -> Self {
+    |            ^^^^^^^^
+
+warning: enum `HierarchyStatus` is never used
+   --> src\models\enums.rs:177:10
+    |
+177 | pub enum HierarchyStatus {
+    |          ^^^^^^^^^^^^^^^
+
+warning: associated items `as_str` and 
+`from_str` are never used
+   --> src\models\enums.rs:184:12
+    |
+183 | impl HierarchyStatus {
+    | -------------------- associated items in 
+this implementation
+184 |     pub fn as_str(&self) -> &str {
+    |            ^^^^^^
+...
+192 |     pub fn from_str(s: &str) -> Self {
+    |            ^^^^^^^^
+
+warning: associated items `as_str` and 
+`from_str` are never used
+   --> src\models\enums.rs:211:12
+    |
+210 | impl RainGroup {
+    | -------------- associated items in this 
+implementation
+211 |     pub fn as_str(&self) -> &str {
+    |            ^^^^^^
+...
+219 |     pub fn from_str(s: &str) -> Self {
+    |            ^^^^^^^^
+
+warning: associated items `as_str` and 
+`from_str` are never used
+   --> src\models\enums.rs:263:12
+    |
+262 | impl TrackType {
+    | -------------- associated items in this 
+implementation
+263 |     pub fn as_str(&self) -> &str {
+    |            ^^^^^^
+...
+270 |     pub fn from_str(s: &str) -> Self {
+    |            ^^^^^^^^
+
+warning: enum `IncidentType` is never used
+   --> src\models\enums.rs:338:10
+    |
+338 | pub enum IncidentType {
+    |          ^^^^^^^^^^^^
+
+warning: associated items `as_str` and 
+`from_str` are never used
+   --> src\models\enums.rs:347:12
+    |
+346 | impl IncidentType {
+    | ----------------- associated items in 
+this implementation
+347 |     pub fn as_str(&self) -> &str {
+    |            ^^^^^^
+...
+357 |     pub fn from_str(s: &str) -> Self {
+    |            ^^^^^^^^
+
+warning: enum `IncidentSeverity` is never used
+   --> src\models\enums.rs:371:10
+    |
+371 | pub enum IncidentSeverity {
+    |          ^^^^^^^^^^^^^^^^
+
+warning: associated items `as_str` and 
+`from_str` are never used
+   --> src\models\enums.rs:378:12
+    |
+377 | impl IncidentSeverity {
+    | --------------------- associated items 
+in this implementation
+378 |     pub fn as_str(&self) -> &str {
+    |            ^^^^^^
+...
+386 |     pub fn from_str(s: &str) -> Self {
+    |            ^^^^^^^^
+
+warning: enum `RaceSegment` is never used
+   --> src\models\enums.rs:398:10
+    |
+398 | pub enum RaceSegment {
+    |          ^^^^^^^^^^^
+
+warning: associated items `as_str` and 
+`from_str` are never used
+   --> src\models\enums.rs:407:12
+    |
+406 | impl RaceSegment {
+    | ---------------- associated items in 
+this implementation
+407 |     pub fn as_str(&self) -> &str {
+    |            ^^^^^^
+...
+417 |     pub fn from_str(s: &str) -> Self {
+    |            ^^^^^^^^
+
+warning: enum `ProposalStatus` is never used
+   --> src\models\enums.rs:461:10
+    |
+461 | pub enum ProposalStatus {
+    |          ^^^^^^^^^^^^^^
+
+warning: associated items `as_str` and 
+`from_str` are never used
+   --> src\models\enums.rs:469:12
+    |
+468 | impl ProposalStatus {
+    | ------------------- associated items in 
+this implementation
+469 |     pub fn as_str(&self) -> &str {
+    |            ^^^^^^
+...
+478 |     pub fn from_str(s: &str) -> Self {
+    |            ^^^^^^^^
+
+warning: enum `RefusalReason` is never used
+   --> src\models\enums.rs:491:10
+    |
+491 | pub enum RefusalReason {
+    |          ^^^^^^^^^^^^^
+
+warning: associated items `as_str` and 
+`from_str` are never used
+   --> src\models\enums.rs:500:12
+    |
+499 | impl RefusalReason {
+    | ------------------ associated items in 
+this implementation
+500 |     pub fn as_str(&self) -> &str {
+    |            ^^^^^^
+...
+510 |     pub fn from_str(s: &str) -> Self {
+    |            ^^^^^^^^
+
+warning: enum `NewsType` is never used
+   --> src\models\enums.rs:524:10
+    |
+524 | pub enum NewsType {
+    |          ^^^^^^^^
+
+warning: associated items `as_str` and 
+`from_str` are never used
+   --> src\models\enums.rs:536:12
+    |
+535 | impl NewsType {
+    | ------------- associated items in this 
+implementation
+536 |     pub fn as_str(&self) -> &str {
+    |            ^^^^^^
+...
+549 |     pub fn from_str(s: &str) -> Self {
+    |            ^^^^^^^^
+
+warning: enum `Difficulty` is never used
+   --> src\models\enums.rs:729:10
+    |
+729 | pub enum Difficulty {
+    |          ^^^^^^^^^^
+
+warning: associated items `as_str` and 
+`from_str` are never used
+   --> src\models\enums.rs:737:12
+    |
+736 | impl Difficulty {
+    | --------------- associated items in this 
+implementation
+737 |     pub fn as_str(&self) -> &str {
+    |            ^^^^^^
+...
+746 |     pub fn from_str(s: &str) -> Self {
+    |            ^^^^^^^^
+
+warning: associated function `from_template` 
+is never used
+   --> src\models\team.rs:119:12
+    |
+118 | impl Team {
+    | --------- associated function in this 
+implementation
+119 |     pub fn from_template(
+    |            ^^^^^^^^^^^^^
+
+warning: field `categoria` is never read
+ --> src\promotion\standings.rs:9:9
+  |
+6 | pub struct ConstructorStanding {
+  |            ------------------- field in 
+this struct
+...
+9 |     pub categoria: String,
+  |         ^^^^^^^^^
+  |
+  = note: `ConstructorStanding` has derived 
+impls for the traits `Clone` and `Debug`, but 
+these are intentionally ignored during dead 
+code analysis
+
+warning: method `label` is never used
+  --> src\rivalry\mod.rs:34:12
+   |
+33 | impl RivalryIntensityLevel {
+   | -------------------------- method in this 
+implementation
+34 |     pub fn label(&self) -> &'static str {
+   |            ^^^^^
+
+warning: field `rivalry_id` is never read
+  --> src\rivalry\mod.rs:92:9
+   |
+91 | pub struct RivalryApplied {
+   |            -------------- field in this 
+struct
+92 |     pub rivalry_id:    String,
+   |         ^^^^^^^^^^
+
+warning: fields `rivalry_id` and 
+`ultima_atualizacao` are never read
+   --> src\rivalry\mod.rs:165:9
+    |
+164 | pub struct PilotRivalrySummary {
+    |            ------------------- fields in 
+this struct
+165 |     pub rivalry_id:           String,
+    |         ^^^^^^^^^^
+...
+172 |     pub ultima_atualizacao:   String,
+    |         ^^^^^^^^^^^^^^^^^^
+    |
+    = note: `PilotRivalrySummary` has derived 
+impls for the traits `Clone` and `Debug`, but 
+these are intentionally ignored during dead 
+code analysis
+
+warning: function `remove_rivalry` is never 
+used
+   --> src\rivalry\mod.rs:203:8
+    |
+203 | pub fn remove_rivalry(conn: &Connection, 
+rivalry_id: &str) -> Result<(), DbError> {
+    |        ^^^^^^^^^^^^^^
+
+warning: fields `track_id` and `temperature` 
+are never read
+  --> src\simulation\context.rs:10:9
+   |
+ 7 | pub struct SimulationContext {
+   |            ----------------- fields in 
+this struct
+...
+10 |     pub track_id: u32,
+   |         ^^^^^^^^
+...
+13 |     pub temperature: f64,
+   |         ^^^^^^^^^^^
+   |
+   = note: `SimulationContext` has derived 
+impls for the traits `Clone` and `Debug`, but 
+these are intentionally ignored during dead 
+code analysis
+
+warning: fields `defesa` and `smoothness` are 
+never read
+  --> src\simulation\context.rs:55:9
+   |
+48 | pub struct SimDriver {
+   |            --------- fields in this struct
+...
+55 |     pub defesa: u8,
+   |         ^^^^^^
+...
+64 |     pub smoothness: u8,
+   |         ^^^^^^^^^^
+   |
+   = note: `SimDriver` has derived impls for 
+the traits `Clone` and `Debug`, but these are 
+intentionally ignored during dead code analysis
+
+warning: `iracing-career-simulator` (lib test) 
+generated 111 warnings (run `cargo fix --lib 
+-p iracing-career-simulator --tests` to apply 
+11 suggestions)
+    Finished `test` profile [unoptimized + 
+debuginfo] target(s) in 3.38s
+     Running unittests src\lib.rs (target\debug
+\deps\iracing_career_simulator_lib-67073373849f
+84fb.exe)
+
+running 1 test
+test commands::race::tests::test_simulate_race_weekend_rejects_completed_race ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 445 filtered out; finished in 0.23s
+
