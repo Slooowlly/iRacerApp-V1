@@ -10,7 +10,7 @@ function Header({ activeTab, onTabChange }) {
   return (
     <header className="relative z-20 flex h-[20vh] min-h-[160px] flex-col bg-black/40 backdrop-blur-xl">
       {/* Top bar: team name LEFT · tabs CENTERED · (space) RIGHT */}
-      <div className="shrink-0 border-b border-white/10 px-3 sm:px-4 lg:px-5 xl:px-6">
+      <div className="shrink-0 border-b border-white/10 px-3 py-2 sm:px-4 lg:px-5 xl:px-6">
         <div className="mx-auto flex w-full max-w-[1680px] items-center">
           {/* Left — team name */}
           <div className="flex min-w-0 flex-1 items-center gap-2">

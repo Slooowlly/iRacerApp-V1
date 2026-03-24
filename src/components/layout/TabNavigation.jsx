@@ -7,7 +7,7 @@ const tabs = [
 
 function TabNavigation({ activeTab, onTabChange }) {
   return (
-    <nav className="flex justify-center">
+    <nav className="inline-flex items-center gap-1 rounded-full bg-white/5 backdrop-blur-md border border-white/10 px-1">
       {tabs.map((tab) => {
         const isActive = activeTab === tab.id;
         return (
@@ -16,10 +16,10 @@ function TabNavigation({ activeTab, onTabChange }) {
             type="button"
             onClick={() => onTabChange?.(tab.id)}
             className={[
-              "px-5 py-4 text-sm font-semibold tracking-[0.06em] transition-glass border-b-2",
+              "px-5 py-[11px] text-sm font-semibold tracking-[0.06em] rounded-full transition-glass",
               isActive
-                ? "border-accent-primary text-accent-primary"
-                : "border-transparent text-text-secondary hover:text-text-primary hover:border-white/20",
+                ? "bg-accent-primary/20 text-accent-primary shadow-[inset_0_1px_0_rgba(255,255,255,0.1)]"
+                : "text-text-secondary hover:text-text-primary hover:bg-white/5",
             ].join(" ")}
           >
             {tab.label}

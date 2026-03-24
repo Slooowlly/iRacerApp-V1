@@ -17,7 +17,20 @@
       "Read(//c/Users/rodri/OneDrive/Área de Trabalho/Jogos/iRacerApp V1/src/pages/history/**)",
       "Bash(done)",
       "Bash(find 'c:/Users/rodri/OneDrive/Área de Trabalho/Jogos/iRacerApp V1/src-tauri/src/' -name *.rs -exec wc -l {} +)",
-      "Bash(gh auth:*)"
+      "Bash(gh auth:*)",
+      "Bash(gh api:*)",
+      "Bash(git config:*)",
+      "Bash(gh repo:*)",
+      "Bash(npm install:*)",
+      "Bash(npm run:*)",
+      "Bash(find \"c:\\\\Users\\\\rodri\\\\OneDrive\\\\Área de Trabalho\\\\Jogos\\\\iRacerApp V1\\\\src-tauri\\\\src\" -type f -name \"*.rs\" -exec wc -l {} +)",
+      "Bash(find \"c:\\\\Users\\\\rodri\\\\OneDrive\\\\Área de Trabalho\\\\Jogos\\\\iRacerApp V1\\\\src\\\\pages\" -type f \\\\\\( -name \"*.jsx\" -o -name \"*.js\" \\\\\\) -exec wc -l {} +)",
+      "Bash(grep -v \"^$\\\\|^running\\\\|^test \")",
+      "Bash(for test:*)",
+      "Bash(grep -v \"^warning\\\\|^  -->\\\\|^  =\\\\|^  |\\\\|^$\")",
+      "Bash(grep -v \"^warning\\\\|^  -->\\\\|^  =\\\\|^  |\\\\|^$\\\\|^ \\\\|Compiling\\\\|Finished\")",
+      "Bash(find '/c/Users/rodri/OneDrive/Área de Trabalho/Jogos/iRacerApp V1/src-tauri/src/export' -type f -name *.rs)",
+      "Bash(npx tauri:*)"
     ]
   }
 }
