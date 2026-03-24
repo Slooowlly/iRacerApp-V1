@@ -49,6 +49,7 @@ function SplashScreen() {
           <button onClick={() => navigate("/menu")} className="entry-action">
             ENTRAR
           </button>
+
         </div>
 
         {message && (
