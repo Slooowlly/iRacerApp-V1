@@ -195,6 +195,9 @@ const useCareerStore = create((set, get) => ({
         preseasonState: null,
         preseasonWeeks: [],
         playerProposals: [],
+        nextRace: null,
+        lastRaceResult: null,
+        otherCategoriesResult: null,
         isDirty: true,
       });
       return result;
@@ -341,6 +344,8 @@ const useCareerStore = create((set, get) => ({
         preseasonWeeks: [],
         playerProposals: [],
         endOfSeasonResult: null,
+        lastRaceResult: null,
+        otherCategoriesResult: null,
         isAdvancing: false,
         isAdvancingWeek: false,
         isRespondingProposal: false,

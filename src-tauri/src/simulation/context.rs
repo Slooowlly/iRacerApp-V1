@@ -135,6 +135,7 @@ mod tests {
             week_of_year: 5,
             season_phase: crate::models::enums::SeasonPhase::BlocoRegular,
             display_date: "2024-02-03".to_string(),
+            thematic_slot: crate::models::enums::ThematicSlot::NaoClassificado,
         };
 
         let ctx = SimulationContext::from_calendar_entry(&entry, 4, true);

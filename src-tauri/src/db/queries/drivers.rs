@@ -428,6 +428,14 @@ pub fn update_driver_midia(conn: &Connection, id: &str, midia: f64) -> Result<()
     Ok(())
 }
 
+pub fn update_driver_midia_delta(conn: &Connection, id: &str, delta: f64) -> Result<(), DbError> {
+    conn.execute(
+        "UPDATE drivers SET midia = MAX(0.0, MIN(100.0, midia + ?1)) WHERE id = ?2",
+        rusqlite::params![delta, id],
+    )?;
+    Ok(())
+}
+
 pub fn delete_driver(conn: &Connection, id: &str) -> Result<(), DbError> {
     conn.execute("DELETE FROM drivers WHERE id = ?1", rusqlite::params![id])?;
     Ok(())

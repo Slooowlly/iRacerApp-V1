@@ -18,15 +18,21 @@ use crate::db::queries::standings as standings_queries;
 use crate::db::queries::standings::ChampionshipContext;
 use crate::event_interest::{
     calculate_expected_event_interest, calculate_realized_event_interest, EventInterestContext,
-    RealizedEventInterest,
+    InterestTier, RealizedEventInterest,
 };
 use crate::db::queries::teams as team_queries;
 use crate::generators::ids::{next_ids, IdType};
-use crate::news::generator::generate_news_from_race;
+use crate::models::injury::Injury;
+use crate::news::generator::{
+    build_incident_news_item, build_injury_news_items, build_seasonal_framing_news_item,
+    generate_news_from_race, select_primary_incident,
+};
+use crate::news::season_framing::try_generate_seasonal_framing;
 use crate::news::{NewsImportance, NewsItem, NewsType};
 use crate::simulation::batch::{BriefRaceResult, CategorySimResult, SimHighlight, SimultaneousResults};
 use crate::simulation::context::{SimDriver, SimulationContext};
 use crate::simulation::engine::run_full_race;
+use crate::simulation::incidents::IncidentResult;
 use crate::simulation::race::RaceResult;
 use crate::{calendar::CalendarEntry, models::team::Team};
 
@@ -125,17 +131,30 @@ pub(crate) fn simulate_race_weekend_in_base_dir(
         .map_err(|e| format!("Falha ao buscar corrida: {e}"))?
         .ok_or_else(|| "Corrida nao encontrada.".to_string())?;
 
-    if race_entry.status.as_str() != "Pendente" {
-        return Err("A corrida selecionada ja foi simulada.".to_string());
-    }
-
     let active_season = season_queries::get_active_season(&db.conn)
         .map_err(|e| format!("Falha ao buscar temporada ativa: {e}"))?
         .ok_or_else(|| "Temporada ativa nao encontrada.".to_string())?;
-    let player_race = simulate_category_race(&mut db, &race_entry, true)?;
+
+    // Validar que a corrida pertence à temporada atual e está pendente
+    if race_entry.season_id != active_season.id {
+        return Err("A corrida selecionada nao pertence a temporada atual.".to_string());
+    }
+    if race_entry.status.as_str() != "Pendente" {
+        return Err("A corrida selecionada ja foi concluida ou simulada.".to_string());
+    }
+
+    let (player_race, player_new_injuries) = simulate_category_race(&mut db, &race_entry, true)?;
 
     // Calcular repercussão pós-corrida e aplicar efeitos (fallback silencioso)
-    let post_race_bias = if let Some(realized) =
+    // ID do jogador extraído para exclusão no bloco de world-facing media impact
+    let excluded_driver_id = player_race
+        .race_results
+        .iter()
+        .find(|r| r.is_jogador)
+        .map(|r| r.pilot_id.clone())
+        .unwrap_or_default();
+
+    let (post_race_bias, ai_media_impacts, interest_tier) = if let Some(realized) =
         compute_post_race_impact(&db.conn, &race_entry, &player_race)
     {
         if let Ok(player) = driver_queries::get_player_driver(&db.conn) {
@@ -172,10 +191,61 @@ pub(crate) fn simulate_race_weekend_in_base_dir(
                 .clamp(0.0, 100.0);
             let _ = driver_queries::update_driver_motivation(&db.conn, &player.id, new_motivacao);
         }
-        realized.news_importance_bias
+
+        // World-facing media impact — pilotos AI relevantes.
+        // Dependência semântica intencional: sem `realized`, este bloco não roda.
+        // `excluded_driver_id` (jogador) omitido para evitar dupla aplicação com o pipeline player-facing.
+        let all_incidents: Vec<IncidentResult> = player_race
+            .race_results
+            .iter()
+            .flat_map(|r| r.incidents.clone())
+            .collect();
+        let main_incident_pilot = select_primary_incident(
+            &all_incidents,
+            &player_new_injuries,
+            Some(&excluded_driver_id),
+        )
+        .map(|inc| inc.pilot_id.clone());
+
+        // P2 e P3 elegíveis — winner explicitamente excluído (mutuidade Win/Podium)
+        let podium_pilot_ids: Vec<&str> = player_race
+            .race_results
+            .iter()
+            .filter(|r| {
+                r.finish_position >= 2
+                    && r.finish_position <= 3
+                    && !r.is_dnf
+                    && r.pilot_id != player_race.winner_id
+            })
+            .map(|r| r.pilot_id.as_str())
+            .collect();
+
+        let race_ctx = crate::event_interest::RaceEventContext {
+            winner_id: &player_race.winner_id,
+            pole_sitter_id: &player_race.pole_sitter_id,
+            podium_ids: &podium_pilot_ids,
+            main_incident_pilot_id: main_incident_pilot.as_deref(),
+            excluded_driver_id: &excluded_driver_id,
+        };
+
+        // `player_new_injuries` contém lesões novas geradas na corrida (pode incluir pilotos AI).
+        let impacts = crate::event_interest::compute_public_media_impacts(
+            &race_ctx,
+            &player_new_injuries,
+            &realized,
+        );
+
+        (realized.news_importance_bias, impacts, realized.final_tier.clone())
     } else {
-        0
+        (0, vec![], InterestTier::Baixo)
     };
+
+    for impact in &ai_media_impacts {
+        driver_queries::update_driver_midia_delta(&db.conn, &impact.driver_id, impact.delta)
+            .map_err(|e| {
+                format!("Falha ao aplicar impacto de mídia para '{}': {e}", impact.driver_id)
+            })?;
+    }
 
     append_race_result(
         &career_dir,
@@ -191,6 +261,9 @@ pub(crate) fn simulate_race_weekend_in_base_dir(
         &race_entry.categoria,
         post_race_bias,
         race_entry.thematic_slot,
+        &interest_tier,
+        &player_race.race_results.iter().flat_map(|r| r.incidents.clone()).collect::<Vec<_>>(),
+        &player_new_injuries,
     )?;
     let other_categories = simulate_other_categories(
         &mut db,
@@ -212,7 +285,7 @@ fn simulate_category_race(
     db: &mut Database,
     race_entry: &CalendarEntry,
     advance_player_round: bool,
-) -> Result<RaceResult, String> {
+) -> Result<(RaceResult, Vec<Injury>), String> {
     let category = get_category_config(&race_entry.categoria)
         .ok_or_else(|| "Categoria da corrida nao encontrada.".to_string())?;
     let teams = team_queries::get_teams_by_category(&db.conn, &race_entry.categoria)
@@ -256,6 +329,7 @@ fn simulate_category_race(
         None
     };
 
+    let mut new_injuries_out: Vec<Injury> = Vec::new();
     db.transaction(|tx| {
         // 1. Processo de recuperação das lesões já ativas
         crate::evolution::injury::process_injury_recovery(tx, &race_entry.categoria)?;
@@ -265,13 +339,14 @@ fn simulate_category_race(
 
         // 3. Verifica os incidentes recém-gerados e processa possíveis lesões
         let flat_incidents: Vec<_> = result.race_results.iter().flat_map(|r| r.incidents.clone()).collect();
-        crate::evolution::injury::process_new_injuries(
+        let new_injuries = crate::evolution::injury::process_new_injuries(
             tx, 
             active_season.numero as i32, 
             &race_entry.id, 
             &flat_incidents,
             &mut rng
         )?;
+        new_injuries_out = new_injuries;
 
         // 4. Salva o resumo da corrida e avança
         crate::db::queries::races::insert_race_results_batch(tx, &race_entry.id, &result.race_results)?;
@@ -299,11 +374,20 @@ fn simulate_category_race(
             active_season.numero,
         )?;
 
+        // 7. Processa rivalidades geradas por colisões bilaterais (fatos da corrida)
+        crate::rivalry::process_collisions_rivalry(
+            tx,
+            &flat_incidents,
+            &race_entry.categoria,
+            race_entry.rodada,
+            active_season.numero,
+        )?;
+
         Ok(())
     })
     .map_err(|e| format!("Falha ao persistir resultado da corrida: {e}"))?;
 
-    Ok(result)
+    Ok((result, new_injuries_out))
 }
 
 fn simulate_other_categories(
@@ -340,7 +424,7 @@ fn simulate_other_categories(
 
         let mut summaries = Vec::new();
         for entry in pending {
-            let result = simulate_category_race(db, &entry, false)?;
+            let (result, _) = simulate_category_race(db, &entry, false)?;
             append_race_result(
                 career_dir,
                 &entry.categoria,
@@ -544,11 +628,28 @@ fn persist_race_news(
     category_id: &str,
     news_importance_bias: i32,
     thematic_slot: crate::models::enums::ThematicSlot,
+    interest_tier: &InterestTier,
+    flat_incidents: &[IncidentResult],
+    new_injuries: &[Injury],
 ) -> Result<(), String> {
+    let player = driver_queries::get_player_driver(conn).ok();
+    let player_id = player.as_ref().map(|p| p.id.as_str());
+
     let mut temp_id = temp_news_id_generator();
     let mut timestamp = news_queries::get_latest_news_timestamp(conn)
         .map_err(|e| format!("Falha ao buscar timestamp de noticias: {e}"))?
         + 1;
+    // Carrega visibilidade dos pilotos da corrida para modulação narrativa leve.
+    // Degrada silenciosamente para HashMap vazio se falhar — camada narrativa, não factual.
+    let driver_midia: HashMap<String, f64> = race_result
+        .race_results
+        .iter()
+        .filter_map(|r| {
+            driver_queries::get_driver(conn, &r.pilot_id)
+                .ok()
+                .map(|d| (d.id, d.atributos.midia))
+        })
+        .collect();
     let mut items = generate_news_from_race(
         race_result,
         season_number,
@@ -557,6 +658,7 @@ fn persist_race_news(
         thematic_slot,
         &mut temp_id,
         &mut timestamp,
+        &driver_midia,
     );
     // Em eventos principais (bias >= 2), elevar a primeira notícia de Corrida de Alta → Destaque
     if news_importance_bias >= 2 {
@@ -567,6 +669,80 @@ fn persist_race_news(
             }
         }
     }
+
+    // --- Additive incident and injury news ---
+    // Build pilot name lookup from race_result
+    let pilot_names: HashMap<String, String> = race_result
+        .race_results
+        .iter()
+        .map(|r| (r.pilot_id.clone(), r.pilot_name.clone()))
+        .collect();
+
+    // Select and build the single most relevant incident news item (optional)
+    if let Some(inc) = select_primary_incident(flat_incidents, new_injuries, player_id) {
+        let pilot_name = pilot_names
+            .get(&inc.pilot_id)
+            .map(|s| s.as_str())
+            .unwrap_or("Piloto");
+        let linked_name = inc
+            .linked_pilot_id
+            .as_deref()
+            .and_then(|lid| pilot_names.get(lid))
+            .map(|s| s.as_str());
+        let is_player = player_id.map_or(false, |pid| {
+            inc.pilot_id == pid || inc.linked_pilot_id.as_deref() == Some(pid)
+        });
+        items.push(build_incident_news_item(
+            inc,
+            &race_result.track_name,
+            pilot_name,
+            linked_name,
+            is_player,
+            category_id,
+            round,
+            season_number,
+            &mut temp_id,
+            &mut timestamp,
+        ));
+    }
+
+    // Build injury news items (one per injured pilot, additive)
+    let mut injury_items = build_injury_news_items(
+        new_injuries,
+        player_id,
+        &pilot_names,
+        &race_result.track_name,
+        category_id,
+        round,
+        season_number,
+        &mut temp_id,
+        &mut timestamp,
+    );
+    items.append(&mut injury_items);
+
+    // Framing sazonal — raro, apenas 1 item por corrida quando contexto justifica.
+    let winner = race_result.race_results.iter().find(|r| r.finish_position == 1);
+    let winner_id = winner.map(|w| w.pilot_id.as_str());
+    let winner_name = winner.map(|w| w.pilot_name.as_str());
+    let winner_media = winner.and_then(|w| driver_midia.get(&w.pilot_id).copied());
+    if let Some(signal) = try_generate_seasonal_framing(
+        &thematic_slot,
+        interest_tier,
+        winner_id,
+        winner_name,
+        winner_media,
+    ) {
+        let framing_item = build_seasonal_framing_news_item(
+            signal,
+            season_number,
+            round,
+            category_id,
+            &mut temp_id,
+            &mut timestamp,
+        );
+        items.push(framing_item);
+    }
+
     persist_generated_news(conn, &mut items)
 }
 
@@ -731,7 +907,7 @@ mod tests {
         let error = simulate_race_weekend_in_base_dir(&base_dir, "career_001", &next_race.id)
             .expect_err("second simulation should fail");
 
-        assert!(error.contains("ja foi simulada"));
+        assert!(error.contains("ja foi concluida ou simulada"), "Erro inesperado: {}", error);
 
         let _ = fs::remove_dir_all(base_dir);
     }

@@ -497,6 +497,87 @@ fn current_timestamp() -> String {
     Local::now().format("%Y-%m-%dT%H:%M:%S").to_string()
 }
 
+// ── Passo 15: Mapeamento Factual de Colisão ───────────────────────────────────
+
+pub fn process_collisions_rivalry(
+    conn: &Connection,
+    incidents: &[crate::simulation::incidents::IncidentResult],
+    categoria_id: &str,
+    rodada: i32,
+    temporada: i32,
+) -> Result<(), DbError> {
+    use std::collections::HashMap;
+    use crate::simulation::incidents::{IncidentType, IncidentSeverity};
+
+    let mut collision_pairs: HashMap<(String, String), (f64, f64)> = HashMap::new();
+
+    for inc in incidents {
+        if inc.incident_type == IncidentType::Collision {
+            if let Some(linked_id) = &inc.linked_pilot_id {
+                let mut p1 = inc.pilot_id.clone();
+                let mut p2 = linked_id.clone();
+                if p1 > p2 {
+                    std::mem::swap(&mut p1, &mut p2);
+                }
+
+                let (h, r) = if inc.severity == IncidentSeverity::Critical {
+                    (7.0, 18.0)
+                } else if inc.is_dnf {
+                    (5.0, 14.0)
+                } else if inc.severity == IncidentSeverity::Major || inc.positions_lost >= 3 {
+                    (3.0, 10.0)
+                } else {
+                    (2.0, 8.0)
+                };
+
+                let current = collision_pairs.entry((p1, p2)).or_insert((0.0, 0.0));
+                if h > current.0 {
+                    current.0 = h;
+                    current.1 = r;
+                }
+            }
+        }
+    }
+
+    for ((p1, p2), (h, r)) in collision_pairs {
+        let applied = apply_rivalry_event(
+            conn,
+            &RivalryEvent {
+                piloto_a: p1.clone(),
+                piloto_b: p2.clone(),
+                tipo: RivalryType::Colisao,
+                historical_delta: h,
+                recent_delta: r,
+                temporada,
+            },
+        )?;
+
+        if crossed_threshold(applied.old_perceived, applied.new_perceived).is_some() {
+            let nome_a = get_driver(conn, &p1)
+                .map(|d| d.nome)
+                .unwrap_or_else(|_| p1.clone());
+            let nome_b = get_driver(conn, &p2)
+                .map(|d| d.nome)
+                .unwrap_or_else(|_| p2.clone());
+
+            if let Some(item) = build_rivalry_news_item(
+                &applied,
+                &RivalryType::Colisao,
+                &nome_a,
+                &nome_b,
+                categoria_id,
+                temporada,
+                rodada,
+                &p1,
+            ) {
+                let _ = persist_rivalry_news(conn, item);
+            }
+        }
+    }
+
+    Ok(())
+}
+
 // ── Testes ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]

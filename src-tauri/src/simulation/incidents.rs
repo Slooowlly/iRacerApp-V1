@@ -29,6 +29,8 @@ pub struct IncidentResult {
     pub positions_lost: i32,
     pub is_dnf: bool,
     pub description: String,
+    #[serde(default)]
+    pub linked_pilot_id: Option<String>,
 }
 
 const MECHANICAL_BASE_CHANCE: f64 = 0.015;
@@ -266,6 +268,7 @@ fn make_incident(
     positions_lost: i32,
     is_dnf: bool,
     description: String,
+    linked_pilot_id: Option<String>,
 ) -> IncidentResult {
     IncidentResult {
         pilot_id,
@@ -275,6 +278,7 @@ fn make_incident(
         positions_lost,
         is_dnf,
         description,
+        linked_pilot_id,
     }
 }
 
@@ -319,6 +323,7 @@ pub fn process_segment_incidents(
                 pos_lost,
                 is_dnf,
                 desc,
+                None,
             ));
             affected.push(driver.id.clone());
             continue;
@@ -345,6 +350,7 @@ pub fn process_segment_incidents(
                 pos_lost,
                 is_dnf,
                 desc,
+                None,
             ));
             affected.push(driver.id.clone());
             continue;
@@ -362,6 +368,7 @@ pub fn process_segment_incidents(
             weather,
             rng,
         ) {
+            let neighbor_id = find_neighbor(&driver.id, state.current_position, states, &affected);
             let (trig_dnf, trig_lost) = resolve_collision_consequence(rng);
             let trig_desc = if trig_dnf {
                 format!("{} abandona apos colisao", driver.nome)
@@ -376,11 +383,11 @@ pub fn process_segment_incidents(
                 trig_lost,
                 trig_dnf,
                 trig_desc,
+                neighbor_id.clone(),
             ));
             affected.push(driver.id.clone());
 
-            if let Some(neighbor_id) =
-                find_neighbor(&driver.id, state.current_position, states, &affected)
+            if let Some(neighbor_id) = neighbor_id
             {
                 let neighbor_name = drivers
                     .iter()
@@ -407,6 +414,7 @@ pub fn process_segment_incidents(
                     nb_lost,
                     nb_dnf,
                     nb_desc,
+                    Some(driver.id.clone()),
                 ));
                 affected.push(neighbor_id);
             }

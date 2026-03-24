@@ -529,6 +529,7 @@ pub enum NewsType {
     Promocao,
     Rivalidade,
     Titulo,
+    Incidente,
 }
 
 impl NewsType {
@@ -541,6 +542,7 @@ impl NewsType {
             NewsType::Promocao => "Promocao",
             NewsType::Rivalidade => "Rivalidade",
             NewsType::Titulo => "Titulo",
+            NewsType::Incidente => "Incidente",
         }
     }
 
@@ -552,6 +554,7 @@ impl NewsType {
             "Promocao" => NewsType::Promocao,
             "Rivalidade" => NewsType::Rivalidade,
             "Titulo" => NewsType::Titulo,
+            "Incidente" => NewsType::Incidente,
             _ => NewsType::Corrida,
         }
     }

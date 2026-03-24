@@ -1,5 +1,6 @@
 pub mod calculator;
 pub mod models;
+pub mod public_impact;
 
 pub use calculator::{
     calculate_expected_event_interest, calculate_realized_event_interest, tier_label, to_summary,
@@ -7,4 +8,7 @@ pub use calculator::{
 pub use models::{
     EventInterestContext, EventInterestSummary, ExpectedEventInterest, HeadlineStrength,
     InterestTier, RealizedEventInterest,
+};
+pub use public_impact::{
+    compute_public_media_impacts, DriverMediaImpact, MediaImpactReason, RaceEventContext,
 };

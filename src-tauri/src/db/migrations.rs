@@ -1062,7 +1062,7 @@ mod tests {
 
         run_pending(&conn).expect("migration should succeed");
 
-        assert_eq!(get_schema_version(&conn).expect("schema version"), 11);
+        assert_eq!(get_schema_version(&conn).expect("schema version"), 12);
         assert!(column_exists(&conn, "teams", "nome_curto"));
         assert!(column_exists(&conn, "teams", "stats_vitorias"));
         assert!(column_exists(&conn, "teams", "stats_pontos"));
@@ -1142,7 +1142,7 @@ mod tests {
 
         run_pending(&conn).expect("migration should succeed");
 
-        assert_eq!(get_schema_version(&conn).expect("schema version"), 11);
+        assert_eq!(get_schema_version(&conn).expect("schema version"), 12);
         assert!(column_exists(&conn, "contracts", "piloto_nome"));
         assert!(column_exists(&conn, "contracts", "equipe_nome"));
         assert!(column_exists(&conn, "contracts", "duracao_anos"));
@@ -1215,7 +1215,7 @@ mod tests {
 
         run_pending(&conn).expect("migration should succeed");
 
-        assert_eq!(get_schema_version(&conn).expect("schema version"), 11);
+        assert_eq!(get_schema_version(&conn).expect("schema version"), 12);
         assert!(column_exists(&conn, "seasons", "rodada_atual"));
         assert!(column_exists(&conn, "seasons", "updated_at"));
         assert!(column_exists(&conn, "calendar", "season_id"));

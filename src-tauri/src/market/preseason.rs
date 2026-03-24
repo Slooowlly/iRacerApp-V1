@@ -15,7 +15,6 @@ use crate::market::proposals::{MarketProposal, ProposalStatus};
 use crate::models::contract::Contract;
 use crate::models::driver::Driver;
 use crate::models::enums::{ContractStatus, DriverStatus, TeamRole};
-use crate::models::team::HierarchyStatus;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum PreSeasonPhase {
@@ -135,7 +134,23 @@ pub enum PendingAction {
         n1_name: String,
         n2_id: Option<String>,
         n2_name: String,
+        // Estado hierárquico anterior (capturado no início da preseason).
+        // #[serde(default)] para compatibilidade com saves anteriores que não têm esses campos.
+        #[serde(default)]
+        prev_n1_id: Option<String>,
+        #[serde(default)]
+        prev_n2_id: Option<String>,
+        #[serde(default)]
+        prev_tensao: f64,
+        #[serde(default = "default_estavel")]
+        prev_status: String,
+        #[serde(default)]
+        prev_categoria: String,
     },
+}
+
+fn default_estavel() -> String {
+    "estavel".to_string()
 }
 
 pub fn initialize_preseason(
@@ -575,6 +590,7 @@ fn build_hierarchy_events(
             .and_then(|id| temp_drivers_by_id.get(id))
             .map(|driver| driver.nome.clone())
             .unwrap_or_else(|| "Sem piloto".to_string());
+        let prev = original_teams_by_id.get(&team.id);
         events.push(PlannedEvent {
             week,
             event: PendingAction::UpdateHierarchy {
@@ -584,6 +600,15 @@ fn build_hierarchy_events(
                 n1_name,
                 n2_id: team.piloto_2_id.clone(),
                 n2_name,
+                prev_n1_id: prev.and_then(|t| t.hierarquia_n1_id.clone()),
+                prev_n2_id: prev.and_then(|t| t.hierarquia_n2_id.clone()),
+                prev_tensao: prev.map(|t| t.hierarquia_tensao).unwrap_or(0.0),
+                prev_status: prev
+                    .map(|t| t.hierarquia_status.clone())
+                    .unwrap_or_else(|| "estavel".to_string()),
+                prev_categoria: prev
+                    .map(|t| t.categoria.clone())
+                    .unwrap_or_default(),
             },
             executed: false,
         });
@@ -884,18 +909,62 @@ fn execute_action(
             n1_name,
             n2_id,
             n2_name,
+            prev_n1_id,
+            prev_n2_id,
+            prev_tensao,
+            prev_status,
+            prev_categoria,
         } => {
-            team_queries::update_team_pilots(conn, team_id, n1_id.as_deref(), n2_id.as_deref())
-                .map_err(|e| format!("Falha ao atualizar pilotos da equipe '{}': {e}", team_id))?;
+            use crate::hierarchy::transition::{
+                decide_hierarchy_transition, resolve_transition_values, NewSeasonSetup,
+                PrevHierarchyState, ResolvedTeamLineup,
+            };
+
+            // Valida o lineup final antes de qualquer leitura de DB ou persistência
+            let resolved_lineup =
+                ResolvedTeamLineup::new(team_id, n1_id.as_deref(), n2_id.as_deref())
+                    .map_err(|e| format!("Lineup inválido para UpdateHierarchy: {e}"))?;
+
+            // Ler categoria atual da equipe no DB (pode ter sido atualizada durante o ciclo)
+            let current_team = team_queries::get_team_by_id(conn, team_id)
+                .map_err(|e| format!("Falha ao ler equipe '{}': {e}", team_id))?
+                .ok_or_else(|| format!("Equipe '{}' nao encontrada", team_id))?;
+
+            let prev_state = PrevHierarchyState {
+                n1_id: prev_n1_id.as_deref(),
+                n2_id: prev_n2_id.as_deref(),
+                tensao: *prev_tensao,
+                status: prev_status.as_str(),
+                categoria: prev_categoria.as_str(),
+            };
+            let new_setup = NewSeasonSetup {
+                n1_id: Some(resolved_lineup.n1_id.as_str()),
+                n2_id: Some(resolved_lineup.n2_id.as_str()),
+                categoria: &current_team.categoria,
+            };
+            let decision = decide_hierarchy_transition(&prev_state, &new_setup);
+            let (new_tensao, new_status) =
+                resolve_transition_values(&decision, *prev_tensao, prev_status.as_str());
+
+            team_queries::update_team_pilots(
+                conn,
+                team_id,
+                Some(resolved_lineup.n1_id.as_str()),
+                Some(resolved_lineup.n2_id.as_str()),
+            )
+            .map_err(|e| format!("Falha ao atualizar pilotos da equipe '{}': {e}", team_id))?;
             team_queries::update_team_hierarchy(
                 conn,
                 team_id,
-                n1_id.as_deref(),
-                n2_id.as_deref(),
-                HierarchyStatus::Estavel.as_str(),
-                0.0,
+                Some(resolved_lineup.n1_id.as_str()),
+                Some(resolved_lineup.n2_id.as_str()),
+                new_status,
+                new_tensao,
             )
             .map_err(|e| format!("Falha ao atualizar hierarquia da equipe '{}': {e}", team_id))?;
+            // Contadores de duelo são sempre resetados — são temporais por temporada
+            team_queries::update_team_duel_counters(conn, team_id, 0, 0, 0, 0, 0)
+                .map_err(|e| format!("Falha ao resetar contadores da equipe '{}': {e}", team_id))?;
             events.push(MarketEvent {
                 event_type: MarketEventType::HierarchyUpdated,
                 headline: format!("{team_name}: {n1_name} e N1, {n2_name} e N2"),
@@ -1616,5 +1685,195 @@ mod tests {
             .expect("time")
             .as_nanos();
         std::env::temp_dir().join(format!("iracerapp_{label}_{nanos}"))
+    }
+
+    // ── Testes do handler UpdateHierarchy ──
+
+    fn update_hierarchy_action(
+        team_id: &str,
+        n1_id: Option<&str>,
+        n2_id: Option<&str>,
+    ) -> PendingAction {
+        PendingAction::UpdateHierarchy {
+            team_id: team_id.to_string(),
+            team_name: "Equipe Teste".to_string(),
+            n1_id: n1_id.map(str::to_string),
+            n1_name: n1_id.unwrap_or("").to_string(),
+            n2_id: n2_id.map(str::to_string),
+            n2_name: n2_id.unwrap_or("").to_string(),
+            prev_n1_id: None,
+            prev_n2_id: None,
+            prev_tensao: 0.0,
+            prev_status: "estavel".to_string(),
+            prev_categoria: "gt4".to_string(),
+        }
+    }
+
+    #[test]
+    fn test_update_hierarchy_valid_lineup_persists() {
+        let conn = setup_market_fixture();
+        let action = update_hierarchy_action("T001", Some("P001"), Some("P002"));
+        let mut events = Vec::new();
+        let mut proposals = Vec::new();
+
+        execute_action(&conn, "S002", 2, &action, &mut events, &mut proposals)
+            .expect("ação deve executar com lineup válido");
+
+        let team = team_queries::get_team_by_id(&conn, "T001").unwrap().unwrap();
+        assert_eq!(team.hierarquia_n1_id.as_deref(), Some("P001"));
+        assert_eq!(team.hierarquia_n2_id.as_deref(), Some("P002"));
+        assert_eq!(team.piloto_1_id.as_deref(), Some("P001"));
+        assert_eq!(team.piloto_2_id.as_deref(), Some("P002"));
+        // Contadores devem ter sido resetados
+        assert_eq!(team.hierarquia_duelos_total, 0);
+    }
+
+    #[test]
+    fn test_update_hierarchy_rejects_missing_n1() {
+        let conn = setup_market_fixture();
+        let action = update_hierarchy_action("T001", None, Some("P002"));
+        let mut events = Vec::new();
+        let mut proposals = Vec::new();
+
+        let err = execute_action(&conn, "S002", 2, &action, &mut events, &mut proposals)
+            .unwrap_err();
+        assert!(err.contains("N1 ausente"), "erro inesperado: {err}");
+    }
+
+    #[test]
+    fn test_update_hierarchy_rejects_same_driver_for_n1_n2() {
+        let conn = setup_market_fixture();
+        let action = update_hierarchy_action("T001", Some("P001"), Some("P001"));
+        let mut events = Vec::new();
+        let mut proposals = Vec::new();
+
+        let err = execute_action(&conn, "S002", 2, &action, &mut events, &mut proposals)
+            .unwrap_err();
+        assert!(err.contains("mesmo piloto"), "erro inesperado: {err}");
+    }
+
+    // ── Testes de fechamento do macrobloco (contrato completo) ──
+
+    #[test]
+    fn test_same_pair_preserves_tensao_and_resets_counters() {
+        let conn = setup_market_fixture();
+        // Configurar estado hierárquico pré-existente com valores não-zero
+        conn.execute(
+            "UPDATE teams SET hierarquia_n1_id='P001', hierarquia_n2_id='P002',
+             hierarquia_tensao=45.0, hierarquia_status='tensao',
+             hierarquia_duelos_total=5, hierarquia_duelos_n2_vencidos=3,
+             hierarquia_sequencia_n2=2, hierarquia_sequencia_n1=1,
+             hierarquia_inversoes_temporada=1 WHERE id='T001'",
+            [],
+        )
+        .expect("setup hierarchy state");
+
+        let action = PendingAction::UpdateHierarchy {
+            team_id: "T001".to_string(),
+            team_name: "Equipe Teste".to_string(),
+            n1_id: Some("P001".to_string()),
+            n1_name: "Piloto A".to_string(),
+            n2_id: Some("P002".to_string()),
+            n2_name: "Piloto B".to_string(),
+            // Mesma dupla, mesma categoria → PartialPreserve
+            prev_n1_id: Some("P001".to_string()),
+            prev_n2_id: Some("P002".to_string()),
+            prev_tensao: 45.0,
+            prev_status: "tensao".to_string(),
+            prev_categoria: "gt4".to_string(),
+        };
+        let mut events = Vec::new();
+        let mut proposals = Vec::new();
+        execute_action(&conn, "S002", 2, &action, &mut events, &mut proposals)
+            .expect("ação deve executar");
+
+        let team = team_queries::get_team_by_id(&conn, "T001").unwrap().unwrap();
+        // Tensao e status preservados
+        assert!(
+            (team.hierarquia_tensao - 45.0).abs() < f64::EPSILON,
+            "tensao deve ser 45.0, foi {}",
+            team.hierarquia_tensao
+        );
+        assert_eq!(team.hierarquia_status, "tensao");
+        // Todos os 5 counters sazonais resetados
+        assert_eq!(team.hierarquia_duelos_total, 0);
+        assert_eq!(team.hierarquia_duelos_n2_vencidos, 0);
+        assert_eq!(team.hierarquia_sequencia_n2, 0);
+        assert_eq!(team.hierarquia_sequencia_n1, 0);
+        assert_eq!(team.hierarquia_inversoes_temporada, 0);
+    }
+
+    #[test]
+    fn test_changed_pilot_resets_hierarchy_to_defaults() {
+        let conn = setup_market_fixture();
+        // Configurar estado hierárquico pré-existente com tensao não-zero
+        conn.execute(
+            "UPDATE teams SET hierarquia_n1_id='P001', hierarquia_n2_id='P002',
+             hierarquia_tensao=60.0, hierarquia_status='crise',
+             hierarquia_duelos_total=8 WHERE id='T001'",
+            [],
+        )
+        .expect("setup hierarchy state");
+
+        let action = PendingAction::UpdateHierarchy {
+            team_id: "T001".to_string(),
+            team_name: "Equipe Teste".to_string(),
+            n1_id: Some("P001".to_string()),
+            n1_name: "Piloto A".to_string(),
+            n2_id: Some("P004".to_string()), // piloto N2 mudou: P002 → P004
+            n2_name: "Piloto D".to_string(),
+            prev_n1_id: Some("P001".to_string()),
+            prev_n2_id: Some("P002".to_string()),
+            prev_tensao: 60.0,
+            prev_status: "crise".to_string(),
+            prev_categoria: "gt4".to_string(),
+        };
+        let mut events = Vec::new();
+        let mut proposals = Vec::new();
+        execute_action(&conn, "S002", 2, &action, &mut events, &mut proposals)
+            .expect("ação deve executar");
+
+        let team = team_queries::get_team_by_id(&conn, "T001").unwrap().unwrap();
+        // FullReset: tensao e status resetados para defaults seguros
+        assert!(
+            (team.hierarquia_tensao - 0.0).abs() < f64::EPSILON,
+            "tensao deve ser 0.0, foi {}",
+            team.hierarquia_tensao
+        );
+        assert_eq!(team.hierarquia_status, "estavel");
+        assert_eq!(team.hierarquia_duelos_total, 0);
+    }
+
+    #[test]
+    fn test_rivalry_unchanged_after_hierarchy_update() {
+        let conn = setup_market_fixture();
+        // Inserir rivalidade entre P001 e P002 com intensidade conhecida
+        conn.execute(
+            "INSERT INTO rivalries (id, piloto1_id, piloto2_id, intensidade, tipo, criado_em, ultima_atualizacao)
+             VALUES ('R001', 'P001', 'P002', 50.0, 'Normal', '2024', '2024')",
+            [],
+        )
+        .expect("insert rivalry");
+
+        // Executar transição de hierarquia para equipe com P001+P002
+        let action = update_hierarchy_action("T001", Some("P001"), Some("P002"));
+        let mut events = Vec::new();
+        let mut proposals = Vec::new();
+        execute_action(&conn, "S002", 2, &action, &mut events, &mut proposals)
+            .expect("ação deve executar");
+
+        // Rivalidade deve permanecer intacta — hierarquia não toca a tabela rivalries
+        let intensidade: f64 = conn
+            .query_row(
+                "SELECT intensidade FROM rivalries WHERE id='R001'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("rivalidade deve ainda existir");
+        assert!(
+            (intensidade - 50.0).abs() < f64::EPSILON,
+            "intensidade deve ser 50.0, foi {}",
+            intensidade
+        );
     }
 }

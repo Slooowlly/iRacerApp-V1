@@ -35,6 +35,7 @@ use crate::evolution::pipeline::{run_end_of_season, EndOfSeasonResult};
 use crate::generators::ids::{next_id, next_ids, IdType};
 use crate::generators::nationality::{format_nationality, get_nationality};
 use crate::generators::world::generate_world;
+use crate::market::pipeline::{fill_all_remaining_vacancies, run_market};
 use crate::market::preseason::{
     advance_week, delete_preseason_plan, load_preseason_plan, save_preseason_plan, PendingAction,
     PlannedEvent, PreSeasonPlan, PreSeasonState, WeekResult,
@@ -48,7 +49,8 @@ use crate::news::generator::{
     generate_news_from_end_of_season, generate_news_from_market_events,
     generate_player_rejection_news, generate_player_signing_news,
 };
-use crate::news::{NewsItem, NewsType};
+use crate::public_presence::team::{derive_team_public_presence, TeamPublicPresenceTier};
+use crate::news::{NewsImportance, NewsItem, NewsType};
 
 pub use crate::commands::career_types::CreateCareerInput;
 
@@ -883,16 +885,34 @@ pub(crate) fn finalize_preseason_in_base_dir(
         );
     }
 
-    delete_preseason_plan(&career_dir)?;
-    meta.last_played = Local::now().format("%Y-%m-%dT%H:%M:%S").to_string();
-    write_save_meta(&meta_path, &meta)?;
     let season = season_queries::get_active_season(&db.conn)
         .map_err(|e| format!("Falha ao carregar temporada ativa: {e}"))?
         .ok_or_else(|| "Temporada ativa nao encontrada.".to_string())?;
+
+    let mut rng = rand::thread_rng();
+
+    // 1. Invariante: Garantir que todas as equipes regulares tenham lineup completo antes de iniciar
+    fill_all_remaining_vacancies(&db.conn, season.numero, &mut rng)
+        .map_err(|e| format!("Falha ao preencher vagas remanescentes: {e}"))?;
+
+    // 1b. Invariante: Garantir que N1/N2 de toda equipe regular está alinhado com o lineup final.
+    // Normaliza equipes preenchidas por fallback que não passaram pelo UpdateHierarchy do mercado.
+    crate::hierarchy::transition::validate_and_normalize_team_hierarchies(&db.conn)?;
+
+    // 2. Limpar artefatos da corrida anterior (cache do dashboard)
+    let results_path = career_dir.join("race_results.json");
+    if results_path.exists() {
+        let _ = std::fs::remove_file(&results_path);
+    }
+
+    delete_preseason_plan(&career_dir)?;
+    meta.last_played = Local::now().format("%Y-%m-%dT%H:%M:%S").to_string();
+    write_save_meta(&meta_path, &meta)?;
+    
     let mut news = vec![NewsItem {
         id: String::new(),
         tipo: NewsType::PreTemporada,
-        icone: "📰".to_string(),
+        icone: NewsType::PreTemporada.icone().to_string(),
         titulo: format!("Temporada {} esta aberta!", season.numero),
         texto: "A pre-temporada chegou ao fim. As corridas estao prestes a comecar!".to_string(),
         rodada: Some(0),
@@ -900,8 +920,8 @@ pub(crate) fn finalize_preseason_in_base_dir(
         temporada: season.numero,
         categoria_id: None,
         categoria_nome: None,
-        importancia: crate::news::NewsImportance::Destaque,
-        timestamp: 0,
+        importancia: NewsImportance::Alta,
+        timestamp: Local::now().timestamp(),
         driver_id: None,
         team_id: None,
     }];
@@ -952,8 +972,30 @@ fn persist_end_of_season_news(
     let mut timestamp = news_queries::get_latest_news_timestamp(conn)
         .map_err(|e| format!("Falha ao buscar timestamp de noticias: {e}"))?
         + 1;
-    let mut items =
-        generate_news_from_end_of_season(result, season_number, &mut temp_id, &mut timestamp);
+    // Carrega visibilidade apenas dos pilotos boostáveis (rookies + decliner candidatos).
+    // Degrada silenciosamente para HashMap vazio se falhar — camada narrativa, não factual.
+    let driver_midia: std::collections::HashMap<String, f64> = {
+        let ids: std::collections::HashSet<&str> = result
+            .rookies_generated
+            .iter()
+            .map(|r| r.driver_id.as_str())
+            .chain(result.growth_reports.iter().map(|g| g.driver_id.as_str()))
+            .collect();
+        ids.into_iter()
+            .filter_map(|id| {
+                driver_queries::get_driver(conn, id)
+                    .ok()
+                    .map(|d| (d.id, d.atributos.midia))
+            })
+            .collect()
+    };
+    let mut items = generate_news_from_end_of_season(
+        result,
+        season_number,
+        &mut temp_id,
+        &mut timestamp,
+        &driver_midia,
+    );
     persist_generated_news(conn, &mut items)
 }
 
@@ -966,12 +1008,59 @@ fn persist_market_week_news(
     let mut timestamp = news_queries::get_latest_news_timestamp(conn)
         .map_err(|e| format!("Falha ao buscar timestamp de noticias: {e}"))?
         + 1;
+    // Carrega visibilidade apenas dos pilotos presentes nos eventos da semana.
+    // Degrada silenciosamente para HashMap vazio se falhar — camada narrativa, não factual.
+    let driver_midia: std::collections::HashMap<String, f64> = {
+        let ids: std::collections::HashSet<&str> = week_result
+            .events
+            .iter()
+            .filter_map(|e| e.driver_id.as_deref())
+            .collect();
+        ids.into_iter()
+            .filter_map(|id| {
+                driver_queries::get_driver(conn, id)
+                    .ok()
+                    .map(|d| (d.id, d.atributos.midia))
+            })
+            .collect()
+    };
+    // Carrega presença pública das equipes envolvidas nos eventos da semana.
+    // Degrada silenciosamente para HashMap vazio se falhar — camada narrativa, não factual.
+    // Custo v1: get_active_contracts_for_team + get_driver por equipe única nos eventos da semana
+    // (tipicamente 2–5 equipes distintas por semana de preseason — aceito).
+    let team_presence: std::collections::HashMap<String, TeamPublicPresenceTier> = {
+        let team_ids: std::collections::HashSet<&str> = week_result
+            .events
+            .iter()
+            .filter_map(|e| e.team_id.as_deref())
+            .collect();
+        team_ids
+            .into_iter()
+            .filter_map(|tid| {
+                let medias: Vec<f64> = contract_queries::get_active_contracts_for_team(conn, tid)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter_map(|c| {
+                        driver_queries::get_driver(conn, &c.piloto_id)
+                            .ok()
+                            .map(|d| d.atributos.midia)
+                    })
+                    .collect();
+                if medias.is_empty() {
+                    return None;
+                }
+                Some((tid.to_string(), derive_team_public_presence(&medias).tier))
+            })
+            .collect()
+    };
     let mut items = generate_news_from_market_events(
         &week_result.events,
         state.season_number,
         week_result.week_number,
         &mut temp_id,
         &mut timestamp,
+        &driver_midia,
+        &team_presence,
     );
     persist_generated_news(conn, &mut items)
 }
@@ -1511,6 +1600,11 @@ fn refresh_planned_hierarchy_for_team(
                 .as_ref()
                 .map(|candidate| candidate.1.clone())
                 .unwrap_or_else(|| "Sem piloto".to_string()),
+            prev_n1_id: team.hierarquia_n1_id.clone(),
+            prev_n2_id: team.hierarquia_n2_id.clone(),
+            prev_tensao: team.hierarquia_tensao,
+            prev_status: team.hierarquia_status.clone(),
+            prev_categoria: team.categoria.clone(),
         },
     });
     Ok(())

@@ -1,8 +1,23 @@
 use rand::Rng;
 
+use crate::market::visibility::{
+    derive_market_visibility_profile, MarketVisibilityProfile, MarketVisibilityTier,
+};
 use crate::models::contract::Contract;
 use crate::models::driver::Driver;
 use crate::models::enums::{PrimaryPersonality, TeamRole};
+
+/// Contexto de continuidade percebido pelo piloto ao avaliar renovação.
+///
+/// Derivado de sinais disponíveis localmente — v1 usa `performance_score` e `papel`.
+/// Não representa um modelo completo de qualidade do ambiente (carro, reputação, etc.),
+/// que não são parâmetros desta função. Simplificação intencional para v1.
+#[derive(Debug, Clone, PartialEq)]
+enum RenewalContinuityContext {
+    Forte,  // Continuidade claramente boa — performance alta + N1
+    Neutro, // Continuidade razoável — situação intermediária
+    Fraco,  // Continuidade abaixo do patamar — performance baixa ou N2 fraco
+}
 
 #[derive(Debug, Clone)]
 pub struct RenewalDecision {
@@ -59,6 +74,18 @@ pub fn should_renew_contract(
         }
     };
 
+    // Resistência leve ao patamar de continuidade (visibilidade pública).
+    // Aplicada apenas a decisões de aceitação que passaram todos os gates estruturais.
+    // Não substitui hard rejections já avaliadas acima.
+    // Não altera salário. Efeito máximo: 8% (Elite + Fraco).
+    // Personalidade (Leal) pode sobrescrever esta resistência — posicionamento intencional.
+    let driver_profile = derive_market_visibility_profile(driver.atributos.midia);
+    let continuity_ctx = classify_renewal_continuity(performance_score, &contract.papel);
+    let resistance = market_visibility_renewal_resistance(&driver_profile, continuity_ctx);
+    if decision.should_renew && rng.gen_range(0.0..1.0) < resistance {
+        decision = no_renewal("Piloto questiona continuidade");
+    }
+
     match &driver.personalidade_primaria {
         Some(PrimaryPersonality::Leal) => {
             if !decision.should_renew && performance_score > 40.0 {
@@ -85,6 +112,59 @@ pub fn should_renew_contract(
     }
 
     decision
+}
+
+/// Infere o contexto de continuidade a partir de sinais locais da renovação.
+///
+/// Usa apenas os parâmetros disponíveis em `should_renew_contract`: performance_score
+/// e papel. Thresholds alinhados com os gates existentes (performance < 50, < 65 para N2).
+fn classify_renewal_continuity(
+    performance_score: f64,
+    papel: &TeamRole,
+) -> RenewalContinuityContext {
+    if performance_score >= 70.0 && *papel == TeamRole::Numero1 {
+        RenewalContinuityContext::Forte
+    } else if performance_score < 50.0 || (*papel == TeamRole::Numero2 && performance_score < 65.0) {
+        RenewalContinuityContext::Fraco
+    } else {
+        RenewalContinuityContext::Neutro
+    }
+}
+
+/// Intensidade de sensibilidade ao patamar de continuidade por tier de visibilidade pública.
+///
+/// Espelha os valores de `visibility_status_sensitivity` em `driver_ai.rs` — escala
+/// consistente e legível no sistema de mercado. Secundário a todos os fatores centrais.
+fn visibility_continuity_sensitivity(profile: &MarketVisibilityProfile) -> f64 {
+    match profile.tier {
+        MarketVisibilityTier::Baixa => 0.0,
+        MarketVisibilityTier::Relevante => 0.02,
+        MarketVisibilityTier::Alta => 0.05,
+        MarketVisibilityTier::Elite => 0.08,
+    }
+}
+
+/// Resistência soft à renovação baseada em visibilidade pública e contexto de continuidade.
+///
+/// Retorna a probabilidade de resistência leve do piloto à renovação:
+/// - Forte: 0.0 — sem resistência adicional (piloto confortável com a continuidade)
+/// - Neutro: 0.0 — sem efeito
+/// - Fraco: sensitivity — leve resistência proporcional ao perfil público
+///
+/// Efeito máximo: 8% (Elite + Fraco). Secundário a qualquer gate estrutural existente.
+/// Não altera salário. Não cria rejeição automática.
+///
+/// Semântica honesta para v1: o helper modela apenas o lado da resistência à continuidade
+/// fraca. Em contexto Forte, a ausência de resistência é a representação correta do conforto.
+fn market_visibility_renewal_resistance(
+    profile: &MarketVisibilityProfile,
+    ctx: RenewalContinuityContext,
+) -> f64 {
+    match ctx {
+        RenewalContinuityContext::Forte => 0.0,
+        RenewalContinuityContext::Neutro => 0.0,
+        RenewalContinuityContext::Fraco => visibility_continuity_sensitivity(profile),
+    }
 }
 
 fn no_renewal(reason: &str) -> RenewalDecision {
@@ -117,6 +197,7 @@ mod tests {
     use rand::{rngs::StdRng, SeedableRng};
 
     use super::*;
+    use crate::market::visibility::derive_market_visibility_profile;
 
     #[test]
     fn test_renew_good_performer() {
@@ -187,6 +268,114 @@ mod tests {
         );
         driver.personalidade_primaria = personality;
         driver
+    }
+
+    fn sample_driver_with_media(
+        age: u32,
+        personality: Option<PrimaryPersonality>,
+        midia: f64,
+    ) -> Driver {
+        let mut driver = sample_driver(age, personality);
+        driver.atributos.midia = midia;
+        driver
+    }
+
+    // ── Testes de market_visibility_renewal_resistance ────────────────────────
+
+    #[test]
+    fn test_visibility_resistance_zero_for_forte() {
+        for media in [0.0_f64, 30.0, 60.0, 90.0] {
+            let profile = derive_market_visibility_profile(media);
+            let r = market_visibility_renewal_resistance(&profile, RenewalContinuityContext::Forte);
+            assert!((r - 0.0).abs() < 1e-9, "Forte deve ser 0.0 para midia={media}");
+        }
+    }
+
+    #[test]
+    fn test_visibility_resistance_zero_for_neutro() {
+        for media in [0.0_f64, 30.0, 60.0, 90.0] {
+            let profile = derive_market_visibility_profile(media);
+            let r =
+                market_visibility_renewal_resistance(&profile, RenewalContinuityContext::Neutro);
+            assert!((r - 0.0).abs() < 1e-9, "Neutro deve ser 0.0 para midia={media}");
+        }
+    }
+
+    #[test]
+    fn test_visibility_resistance_positive_for_fraco() {
+        let elite = derive_market_visibility_profile(90.0);
+        let alta = derive_market_visibility_profile(70.0);
+        let rel = derive_market_visibility_profile(40.0);
+        let baixa = derive_market_visibility_profile(10.0);
+        let r_elite =
+            market_visibility_renewal_resistance(&elite, RenewalContinuityContext::Fraco);
+        let r_alta = market_visibility_renewal_resistance(&alta, RenewalContinuityContext::Fraco);
+        let r_rel = market_visibility_renewal_resistance(&rel, RenewalContinuityContext::Fraco);
+        let r_baixa =
+            market_visibility_renewal_resistance(&baixa, RenewalContinuityContext::Fraco);
+        assert!((r_elite - 0.08).abs() < 1e-9);
+        assert!((r_alta - 0.05).abs() < 1e-9);
+        assert!((r_rel - 0.02).abs() < 1e-9);
+        assert!((r_baixa - 0.0).abs() < 1e-9);
+        assert!(r_elite > r_alta && r_alta > r_rel && r_rel > r_baixa);
+    }
+
+    #[test]
+    fn test_classify_renewal_continuity_cases() {
+        // Forte: performance >= 70 AND N1
+        assert_eq!(
+            classify_renewal_continuity(75.0, &TeamRole::Numero1),
+            RenewalContinuityContext::Forte
+        );
+        // Fraco: performance < 50
+        assert_eq!(
+            classify_renewal_continuity(45.0, &TeamRole::Numero1),
+            RenewalContinuityContext::Fraco
+        );
+        // Fraco: N2 com performance < 65
+        assert_eq!(
+            classify_renewal_continuity(60.0, &TeamRole::Numero2),
+            RenewalContinuityContext::Fraco
+        );
+        // Neutro: N1 com performance 55
+        assert_eq!(
+            classify_renewal_continuity(55.0, &TeamRole::Numero1),
+            RenewalContinuityContext::Neutro
+        );
+        // Neutro: N2 com performance >= 65
+        assert_eq!(
+            classify_renewal_continuity(68.0, &TeamRole::Numero2),
+            RenewalContinuityContext::Neutro
+        );
+    }
+
+    #[test]
+    fn test_visibility_renewal_secondary_to_dominant_factor() {
+        // Sanity: soft gate máximo (8%) << hard gate performance < 50 (60%)
+        let elite = derive_market_visibility_profile(100.0);
+        let max_resistance =
+            market_visibility_renewal_resistance(&elite, RenewalContinuityContext::Fraco);
+        let existing_hard_gate_prob = 0.60;
+        assert!(max_resistance < existing_hard_gate_prob);
+    }
+
+    #[test]
+    fn test_visibility_renewal_no_resistance_in_forte_context() {
+        // Comportamental: contexto Forte → resistance = 0.0 → gate não dispara
+        // Elite e Baixa produzem mesma decisão com mesmo seed
+        let contract = sample_contract(TeamRole::Numero1, 90_000.0);
+        let driver_elite = sample_driver_with_media(28, None, 90.0);
+        let driver_baixa = sample_driver_with_media(28, None, 10.0);
+
+        // performance=82, N1 → Forte → resistance=0.0 → sem gate extra
+        let mut rng_e = StdRng::seed_from_u64(42);
+        let mut rng_b = StdRng::seed_from_u64(42);
+        let dec_elite =
+            should_renew_contract(&driver_elite, 82.0, &contract, 50_000.0, &mut rng_e);
+        let dec_baixa =
+            should_renew_contract(&driver_baixa, 82.0, &contract, 50_000.0, &mut rng_b);
+
+        assert_eq!(dec_elite.should_renew, dec_baixa.should_renew);
     }
 
     fn sample_contract(role: TeamRole, salary: f64) -> Contract {

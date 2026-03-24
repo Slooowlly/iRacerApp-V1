@@ -11,10 +11,14 @@ mod tests {
     use crate::simulation::race::{RaceDriverResult, RaceResult};
 
     use super::{
-        generate_news_from_end_of_season, generate_news_from_market_events,
-        generate_news_from_race, generate_player_rejection_news, generate_player_signing_news,
+        build_incident_news_item, build_injury_news_items, generate_news_from_end_of_season,
+        generate_news_from_market_events, generate_news_from_race, generate_player_rejection_news,
+        generate_player_signing_news, select_primary_incident,
     };
+    use crate::models::enums::InjuryType;
+    use crate::models::injury::Injury;
     use crate::news::{NewsImportance, NewsType};
+    use crate::simulation::incidents::{IncidentResult, IncidentSeverity, IncidentType};
 
     #[test]
     fn test_market_event_generates_news() {
@@ -33,7 +37,15 @@ mod tests {
         let mut next_id = id_gen();
         let mut timestamp = 100;
 
-        let news = generate_news_from_market_events(&events, 2, 1, &mut next_id, &mut timestamp);
+        let news = generate_news_from_market_events(
+            &events,
+            2,
+            1,
+            &mut next_id,
+            &mut timestamp,
+            &std::collections::HashMap::new(),
+            &std::collections::HashMap::new(),
+        );
 
         assert_eq!(news.len(), 1);
         assert_eq!(news[0].tipo, NewsType::Mercado);
@@ -58,7 +70,15 @@ mod tests {
         let mut next_id = id_gen();
         let mut timestamp = 50;
 
-        let news = generate_news_from_market_events(&events, 3, 4, &mut next_id, &mut timestamp);
+        let news = generate_news_from_market_events(
+            &events,
+            3,
+            4,
+            &mut next_id,
+            &mut timestamp,
+            &std::collections::HashMap::new(),
+            &std::collections::HashMap::new(),
+        );
 
         assert_eq!(news[0].importancia, NewsImportance::Alta);
         assert_eq!(news[0].tipo, NewsType::Mercado);
@@ -81,7 +101,15 @@ mod tests {
         let mut next_id = id_gen();
         let mut timestamp = 1;
 
-        let news = generate_news_from_market_events(&events, 2, 6, &mut next_id, &mut timestamp);
+        let news = generate_news_from_market_events(
+            &events,
+            2,
+            6,
+            &mut next_id,
+            &mut timestamp,
+            &std::collections::HashMap::new(),
+            &std::collections::HashMap::new(),
+        );
 
         assert_eq!(news[0].importancia, NewsImportance::Destaque);
         assert_eq!(news[0].icone, "💼");
@@ -93,7 +121,7 @@ mod tests {
         let mut next_id = id_gen();
         let mut timestamp = 10;
 
-        let news = generate_news_from_end_of_season(&result, 1, &mut next_id, &mut timestamp);
+        let news = generate_news_from_end_of_season(&result, 1, &mut next_id, &mut timestamp, &std::collections::HashMap::new());
 
         assert!(news.iter().any(|item| {
             item.tipo == NewsType::Aposentadoria && item.titulo.contains("Veterano")
@@ -114,7 +142,7 @@ mod tests {
         let mut next_id = id_gen();
         let mut timestamp = 10;
 
-        let news = generate_news_from_end_of_season(&result, 1, &mut next_id, &mut timestamp);
+        let news = generate_news_from_end_of_season(&result, 1, &mut next_id, &mut timestamp, &std::collections::HashMap::new());
 
         let promotion = news
             .iter()
@@ -187,7 +215,7 @@ mod tests {
         let mut next_id = id_gen();
         let mut timestamp = 200;
 
-        let news = generate_news_from_race(&race_result, 2, 3, "gt4", crate::models::enums::ThematicSlot::NaoClassificado, &mut next_id, &mut timestamp);
+        let news = generate_news_from_race(&race_result, 2, 3, "gt4", crate::models::enums::ThematicSlot::NaoClassificado, &mut next_id, &mut timestamp, &std::collections::HashMap::new());
 
         assert!(news.iter().any(|item| {
             item.tipo == NewsType::Corrida && item.titulo.contains("Voce terminou em P2")
@@ -288,13 +316,670 @@ mod tests {
             preseason_total_weeks: 7,
         }
     }
+
+    fn make_inc(
+        id: &str,
+        tipo: IncidentType,
+        sev: IncidentSeverity,
+        dnf: bool,
+        linked: Option<&str>,
+    ) -> IncidentResult {
+        IncidentResult {
+            pilot_id: id.to_string(),
+            incident_type: tipo,
+            severity: sev,
+            segment: "Lap1".to_string(),
+            positions_lost: 3,
+            is_dnf: dnf,
+            description: "test".to_string(),
+            linked_pilot_id: linked.map(|s| s.to_string()),
+        }
+    }
+
+    #[test]
+    fn test_select_primary_incident_prioritizes_critical_collision() {
+        let inc_major_dnf = make_inc("P002", IncidentType::Collision, IncidentSeverity::Major, true, None);
+        let inc_critical = make_inc("P001", IncidentType::Collision, IncidentSeverity::Critical, false, None);
+        let incidents = [inc_major_dnf, inc_critical];
+        let result = select_primary_incident(&incidents, &[], None);
+        // Critical (priority 6) must beat Collision+DNF (priority 5)
+        assert_eq!(result.map(|i| i.pilot_id.as_str()), Some("P001"));
+    }
+
+    #[test]
+    fn test_select_primary_incident_player_tiebreak() {
+        // Two incidents of same priority — player involvement wins tiebreak
+        let inc_a = make_inc("P001", IncidentType::DriverError, IncidentSeverity::Major, true, None);
+        let inc_b = make_inc("P007", IncidentType::DriverError, IncidentSeverity::Major, true, None);
+        let incidents = [inc_a, inc_b];
+        let result = select_primary_incident(&incidents, &[], Some("P007"));
+        assert_eq!(result.map(|i| i.pilot_id.as_str()), Some("P007"));
+    }
+
+    #[test]
+    fn test_build_injury_news_player_is_destaque() {
+        let injury = Injury {
+            id: "INJ-1".to_string(),
+            pilot_id: "P007".to_string(),
+            injury_type: InjuryType::Leve,
+            modifier: 0.95,
+            races_total: 2,
+            races_remaining: 2,
+            skill_penalty: 0.05,
+            season: 1,
+            race_occurred: "R001".to_string(),
+            active: true,
+        };
+        let mut names = std::collections::HashMap::new();
+        names.insert("P007".to_string(), "Jogador".to_string());
+        let mut id = || "N001".to_string();
+        let mut ts = 0i64;
+        let items = build_injury_news_items(
+            &[injury],
+            Some("P007"),
+            &names,
+            "Interlagos",
+            "gt4",
+            3,
+            1,
+            &mut id,
+            &mut ts,
+        );
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].tipo, NewsType::Lesao);
+        assert_eq!(items[0].importancia, NewsImportance::Destaque);
+    }
+
+    // ── Testes de visibilidade narrativa de mercado ───────────────────────────
+
+    #[test]
+    fn test_market_visibility_bonus_monotonic() {
+        use crate::market::visibility::derive_market_visibility_profile;
+        let baixa = derive_market_visibility_profile(10.0);
+        let rel = derive_market_visibility_profile(40.0);
+        let alta = derive_market_visibility_profile(70.0);
+        let elite = derive_market_visibility_profile(90.0);
+        assert!((super::market_news_visibility_bonus(&baixa) - 0.0).abs() < 1e-9);
+        assert!(super::market_news_visibility_bonus(&rel) < super::market_news_visibility_bonus(&alta));
+        assert!(super::market_news_visibility_bonus(&alta) < super::market_news_visibility_bonus(&elite));
+        assert!((super::market_news_visibility_bonus(&elite) - 18.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_market_news_editorial_score_elite_higher_than_baixa() {
+        // Mesmo evento, Elite → score narrativo maior que Baixa
+        let score_elite = super::market_news_editorial_score(40.0, Some(90.0));
+        let score_baixa = super::market_news_editorial_score(40.0, Some(10.0));
+        assert!(score_elite > score_baixa);
+    }
+
+    #[test]
+    fn test_factual_relevance_dominant() {
+        // TransferCompleted de piloto Baixa (65.0) supera ContractRenewed de piloto Elite (58.0).
+        // Evento factualmente mais forte continua dominando sobre visibilidade pública.
+        let score_transfer_baixa = super::market_news_editorial_score(65.0, Some(10.0)); // 65.0
+        let score_renewal_elite = super::market_news_editorial_score(40.0, Some(90.0)); // 58.0
+        assert!(score_transfer_baixa > score_renewal_elite);
+    }
+
+    #[test]
+    fn test_elite_renewal_bumps_importance_to_alta() {
+        // ContractRenewed com piloto Elite deve gerar NewsImportance::Alta (acima do padrão Media).
+        let mut driver_midia = std::collections::HashMap::new();
+        driver_midia.insert("P001".to_string(), 90.0);
+        let event = MarketEvent {
+            event_type: MarketEventType::ContractRenewed,
+            headline: "Piloto renova".to_string(),
+            description: "Renovacao confirmada.".to_string(),
+            driver_id: Some("P001".to_string()),
+            driver_name: Some("Piloto Elite".to_string()),
+            team_id: None,
+            team_name: None,
+            from_team: None,
+            to_team: None,
+            categoria: None,
+        };
+        let mut next_id = id_gen();
+        let mut timestamp = 100;
+        let news = generate_news_from_market_events(
+            &[event],
+            1,
+            1,
+            &mut next_id,
+            &mut timestamp,
+            &driver_midia,
+            &std::collections::HashMap::new(),
+        );
+        assert_eq!(news[0].importancia, NewsImportance::Alta);
+    }
+
+    #[test]
+    fn test_ineligible_events_unaffected_by_visibility() {
+        // PlayerProposalReceived continua Destaque e HierarchyUpdated continua Baixa
+        // independentemente do driver_midia.
+        let mut driver_midia = std::collections::HashMap::new();
+        driver_midia.insert("P001".to_string(), 90.0);
+
+        let proposal_event = MarketEvent {
+            event_type: MarketEventType::PlayerProposalReceived,
+            headline: "Proposta recebida".to_string(),
+            description: "Voce recebeu uma proposta.".to_string(),
+            driver_id: Some("P001".to_string()),
+            driver_name: Some("Jogador".to_string()),
+            team_id: None,
+            team_name: None,
+            from_team: None,
+            to_team: None,
+            categoria: None,
+        };
+        let hierarchy_event = MarketEvent {
+            event_type: MarketEventType::HierarchyUpdated,
+            headline: "Hierarquia definida".to_string(),
+            description: "Equipe definiu hierarquia.".to_string(),
+            driver_id: Some("P001".to_string()),
+            driver_name: Some("Piloto Elite".to_string()),
+            team_id: None,
+            team_name: None,
+            from_team: None,
+            to_team: None,
+            categoria: None,
+        };
+
+        let mut next_id = id_gen();
+        let mut timestamp = 1;
+        let news = generate_news_from_market_events(
+            &[proposal_event, hierarchy_event],
+            1,
+            1,
+            &mut next_id,
+            &mut timestamp,
+            &driver_midia,
+            &std::collections::HashMap::new(),
+        );
+        assert_eq!(news[0].importancia, NewsImportance::Destaque); // PlayerProposal inalterado
+        assert_eq!(news[1].importancia, NewsImportance::Baixa);    // HierarchyUpdated inalterado
+    }
+
+    #[test]
+    fn test_missing_driver_midia_uses_factual_only() {
+        // driver_id ausente do mapa → sem bônus narrativo → importância factual pura.
+        // ContractRenewed base=40 → Media (sem boost).
+        let event = MarketEvent {
+            event_type: MarketEventType::ContractRenewed,
+            headline: "Renovacao".to_string(),
+            description: "Piloto renova.".to_string(),
+            driver_id: Some("P999".to_string()), // não está no mapa
+            driver_name: Some("Desconhecido".to_string()),
+            team_id: None,
+            team_name: None,
+            from_team: None,
+            to_team: None,
+            categoria: None,
+        };
+        let mut next_id = id_gen();
+        let mut timestamp = 1;
+        let news = generate_news_from_market_events(
+            &[event],
+            1,
+            1,
+            &mut next_id,
+            &mut timestamp,
+            &std::collections::HashMap::new(), // mapa vazio — degradação segura
+            &std::collections::HashMap::new(),
+        );
+        assert_eq!(news[0].importancia, NewsImportance::Media);
+    }
+
+    // ── Testes de team_presence_editorial_bonus / generate_news_from_market_events ──
+
+    #[test]
+    fn test_market_team_presence_elite_promotes_renewal() {
+        // ContractRenewed base=40; team Elite bônus=+10 → score 50 → Alta
+        use crate::public_presence::team::TeamPublicPresenceTier;
+        let event = MarketEvent {
+            event_type: MarketEventType::ContractRenewed,
+            headline: "Renovacao".to_string(),
+            description: "Piloto renova.".to_string(),
+            driver_id: None,
+            driver_name: None,
+            team_id: Some("T_ELITE".to_string()),
+            team_name: Some("Equipe Elite".to_string()),
+            from_team: None,
+            to_team: None,
+            categoria: None,
+        };
+        let mut team_presence = std::collections::HashMap::new();
+        team_presence.insert("T_ELITE".to_string(), TeamPublicPresenceTier::Elite);
+        let mut next_id = id_gen();
+        let mut timestamp = 1;
+        let news = generate_news_from_market_events(
+            &[event],
+            1,
+            1,
+            &mut next_id,
+            &mut timestamp,
+            &std::collections::HashMap::new(),
+            &team_presence,
+        );
+        assert_eq!(news[0].importancia, NewsImportance::Alta);
+    }
+
+    #[test]
+    fn test_market_team_presence_baixa_stays_media() {
+        // ContractRenewed base=40; team Baixa bônus=+0 → score 40 → Media
+        use crate::public_presence::team::TeamPublicPresenceTier;
+        let event = MarketEvent {
+            event_type: MarketEventType::ContractRenewed,
+            headline: "Renovacao".to_string(),
+            description: "Piloto renova.".to_string(),
+            driver_id: None,
+            driver_name: None,
+            team_id: Some("T_BAIXA".to_string()),
+            team_name: Some("Equipe Baixa".to_string()),
+            from_team: None,
+            to_team: None,
+            categoria: None,
+        };
+        let mut team_presence = std::collections::HashMap::new();
+        team_presence.insert("T_BAIXA".to_string(), TeamPublicPresenceTier::Baixa);
+        let mut next_id = id_gen();
+        let mut timestamp = 1;
+        let news = generate_news_from_market_events(
+            &[event],
+            1,
+            1,
+            &mut next_id,
+            &mut timestamp,
+            &std::collections::HashMap::new(),
+            &team_presence,
+        );
+        assert_eq!(news[0].importancia, NewsImportance::Media);
+    }
+
+    #[test]
+    fn test_market_team_presence_no_effect_on_ineligible() {
+        // PlayerProposalReceived permanece Destaque mesmo com team Elite
+        use crate::public_presence::team::TeamPublicPresenceTier;
+        let event = MarketEvent {
+            event_type: MarketEventType::PlayerProposalReceived,
+            headline: "Proposta recebida".to_string(),
+            description: "Voce recebeu proposta.".to_string(),
+            driver_id: Some("P001".to_string()),
+            driver_name: Some("Jogador".to_string()),
+            team_id: Some("T_ELITE".to_string()),
+            team_name: Some("Equipe Elite".to_string()),
+            from_team: None,
+            to_team: None,
+            categoria: None,
+        };
+        let mut team_presence = std::collections::HashMap::new();
+        team_presence.insert("T_ELITE".to_string(), TeamPublicPresenceTier::Elite);
+        let mut next_id = id_gen();
+        let mut timestamp = 1;
+        let news = generate_news_from_market_events(
+            &[event],
+            1,
+            1,
+            &mut next_id,
+            &mut timestamp,
+            &std::collections::HashMap::new(),
+            &team_presence,
+        );
+        assert_eq!(news[0].importancia, NewsImportance::Destaque);
+    }
+
+    #[test]
+    fn test_market_team_presence_driver_dominates_over_team() {
+        // Elite driver (bônus=18) + Baixa team (bônus=0) = 40+18=58 → Alta
+        // Relevante driver (bônus=5) + Elite team (bônus=10) = 40+5+10=55 → Alta
+        // Ambos são Alta, mas garantimos que Elite driver isolado (sem team) ≥ Relevante driver + Elite team
+        // I.e.: piloto continua sendo o vetor dominante
+        use crate::public_presence::team::TeamPublicPresenceTier;
+        let make_renewal = |driver_id: &str, team_id: &str| MarketEvent {
+            event_type: MarketEventType::ContractRenewed,
+            headline: "Renovacao".to_string(),
+            description: "Piloto renova.".to_string(),
+            driver_id: Some(driver_id.to_string()),
+            driver_name: None,
+            team_id: Some(team_id.to_string()),
+            team_name: None,
+            from_team: None,
+            to_team: None,
+            categoria: None,
+        };
+
+        // Elite driver + Baixa team
+        let mut driver_midia_elite = std::collections::HashMap::new();
+        driver_midia_elite.insert("D_ELITE".to_string(), 90.0_f64); // Elite tier → +18
+        let mut team_baixa = std::collections::HashMap::new();
+        team_baixa.insert("T_BAIXA".to_string(), TeamPublicPresenceTier::Baixa); // +0
+
+        // Relevante driver + Elite team
+        let mut driver_midia_rel = std::collections::HashMap::new();
+        driver_midia_rel.insert("D_REL".to_string(), 40.0_f64); // Relevante tier → +5
+        let mut team_elite = std::collections::HashMap::new();
+        team_elite.insert("T_ELITE".to_string(), TeamPublicPresenceTier::Elite); // +10
+
+        let mut next_id = id_gen();
+        let mut ts = 1i64;
+        let news1 = generate_news_from_market_events(
+            &[make_renewal("D_ELITE", "T_BAIXA")],
+            1, 1, &mut next_id, &mut ts, &driver_midia_elite, &team_baixa,
+        );
+        let news2 = generate_news_from_market_events(
+            &[make_renewal("D_REL", "T_ELITE")],
+            1, 1, &mut next_id, &mut ts, &driver_midia_rel, &team_elite,
+        );
+        // Sanidade numérica: Elite driver = 40+18=58 > Relevante+Elite = 40+5+10=55
+        // Ambos Alta, mas score interno do piloto Elite puro é maior
+        // O teste verifica que nenhum dos dois fica abaixo de Alta (regressão)
+        assert_eq!(news1[0].importancia, NewsImportance::Alta);
+        assert_eq!(news2[0].importancia, NewsImportance::Alta);
+    }
+
+    // ── Testes de promote_narrative_importance ────────────────────────────────
+
+    #[test]
+    fn test_promote_narrative_alta_tier_promotes_media() {
+        // Alta tier (midia 70) → Media vira Alta
+        let result = super::promote_narrative_importance(NewsImportance::Media, Some(70.0));
+        assert_eq!(result, NewsImportance::Alta);
+    }
+
+    #[test]
+    fn test_promote_narrative_elite_tier_promotes_media() {
+        // Elite tier (midia 90) → Media vira Alta
+        let result = super::promote_narrative_importance(NewsImportance::Media, Some(90.0));
+        assert_eq!(result, NewsImportance::Alta);
+    }
+
+    #[test]
+    fn test_promote_narrative_relevante_no_change() {
+        // Relevante (midia 40) → Media permanece Media
+        let result = super::promote_narrative_importance(NewsImportance::Media, Some(40.0));
+        assert_eq!(result, NewsImportance::Media);
+    }
+
+    #[test]
+    fn test_promote_narrative_baixa_no_change() {
+        // Baixa (midia 10) → Media permanece Media
+        let result = super::promote_narrative_importance(NewsImportance::Media, Some(10.0));
+        assert_eq!(result, NewsImportance::Media);
+    }
+
+    #[test]
+    fn test_promote_narrative_already_alta_unchanged() {
+        // Cap: Alta + Elite → Alta (não vira Destaque)
+        let result = super::promote_narrative_importance(NewsImportance::Alta, Some(90.0));
+        assert_eq!(result, NewsImportance::Alta);
+    }
+
+    #[test]
+    fn test_promote_narrative_none_midia_unchanged() {
+        // None → sem efeito, Media permanece Media
+        let result = super::promote_narrative_importance(NewsImportance::Media, None);
+        assert_eq!(result, NewsImportance::Media);
+    }
+
+    // ── Testes de integração: corrida ─────────────────────────────────────────
+
+    fn make_race_with_mover(mover_id: &str, positions_gained: i32) -> RaceResult {
+        RaceResult {
+            qualifying_results: Vec::new(),
+            race_results: vec![
+                RaceDriverResult {
+                    pilot_id: "P001".to_string(),
+                    pilot_name: "Vencedor".to_string(),
+                    team_id: "T001".to_string(),
+                    team_name: "Equipe".to_string(),
+                    grid_position: 1,
+                    finish_position: 1,
+                    positions_gained: 0,
+                    best_lap_time_ms: 89_000.0,
+                    total_race_time_ms: 3_590_000.0,
+                    gap_to_winner_ms: 0.0,
+                    is_dnf: false,
+                    dnf_reason: None,
+                    dnf_segment: None,
+                    incidents_count: 0,
+                    incidents: Vec::new(),
+                    has_fastest_lap: true,
+                    points_earned: 25,
+                    is_jogador: false,
+                    laps_completed: 20,
+                    final_tire_wear: 0.8,
+                    final_physical: 0.9,
+                },
+                RaceDriverResult {
+                    pilot_id: mover_id.to_string(),
+                    pilot_name: "Piloto Mover".to_string(),
+                    team_id: "T002".to_string(),
+                    team_name: "Equipe B".to_string(),
+                    grid_position: 10,
+                    finish_position: 10 - positions_gained,
+                    positions_gained,
+                    best_lap_time_ms: 90_000.0,
+                    total_race_time_ms: 3_600_000.0,
+                    gap_to_winner_ms: 5_000.0,
+                    is_dnf: false,
+                    dnf_reason: None,
+                    dnf_segment: None,
+                    incidents_count: 0,
+                    incidents: Vec::new(),
+                    has_fastest_lap: false,
+                    points_earned: 6,
+                    is_jogador: false,
+                    laps_completed: 20,
+                    final_tire_wear: 0.75,
+                    final_physical: 0.85,
+                },
+            ],
+            pole_sitter_id: "P001".to_string(),
+            winner_id: "P001".to_string(),
+            fastest_lap_id: "P001".to_string(),
+            total_laps: 20,
+            weather: "Dry".to_string(),
+            track_name: "Interlagos".to_string(),
+            total_incidents: 0,
+            total_dnfs: 0,
+        }
+    }
+
+    #[test]
+    fn test_race_position_gainer_elite_bumps_to_alta() {
+        // Position gainer com driver Elite (midia 90) → NewsImportance::Alta
+        let race = make_race_with_mover("PMOVER", 5);
+        let mut driver_midia = std::collections::HashMap::new();
+        driver_midia.insert("PMOVER".to_string(), 90.0);
+        let mut next_id = id_gen();
+        let mut timestamp = 0i64;
+
+        let news = generate_news_from_race(
+            &race, 1, 1, "gt4",
+            crate::models::enums::ThematicSlot::NaoClassificado,
+            &mut next_id, &mut timestamp, &driver_midia,
+        );
+
+        let mover_news = news.iter().find(|n| n.driver_id.as_deref() == Some("PMOVER")).expect("mover news");
+        assert_eq!(mover_news.importancia, NewsImportance::Alta);
+    }
+
+    #[test]
+    fn test_race_position_gainer_baixa_stays_media() {
+        // Position gainer com driver Baixa (midia 10) → NewsImportance::Media
+        let race = make_race_with_mover("PMOVER2", 5);
+        let mut driver_midia = std::collections::HashMap::new();
+        driver_midia.insert("PMOVER2".to_string(), 10.0);
+        let mut next_id = id_gen();
+        let mut timestamp = 0i64;
+
+        let news = generate_news_from_race(
+            &race, 1, 1, "gt4",
+            crate::models::enums::ThematicSlot::NaoClassificado,
+            &mut next_id, &mut timestamp, &driver_midia,
+        );
+
+        let mover_news = news.iter().find(|n| n.driver_id.as_deref() == Some("PMOVER2")).expect("mover news");
+        assert_eq!(mover_news.importancia, NewsImportance::Media);
+    }
+
+    // ── Testes de integração: fim de temporada ────────────────────────────────
+
+    #[test]
+    fn test_eos_decliner_elite_bumps_to_alta() {
+        // Decliner com mídia Elite → NewsImportance::Alta (acima do padrão Media)
+        use crate::evolution::growth::{AttributeChange, GrowthReport};
+        let mut result = sample_end_of_season();
+        result.growth_reports = vec![GrowthReport {
+            driver_id: "PDEC".to_string(),
+            driver_name: "Em Declinio".to_string(),
+            changes: vec![AttributeChange {
+                attribute: "skill".to_string(),
+                old_value: 70,
+                new_value: 65,
+                delta: -5,
+                reason: "Temporada fraca".to_string(),
+            }],
+            overall_delta: -5.0,
+        }];
+        let mut driver_midia = std::collections::HashMap::new();
+        driver_midia.insert("PDEC".to_string(), 90.0); // Elite
+        let mut next_id = id_gen();
+        let mut timestamp = 0i64;
+
+        let news = generate_news_from_end_of_season(&result, 1, &mut next_id, &mut timestamp, &driver_midia);
+
+        let dec_news = news.iter().find(|n| n.tipo == NewsType::Evolucao && n.driver_id.as_deref() == Some("PDEC")).expect("decliner news");
+        assert_eq!(dec_news.importancia, NewsImportance::Alta);
+    }
+
+    #[test]
+    fn test_eos_rookie_non_genio_elite_bumps_to_alta() {
+        // Rookie não-Gênio com mídia Elite → NewsImportance::Alta
+        use crate::evolution::pipeline::RookieInfo;
+        let mut result = sample_end_of_season();
+        result.rookies_generated = vec![RookieInfo {
+            driver_id: "PROOKIE".to_string(),
+            driver_name: "Novato Famoso".to_string(),
+            nationality: "br".to_string(),
+            age: 19,
+            skill: 58,
+            tipo: "Talento".to_string(), // não é Genio
+        }];
+        let mut driver_midia = std::collections::HashMap::new();
+        driver_midia.insert("PROOKIE".to_string(), 90.0); // Elite
+        let mut next_id = id_gen();
+        let mut timestamp = 0i64;
+
+        let news = generate_news_from_end_of_season(&result, 1, &mut next_id, &mut timestamp, &driver_midia);
+
+        let rookie_news = news.iter().find(|n| n.tipo == NewsType::Rookies && n.driver_id.as_deref() == Some("PROOKIE")).expect("rookie news");
+        assert_eq!(rookie_news.importancia, NewsImportance::Alta);
+    }
 }
 use crate::evolution::pipeline::EndOfSeasonResult;
 use crate::market::preseason::{MarketEvent, MarketEventType};
+use crate::news::season_framing::SeasonalFramingSignal;
+use crate::public_presence::team::TeamPublicPresenceTier;
+use crate::market::visibility::{
+    derive_market_visibility_profile, MarketVisibilityProfile, MarketVisibilityTier,
+};
 use crate::models::enums::ThematicSlot;
+use crate::models::injury::Injury;
 use crate::news::{NewsImportance, NewsItem, NewsType};
 use crate::promotion::{MovementType, PilotEffectType};
+use crate::simulation::incidents::{IncidentResult, IncidentSeverity, IncidentType};
 use crate::simulation::race::RaceResult;
+
+/// Bônus de força editorial de notícia por tier de visibilidade pública.
+///
+/// Escala calibrada para score editorial de notícia (0–100). Não representa score
+/// de mercado factual ou econômico — não deve ser reutilizado fora do news system.
+/// Alinhado em proporção com helpers de mercado anteriores (Baixa=0, Elite=max).
+fn market_news_visibility_bonus(profile: &MarketVisibilityProfile) -> f64 {
+    match profile.tier {
+        MarketVisibilityTier::Baixa => 0.0,
+        MarketVisibilityTier::Relevante => 5.0,
+        MarketVisibilityTier::Alta => 10.0,
+        MarketVisibilityTier::Elite => 18.0,
+    }
+}
+
+/// Score base de relevância editorial por tipo de evento de mercado.
+///
+/// Retorna None para eventos inelegíveis — cuja importância é fixada por razões
+/// estruturais (PlayerProposalReceived → Destaque; HierarchyUpdated, PreSeasonComplete
+/// → fixados editorialmente). Nesses casos, visibilidade pública não intervém.
+fn market_base_narrative_score(event_type: &MarketEventType) -> Option<f64> {
+    match event_type {
+        MarketEventType::TransferCompleted => Some(65.0),
+        MarketEventType::ContractRenewed => Some(40.0),
+        MarketEventType::RookieSigned => Some(40.0),
+        MarketEventType::ContractExpired => Some(35.0),
+        MarketEventType::TransferRejected => Some(20.0),
+        _ => None,
+    }
+}
+
+/// Score editorial combinado para notícia de mercado: relevância factual + visibilidade pública.
+///
+/// `midia = None` (sem driver_id ou driver ausente do mapa) significa ausência de
+/// modulação pública — não é erro. O evento continua avaliado pela relevância factual.
+fn market_news_editorial_score(base: f64, midia: Option<f64>) -> f64 {
+    let bonus = midia
+        .map(|m| market_news_visibility_bonus(&derive_market_visibility_profile(m)))
+        .unwrap_or(0.0);
+    base + bonus
+}
+
+/// Mapeia score editorial para NewsImportance.
+/// Cap em Alta — Destaque é reservado para eventos player-facing.
+fn market_score_to_importance(score: f64) -> NewsImportance {
+    if score >= 50.0 {
+        NewsImportance::Alta
+    } else if score >= 30.0 {
+        NewsImportance::Media
+    } else {
+        NewsImportance::Baixa
+    }
+}
+
+/// Promoção discreta de importância por visibilidade pública narrativa — v1.
+///
+/// Esta função é o mecanismo de "centralidade longitudinal" desta versão:
+/// ao aplicar-se em geradores recorrentes (corrida, fim de temporada), faz com que
+/// pilotos mais públicos apareçam com mais frequência em notícias Alta ao longo da
+/// temporada. Não é um sistema global de ranking narrativo — é promoção local em pontos
+/// de geração já existentes.
+///
+/// Só promove Media → Alta para pilotos Alta ou Elite — evitando banalização.
+/// Cap via match explícito: Alta e Destaque são preservados sem depender de ord numérica.
+/// `midia = None` → sem efeito (degradação segura, não é erro estrutural).
+fn promote_narrative_importance(importance: NewsImportance, midia: Option<f64>) -> NewsImportance {
+    match importance {
+        NewsImportance::Alta | NewsImportance::Destaque => return importance,
+        _ => {}
+    }
+    match midia.map(|m| derive_market_visibility_profile(m).tier) {
+        Some(MarketVisibilityTier::Alta | MarketVisibilityTier::Elite) => NewsImportance::Alta,
+        _ => importance,
+    }
+}
+
+/// Bônus editorial de notícia por tier de presença pública de equipe.
+///
+/// Secundário ao bônus de visibilidade de piloto (Baixa=0/Relevante=5/Alta=10/Elite=18).
+/// Escala deliberadamente menor: Elite equipe (10) < Elite piloto (18).
+/// Garante dominância do indivíduo: Elite driver + Baixa team (18) > Relevante driver + Elite team (15).
+/// Efeito máximo: +10 (Elite), suficiente para promover ContractRenewed 40→50 (Alta).
+fn team_presence_editorial_bonus(tier: &TeamPublicPresenceTier) -> f64 {
+    match tier {
+        TeamPublicPresenceTier::Baixa     => 0.0,
+        TeamPublicPresenceTier::Relevante => 2.0,
+        TeamPublicPresenceTier::Alta      => 6.0,
+        TeamPublicPresenceTier::Elite     => 10.0,
+    }
+}
 
 pub fn generate_news_from_market_events(
     events: &[MarketEvent],
@@ -302,11 +987,13 @@ pub fn generate_news_from_market_events(
     semana: i32,
     next_id: &mut impl FnMut() -> String,
     timestamp: &mut i64,
+    driver_midia: &std::collections::HashMap<String, f64>,
+    team_presence: &std::collections::HashMap<String, TeamPublicPresenceTier>,
 ) -> Vec<NewsItem> {
     events
         .iter()
         .map(|event| {
-            let (tipo, importancia, icone, titulo, texto) = match event.event_type {
+            let (tipo, mut importancia, icone, titulo, texto) = match event.event_type {
                 MarketEventType::ContractExpired => (
                     NewsType::Mercado,
                     NewsImportance::Media,
@@ -366,6 +1053,23 @@ pub fn generate_news_from_market_events(
                 ),
             };
 
+            // Ajuste editorial leve por visibilidade pública do piloto + presença pública da equipe.
+            // Atua apenas em eventos elegíveis (base Some). PlayerProposalReceived,
+            // HierarchyUpdated e PreSeasonComplete são inelegíveis — importância fixada.
+            // Ausência de driver_id/team_id ou entidade não encontrada = sem bônus (não é erro).
+            // Piloto continua dominante: bônus máx piloto=18 > bônus máx equipe=10.
+            if let Some(base) = market_base_narrative_score(&event.event_type) {
+                let midia = event.driver_id
+                    .as_deref()
+                    .and_then(|id| driver_midia.get(id).copied());
+                let team_bonus = event.team_id
+                    .as_deref()
+                    .and_then(|tid| team_presence.get(tid))
+                    .map(team_presence_editorial_bonus)
+                    .unwrap_or(0.0);
+                importancia = market_score_to_importance(market_news_editorial_score(base, midia) + team_bonus);
+            }
+
             build_news_item(
                 next_id,
                 timestamp,
@@ -391,6 +1095,7 @@ pub fn generate_news_from_end_of_season(
     temporada: i32,
     next_id: &mut impl FnMut() -> String,
     timestamp: &mut i64,
+    driver_midia: &std::collections::HashMap<String, f64>,
 ) -> Vec<NewsItem> {
     let mut news = Vec::new();
 
@@ -502,7 +1207,8 @@ pub fn generate_news_from_end_of_season(
         let importance = if rookie.tipo == "Genio" {
             NewsImportance::Alta
         } else {
-            NewsImportance::Media
+            let midia = driver_midia.get(&rookie.driver_id).copied();
+            promote_narrative_importance(NewsImportance::Media, midia)
         };
         news.push(build_news_item(
             next_id,
@@ -589,11 +1295,13 @@ pub fn generate_news_from_end_of_season(
         .min_by(|a, b| a.overall_delta.total_cmp(&b.overall_delta))
         .filter(|report| report.overall_delta < -3.0)
     {
+        let dec_midia = driver_midia.get(&decliner.driver_id).copied();
+        let dec_importance = promote_narrative_importance(NewsImportance::Media, dec_midia);
         news.push(build_news_item(
             next_id,
             timestamp,
             NewsType::Evolucao,
-            NewsImportance::Media,
+            dec_importance,
             "📉".to_string(),
             format!("{} em declinio", decliner.driver_name),
             format!("{} apresentou queda de desempenho.", decliner.driver_name),
@@ -618,6 +1326,7 @@ pub fn generate_news_from_race(
     thematic_slot: ThematicSlot,
     next_id: &mut impl FnMut() -> String,
     timestamp: &mut i64,
+    driver_midia: &std::collections::HashMap<String, f64>,
 ) -> Vec<NewsItem> {
     let mut news = Vec::new();
     let category_name = Some(format_category_name(categoria));
@@ -688,11 +1397,13 @@ pub fn generate_news_from_race(
         .max_by_key(|result| result.positions_gained)
         .filter(|result| result.positions_gained >= 3)
     {
+        let mover_midia = driver_midia.get(&mover.pilot_id).copied();
+        let mover_importance = promote_narrative_importance(NewsImportance::Media, mover_midia);
         news.push(build_news_item(
             next_id,
             timestamp,
             NewsType::Corrida,
-            NewsImportance::Media,
+            mover_importance,
             "📈".to_string(),
             format!(
                 "{} ganha {} posicoes!",
@@ -900,4 +1611,269 @@ pub fn generate_news_from_pos_especial(
     }
 
     items
+}
+
+// ── Incident / Injury news helpers ───────────────────────────────────────────
+
+/// Priority levels for incident news selection (higher = more important).
+/// Mirrors the ordering documented in the implementation plan.
+fn incident_priority(inc: &IncidentResult) -> u8 {
+    match (&inc.incident_type, &inc.severity, inc.is_dnf) {
+        (IncidentType::Collision, IncidentSeverity::Critical, _) => 6,
+        (IncidentType::Collision, _, true) => 5,
+        (IncidentType::DriverError, _, true) => 4,
+        (IncidentType::Mechanical, _, true) => 3,
+        (IncidentType::Collision, IncidentSeverity::Major, false) => 2,
+        (IncidentType::DriverError, IncidentSeverity::Major, false) => 1,
+        _ => 0,
+    }
+}
+
+/// Selects the single most narratively relevant incident from a race.
+///
+/// Priority order (descending):
+/// 1. Collision + Critical
+/// 2. Collision + DNF
+/// 3. DriverError + DNF
+/// 4. Mechanical + DNF
+/// 5. Collision + Major (no DNF)
+/// 6. DriverError + Major (no DNF)
+///
+/// Tiebreakers: injury linked > player involved > deterministic stable order (pilot_id).
+pub fn select_primary_incident<'a>(
+    incidents: &'a [IncidentResult],
+    new_injuries: &[Injury],
+    player_id: Option<&str>,
+) -> Option<&'a IncidentResult> {
+    let injured_pilots: std::collections::HashSet<&str> =
+        new_injuries.iter().map(|inj| inj.pilot_id.as_str()).collect();
+
+    incidents
+        .iter()
+        .filter(|inc| incident_priority(inc) > 0)
+        .max_by(|a, b| {
+            let pa = incident_priority(a);
+            let pb = incident_priority(b);
+            pa.cmp(&pb)
+                .then_with(|| {
+                    // Tiebreak 1: incident involving a freshly injured pilot
+                    let a_injured = injured_pilots.contains(a.pilot_id.as_str())
+                        || a.linked_pilot_id
+                            .as_deref()
+                            .map_or(false, |id| injured_pilots.contains(id));
+                    let b_injured = injured_pilots.contains(b.pilot_id.as_str())
+                        || b.linked_pilot_id
+                            .as_deref()
+                            .map_or(false, |id| injured_pilots.contains(id));
+                    a_injured.cmp(&b_injured)
+                })
+                .then_with(|| {
+                    // Tiebreak 2: player involvement
+                    let a_player = player_id
+                        .map_or(false, |pid| a.pilot_id == pid || a.linked_pilot_id.as_deref() == Some(pid));
+                    let b_player = player_id
+                        .map_or(false, |pid| b.pilot_id == pid || b.linked_pilot_id.as_deref() == Some(pid));
+                    a_player.cmp(&b_player)
+                })
+                .then_with(|| {
+                    // Tiebreak 3: deterministic stable order
+                    b.pilot_id.cmp(&a.pilot_id)
+                })
+        })
+}
+
+/// Builds the single incident `NewsItem` for a race.
+///
+/// Text is generated from templates — no raw `description` string is exposed.
+pub fn build_incident_news_item(
+    incident: &IncidentResult,
+    track_name: &str,
+    pilot_name: &str,
+    linked_pilot_name: Option<&str>,
+    is_player: bool,
+    category: &str,
+    round: i32,
+    season: i32,
+    next_id: &mut impl FnMut() -> String,
+    timestamp: &mut i64,
+) -> NewsItem {
+    let (titulo, texto, importancia) = match (&incident.incident_type, &incident.severity, incident.is_dnf) {
+        // Collision Critical
+        (IncidentType::Collision, IncidentSeverity::Critical, _) => {
+            let t = format!("Forte acidente marca a corrida em {}", track_name);
+            let body = match linked_pilot_name {
+                Some(other) => format!(
+                    "Acidente grave entre {} e {} em {}. {}",
+                    pilot_name,
+                    other,
+                    track_name,
+                    if incident.is_dnf { "Um dos pilotos abandonou." } else { "" }
+                ),
+                None => format!(
+                    "Forte acidente envolvendo {} em {}.",
+                    pilot_name, track_name
+                ),
+            };
+            (t, body, NewsImportance::Alta)
+        }
+        // Collision + DNF (non-Critical)
+        (IncidentType::Collision, _, true) => {
+            let t = match linked_pilot_name {
+                Some(other) => format!("Toque entre {} e {} encerra corrida", pilot_name, other),
+                None => format!("Colisao encerra corrida de {}", pilot_name),
+            };
+            let body = format!(
+                "{} nao terminou a corrida em {} apos colisao.",
+                pilot_name, track_name
+            );
+            (t, body, NewsImportance::Alta)
+        }
+        // DriverError + DNF
+        (IncidentType::DriverError, _, true) => {
+            let t = format!("Erro tira {} da corrida", pilot_name);
+            let body = format!(
+                "{} cometeu um erro e abandonou em {}.",
+                pilot_name, track_name
+            );
+            let imp = if is_player { NewsImportance::Alta } else { NewsImportance::Media };
+            (t, body, imp)
+        }
+        // Mechanical + DNF
+        (IncidentType::Mechanical, _, true) => {
+            let t = format!("Problema mecanico encerra corrida de {}", pilot_name);
+            let body = format!(
+                "Falha mecanica tirou {} da corrida em {}.",
+                pilot_name, track_name
+            );
+            (t, body, NewsImportance::Media)
+        }
+        // Collision Major, no DNF
+        (IncidentType::Collision, IncidentSeverity::Major, false) => {
+            let t = match linked_pilot_name {
+                Some(other) => format!("Toque entre {} e {} em {}", pilot_name, other, track_name),
+                None => format!("Colisao forte envolve {} em {}", pilot_name, track_name),
+            };
+            let body = format!(
+                "{} se envolveu em incidente na corrida em {}.",
+                pilot_name, track_name
+            );
+            (t, body, NewsImportance::Media)
+        }
+        // DriverError Major, no DNF
+        _ => {
+            let t = format!("Erro de {} complica corrida em {}", pilot_name, track_name);
+            let body = format!(
+                "{} cometeu um erro durante a corrida em {}.",
+                pilot_name, track_name
+            );
+            let imp = if is_player { NewsImportance::Media } else { NewsImportance::Baixa };
+            (t, body, imp)
+        }
+    };
+
+    build_news_item(
+        next_id,
+        timestamp,
+        NewsType::Incidente,
+        importancia,
+        "🚨".to_string(),
+        titulo,
+        texto,
+        Some(round),
+        None,
+        season,
+        Some(category.to_string()),
+        Some(format_category_name(category)),
+        Some(incident.pilot_id.clone()),
+        None,
+    )
+}
+
+/// Builds one `NewsType::Lesao` `NewsItem` per injured pilot.
+///
+/// Importance: `Destaque` for the player, `Alta` for AI drivers.
+pub fn build_injury_news_items(
+    new_injuries: &[Injury],
+    player_id: Option<&str>,
+    pilot_names: &std::collections::HashMap<String, String>,
+    track_name: &str,
+    category: &str,
+    round: i32,
+    season: i32,
+    next_id: &mut impl FnMut() -> String,
+    timestamp: &mut i64,
+) -> Vec<NewsItem> {
+    new_injuries
+        .iter()
+        .map(|injury| {
+            let is_player = player_id.map_or(false, |pid| injury.pilot_id == pid);
+            let importancia = if is_player {
+                NewsImportance::Destaque
+            } else {
+                NewsImportance::Alta
+            };
+            let pilot_name = pilot_names
+                .get(&injury.pilot_id)
+                .map(|s| s.as_str())
+                .unwrap_or("Piloto");
+            let severity_label = match injury.injury_type {
+                crate::models::enums::InjuryType::Leve => "lesao leve",
+                crate::models::enums::InjuryType::Moderada => "lesao moderada",
+                crate::models::enums::InjuryType::Grave => "lesao grave",
+                crate::models::enums::InjuryType::Critica => "lesao critica",
+            };
+            let titulo = format!("{} sofre {} apos acidente", pilot_name, severity_label);
+            let texto = format!(
+                "{} sofreu {} durante a corrida em {} e deve ficar {} corrida(s) afastado.",
+                pilot_name,
+                severity_label,
+                track_name,
+                injury.races_remaining,
+            );
+            build_news_item(
+                next_id,
+                timestamp,
+                NewsType::Lesao,
+                importancia,
+                "🏥".to_string(),
+                titulo,
+                texto,
+                Some(round),
+                None,
+                season,
+                Some(category.to_string()),
+                Some(format_category_name(category)),
+                Some(injury.pilot_id.clone()),
+                None,
+            )
+        })
+        .collect()
+}
+
+/// Converte um `SeasonalFramingSignal` em `NewsItem` pronto para persistência.
+pub fn build_seasonal_framing_news_item(
+    signal: SeasonalFramingSignal,
+    temporada: i32,
+    rodada: i32,
+    categoria_id: &str,
+    next_id: &mut impl FnMut() -> String,
+    timestamp: &mut i64,
+) -> NewsItem {
+    let categoria_nome = format_category_name(categoria_id);
+    build_news_item(
+        next_id,
+        timestamp,
+        NewsType::FramingSazonal,
+        signal.importance,
+        "📡".to_string(),
+        signal.title,
+        signal.body,
+        Some(rodada),
+        None,
+        temporada,
+        Some(categoria_id.to_string()),
+        Some(categoria_nome),
+        signal.driver_id,
+        None,
+    )
 }

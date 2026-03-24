@@ -19,6 +19,7 @@ mod hierarchy;
 mod market;
 mod models;
 mod news;
+mod public_presence;
 mod promotion;
 mod rivalry;
 mod simulation;

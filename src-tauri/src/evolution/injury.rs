@@ -8,6 +8,7 @@ use crate::db::queries::injuries::{
     get_active_injuries_for_category, insert_injury, update_injury_status,
 };
 use crate::models::enums::DriverStatus;
+use crate::models::injury::Injury;
 use crate::simulation::incidents::IncidentResult;
 use crate::simulation::injuries::generate_injury_from_incident;
 
@@ -39,7 +40,9 @@ pub fn process_new_injuries(
     race_id: &str,
     incidents: &[IncidentResult],
     rng: &mut impl Rng,
-) -> Result<(), DbError> {
+) -> Result<Vec<Injury>, DbError> {
+    let mut new_injuries = Vec::new();
+
     // Only max 1 injury per pilot per race. Let's group by pilot.
     let mut pilot_incidents: HashMap<String, Vec<&IncidentResult>> = HashMap::new();
     for inc in incidents {
@@ -56,12 +59,13 @@ pub fn process_new_injuries(
                 // To avoid immediate decay, we will just insert it as active.
                 insert_injury(tx, &injury)?;
                 update_driver_status(tx, &pilot_id, &DriverStatus::Lesionado)?;
+                new_injuries.push(injury);
                 break; // Only 1 injury per pilot per race
             }
         }
     }
 
-    Ok(())
+    Ok(new_injuries)
 }
 
 #[cfg(test)]
@@ -161,11 +165,14 @@ mod tests {
             positions_lost: 20,
             is_dnf: true,
             description: "Huge crash".to_string(),
+            linked_pilot_id: None,
         };
 
         let mut rng = ForceInjuryRng;
         
-        process_new_injuries(&tx, 1, "R001", &[incident], &mut rng).unwrap();
+        let new_injuries = process_new_injuries(&tx, 1, "R001", &[incident], &mut rng).unwrap();
+        assert_eq!(new_injuries.len(), 1);
+        assert_eq!(new_injuries[0].pilot_id, "P001");
         
         let count: i32 = tx.query_row("SELECT COUNT(*) FROM injuries", [], |r| r.get(0)).unwrap();
         assert_eq!(count, 1);

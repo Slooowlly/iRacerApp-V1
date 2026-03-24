@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 pub mod generator;
+pub mod season_framing;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NewsItem {
@@ -35,6 +36,7 @@ pub enum NewsType {
     Evolucao,
     PreTemporada,
     Rivalidade,
+    FramingSazonal,
 }
 
 impl NewsType {
@@ -53,6 +55,7 @@ impl NewsType {
             NewsType::Evolucao => "Evolucao",
             NewsType::PreTemporada => "PreTemporada",
             NewsType::Rivalidade => "Rivalidade",
+            NewsType::FramingSazonal => "FramingSazonal",
         }
     }
 
@@ -70,6 +73,7 @@ impl NewsType {
             "Evolucao" => Self::Evolucao,
             "PreTemporada" => Self::PreTemporada,
             "Rivalidade" => Self::Rivalidade,
+            "FramingSazonal" => Self::FramingSazonal,
             _ => Self::Corrida,
         }
     }
@@ -89,6 +93,7 @@ impl NewsType {
             NewsType::Evolucao => "📈",
             NewsType::PreTemporada => "📰",
             NewsType::Rivalidade => "⚔️",
+            NewsType::FramingSazonal => "📡",
         }
     }
 }

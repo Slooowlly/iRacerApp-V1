@@ -274,6 +274,55 @@ pub fn run_market(
     Ok(report)
 }
 
+/// Escaneia todas as equipes de categorias regulares e garante que tenham 2 pilotos.
+/// Caso faltem pilotos, preenche com novos rookies (rookies são gerados e contratados).
+pub fn fill_all_remaining_vacancies(
+    conn: &Connection,
+    new_season_number: i32,
+    rng: &mut impl Rng,
+) -> Result<(), String> {
+    let teams = team_queries::get_all_teams(conn)
+        .map_err(|e| format!("Falha ao carregar equipes para preenchimento final: {e}"))?;
+
+    loop {
+        let current_drivers = driver_queries::get_all_drivers(conn)
+            .map_err(|e| format!("Falha ao recarregar pilotos: {e}"))?;
+        let current_by_id: HashMap<String, Driver> = current_drivers
+            .iter()
+            .cloned()
+            .map(|driver| (driver.id.clone(), driver))
+            .collect();
+
+        sync_team_slots(conn, &teams, &current_by_id)?;
+        let vacancies = find_vacancies(conn)?;
+
+        // Filtra apenas vagas de categorias regulares (evita slots de convidados/especiais se houver)
+        let regular_vacancies: Vec<_> = vacancies
+            .into_iter()
+            .filter(|v| {
+                get_category_config(&v.categoria)
+                    .map(|c| !c.id.contains("especial"))
+                    .unwrap_or(true)
+            })
+            .collect();
+
+        if regular_vacancies.is_empty() {
+            break;
+        }
+
+        let mut report = MarketReport::default();
+        fill_remaining_vacancies_with_rookies(conn, &teams, new_season_number, &mut report, rng)?;
+
+        // Se após tentar preencher ainda persistirem as mesmas vagas (ex: erro na geração), quebra para evitar loop infinito
+        let final_vacancies = find_vacancies(conn)?;
+        if final_vacancies.len() >= regular_vacancies.len() {
+             break;
+        }
+    }
+
+    Ok(())
+}
+
 fn get_season_by_number(
     conn: &Connection,
     season_number: i32,
@@ -617,7 +666,7 @@ fn find_available_drivers(
     Ok(available)
 }
 
-fn sign_driver_to_team(
+pub(crate) fn sign_driver_to_team(
     conn: &Connection,
     driver: &Driver,
     vacancy: &Vacancy,
