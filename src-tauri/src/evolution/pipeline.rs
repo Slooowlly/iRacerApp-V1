@@ -1,82 +1,38 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-use chrono::Local;
 use rand::{rngs::StdRng, Rng, SeedableRng};
 use rusqlite::Connection;
-use serde::{Deserialize, Serialize};
 
-use crate::calendar::generate_all_calendars_with_id_factory;
-use crate::constants::categories::{get_all_categories, get_category_config};
-use crate::db::queries::calendar as calendar_queries;
+use crate::constants::categories::get_category_config;
 use crate::db::queries::contracts as contract_queries;
 use crate::db::queries::drivers as driver_queries;
 use crate::db::queries::seasons as season_queries;
 use crate::db::queries::teams as team_queries;
+use crate::evolution::context::StandingEntry;
 use crate::evolution::decline::apply_age_decline;
-use crate::evolution::growth::{calculate_growth, GrowthReport, SeasonStats};
-use crate::evolution::motivation::{adjust_end_of_season_motivation, MotivationReport};
+use crate::evolution::growth::{calculate_growth, GrowthReport};
+use crate::evolution::licenses::persist_licenses;
+use crate::evolution::motivation::{adjust_end_of_season_motivation, MotivationContext, MotivationReport};
 use crate::evolution::retirement::{check_retirement, process_retirement};
 use crate::evolution::rookies::{classify_rookie, generate_rookies};
-use crate::generators::ids::{next_id, next_ids, IdType};
+use crate::evolution::season_transition::{
+    create_and_persist_new_season, reset_driver_season_stats, reset_team_season_stats,
+    seed_new_calendar, update_meta_for_new_season,
+};
+use crate::evolution::standings::build_and_persist_standings;
+use crate::generators::ids::{next_ids, IdType};
 use crate::market::preseason::{initialize_preseason, save_preseason_plan};
+use crate::models::contract::Contract;
 use crate::models::driver::Driver;
 use crate::models::enums::DriverStatus;
 use crate::models::season::Season;
+use crate::models::team::Team;
 use crate::promotion::pipeline::run_promotion_relegation;
-use crate::promotion::PromotionResult;
 use crate::rivalry::apply_season_end_rivalry_decay;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EndOfSeasonResult {
-    pub growth_reports: Vec<GrowthReport>,
-    pub motivation_reports: Vec<MotivationReport>,
-    pub retirements: Vec<RetirementInfo>,
-    pub rookies_generated: Vec<RookieInfo>,
-    pub new_season_id: String,
-    pub new_year: i32,
-    pub licenses_earned: Vec<LicenseEarned>,
-    pub promotion_result: PromotionResult,
-    pub preseason_initialized: bool,
-    pub preseason_total_weeks: i32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RetirementInfo {
-    pub driver_id: String,
-    pub driver_name: String,
-    pub age: i32,
-    pub reason: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RookieInfo {
-    pub driver_id: String,
-    pub driver_name: String,
-    pub nationality: String,
-    pub age: i32,
-    pub skill: u8,
-    pub tipo: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LicenseEarned {
-    pub driver_id: String,
-    pub driver_name: String,
-    pub license_level: u8,
-    pub category: String,
-}
-
-#[derive(Debug, Clone)]
-struct StandingEntry {
-    driver_id: String,
-    driver_name: String,
-    category: String,
-    team_id: Option<String>,
-    position: i32,
-    total_drivers: i32,
-    stats: SeasonStats,
-}
+// Reexports para compatibilidade — callsites externos usam crate::evolution::pipeline::*
+pub use crate::evolution::context::{EndOfSeasonResult, LicenseEarned, RetirementInfo, RookieInfo};
 
 pub fn run_end_of_season(
     conn: &Connection,
@@ -84,18 +40,8 @@ pub fn run_end_of_season(
     save_path: &Path,
 ) -> Result<EndOfSeasonResult, String> {
     let mut rng = StdRng::seed_from_u64(((season.numero as u64) << 32) | season.ano as u64);
-    let teams =
-        team_queries::get_all_teams(conn).map_err(|e| format!("Falha ao buscar equipes: {e}"))?;
-    let teams_by_id: HashMap<String, crate::models::team::Team> = teams
-        .into_iter()
-        .map(|team| (team.id.clone(), team))
-        .collect();
-    let active_contracts = contract_queries::get_all_active_contracts(conn)
-        .map_err(|e| format!("Falha ao buscar contratos ativos: {e}"))?;
-    let contracts_by_driver: HashMap<String, crate::models::contract::Contract> = active_contracts
-        .into_iter()
-        .map(|contract| (contract.piloto_id.clone(), contract))
-        .collect();
+
+    let (teams_by_id, contracts_by_driver) = build_context(conn)?;
 
     let standings = build_and_persist_standings(conn, season, &contracts_by_driver)?;
     let standings_by_driver: HashMap<String, StandingEntry> = standings
@@ -110,9 +56,65 @@ pub fn run_end_of_season(
     season_queries::finalize_season(conn, &season.id)
         .map_err(|e| format!("Falha ao finalizar temporada: {e}"))?;
 
+    let (growth_reports, motivation_reports, retirements, existing_names) =
+        process_driver_evolution(conn, season, &standings_by_driver, &contracts_by_driver, &teams_by_id, &mut rng)?;
+
+    let rookies_generated = process_rookie_phase(conn, existing_names, &mut rng)?;
+
+    let promotion_result = run_promotion_relegation(conn, season.numero, &mut rng)
+        .map_err(|e| format!("Erro na promocao/rebaixamento: {e}"))?;
+
+    apply_season_end_rivalry_decay(conn, season.numero)
+        .map_err(|e| format!("Erro no decaimento de rivalidades: {e}"))?;
+
+    let new_season = create_next_season_phase(conn, season, &mut rng)?;
+
+    let (preseason_initialized, preseason_total_weeks) =
+        initialize_preseason_phase(conn, &new_season, save_path, &mut rng)?;
+
+    Ok(EndOfSeasonResult {
+        growth_reports,
+        motivation_reports,
+        retirements,
+        rookies_generated,
+        new_season_id: new_season.id,
+        new_year: new_season.ano,
+        licenses_earned,
+        promotion_result,
+        preseason_initialized,
+        preseason_total_weeks,
+    })
+}
+
+fn build_context(
+    conn: &Connection,
+) -> Result<(HashMap<String, Team>, HashMap<String, Contract>), String> {
+    let teams = team_queries::get_all_teams(conn)
+        .map_err(|e| format!("Falha ao buscar equipes: {e}"))?;
+    let teams_by_id: HashMap<String, Team> = teams
+        .into_iter()
+        .map(|team| (team.id.clone(), team))
+        .collect();
+    let active_contracts = contract_queries::get_all_active_contracts(conn)
+        .map_err(|e| format!("Falha ao buscar contratos ativos: {e}"))?;
+    let contracts_by_driver: HashMap<String, Contract> = active_contracts
+        .into_iter()
+        .map(|contract| (contract.piloto_id.clone(), contract))
+        .collect();
+    Ok((teams_by_id, contracts_by_driver))
+}
+
+fn process_driver_evolution(
+    conn: &Connection,
+    season: &Season,
+    standings_by_driver: &HashMap<String, StandingEntry>,
+    contracts_by_driver: &HashMap<String, Contract>,
+    teams_by_id: &HashMap<String, Team>,
+    rng: &mut impl Rng,
+) -> Result<(Vec<GrowthReport>, Vec<MotivationReport>, Vec<RetirementInfo>, HashSet<String>), String> {
     let mut all_drivers = driver_queries::get_all_drivers(conn)
         .map_err(|e| format!("Falha ao buscar pilotos: {e}"))?;
-    let mut existing_names: HashSet<String> = all_drivers
+    let existing_names: HashSet<String> = all_drivers
         .iter()
         .map(|driver| driver.nome.clone())
         .collect();
@@ -141,24 +143,27 @@ pub fn run_end_of_season(
                 &standing.stats,
                 team_car_performance,
                 category_tier,
-                &mut rng,
+                rng,
             );
             if !growth_report.changes.is_empty() {
                 growth_reports.push(growth_report);
             }
 
-            let _decline_changes = apply_age_decline(driver, &mut rng);
+            let _decline_changes = apply_age_decline(driver, rng);
             let seasons_in_category = driver.temporadas_na_categoria as i32 + 1;
+            let motivation_ctx = MotivationContext {
+                was_champion: standing.position == 1,
+                was_promoted: false,
+                was_relegated: false,
+                contract_renewed: false,
+                lost_seat: false,
+                seasons_in_category,
+            };
             let motivation_report = adjust_end_of_season_motivation(
                 driver,
                 &standing.stats,
-                standing.position == 1,
-                false,
-                false,
-                false,
-                false,
-                seasons_in_category,
-                &mut rng,
+                &motivation_ctx,
+                rng,
             );
             motivation_reports.push(motivation_report);
 
@@ -185,7 +190,7 @@ pub fn run_end_of_season(
             driver,
             driver.temporadas_motivacao_baixa as i32,
             false,
-            &mut rng,
+            rng,
         );
         if retirement.should_retire {
             let reason = retirement
@@ -207,8 +212,16 @@ pub fn run_end_of_season(
             .map_err(|e| format!("Falha ao salvar piloto '{}': {e}", driver.nome))?;
     }
 
+    Ok((growth_reports, motivation_reports, retirements, existing_names))
+}
+
+fn process_rookie_phase(
+    conn: &Connection,
+    mut existing_names: HashSet<String>,
+    rng: &mut impl Rng,
+) -> Result<Vec<RookieInfo>, String> {
     let rookie_count = rng.gen_range(2..=4);
-    let mut rookies = generate_rookies(rookie_count, &mut existing_names, &mut rng);
+    let mut rookies = generate_rookies(rookie_count, &mut existing_names, rng);
     let rookie_ids = next_ids(conn, IdType::Driver, rookie_count as u32)
         .map_err(|e| format!("Falha ao gerar IDs de rookies: {e}"))?;
     let mut rookies_generated = Vec::new();
@@ -225,219 +238,33 @@ pub fn run_end_of_season(
             tipo: classify_rookie(driver.atributos.skill.round() as u8).to_string(),
         });
     }
+    Ok(rookies_generated)
+}
 
-    let promotion_result = run_promotion_relegation(conn, season.numero, &mut rng)
-        .map_err(|e| format!("Erro na promocao/rebaixamento: {e}"))?;
+fn create_next_season_phase(
+    conn: &Connection,
+    season: &Season,
+    rng: &mut impl Rng,
+) -> Result<Season, String> {
+    let new_season = create_and_persist_new_season(conn, season)?;
+    reset_driver_season_stats(conn)?;
+    reset_team_season_stats(conn, new_season.numero)?;
+    seed_new_calendar(conn, &new_season.id, new_season.ano, rng)?;
+    update_meta_for_new_season(conn, new_season.numero, new_season.ano)?;
+    Ok(new_season)
+}
 
-    apply_season_end_rivalry_decay(conn, season.numero)
-        .map_err(|e| format!("Erro no decaimento de rivalidades: {e}"))?;
-
-    let new_season_id = next_id(conn, IdType::Season)
-        .map_err(|e| format!("Falha ao gerar ID da nova temporada: {e}"))?;
-    let new_year = season.ano + 1;
-    let new_season = Season::new(new_season_id.clone(), season.numero + 1, new_year);
-    season_queries::insert_season(conn, &new_season)
-        .map_err(|e| format!("Falha ao inserir nova temporada: {e}"))?;
-
-    let mut drivers_after_rotation = driver_queries::get_all_drivers(conn)
-        .map_err(|e| format!("Falha ao recarregar pilotos apos a nova temporada: {e}"))?;
-    for driver in &mut drivers_after_rotation {
-        driver.reset_season_stats();
-        driver_queries::update_driver(conn, driver)
-            .map_err(|e| format!("Falha ao resetar stats do piloto '{}': {e}", driver.nome))?;
-    }
-
-    let teams_after_rotation = team_queries::get_all_teams(conn)
-        .map_err(|e| format!("Falha ao recarregar equipes: {e}"))?;
-    for team in &teams_after_rotation {
-        team_queries::reset_team_season_stats(conn, &team.id)
-            .map_err(|e| format!("Falha ao resetar stats da equipe '{}': {e}", team.id))?;
-        conn.execute(
-            "UPDATE teams SET temporada_atual = ?1, updated_at = CURRENT_TIMESTAMP WHERE id = ?2",
-            rusqlite::params![season.numero + 1, &team.id],
-        )
-        .map_err(|e| format!("Falha ao atualizar temporada da equipe '{}': {e}", team.id))?;
-    }
-
-    let total_new_races: u32 = get_all_categories()
-        .iter()
-        .map(|category| category.corridas_por_temporada as u32)
-        .sum();
-    let race_ids = next_ids(conn, IdType::Race, total_new_races)
-        .map_err(|e| format!("Falha ao gerar IDs do calendario: {e}"))?;
-    let mut race_ids_iter = race_ids.into_iter();
-    let calendars = generate_all_calendars_with_id_factory(
-        &new_season_id,
-        new_year,
-        &mut || race_ids_iter.next().expect("calendar race id"),
-        &mut rng,
-    )?;
-    let all_entries: Vec<_> = calendars
-        .values()
-        .flat_map(|entries| entries.iter().cloned())
-        .collect();
-    calendar_queries::insert_calendar_entries(conn, &all_entries)
-        .map_err(|e| format!("Falha ao inserir calendario da nova temporada: {e}"))?;
-
-    conn.execute(
-        "UPDATE meta SET value = ?1 WHERE key = 'current_season'",
-        rusqlite::params![(season.numero + 1).to_string()],
-    )
-    .map_err(|e| format!("Falha ao atualizar meta current_season: {e}"))?;
-    conn.execute(
-        "UPDATE meta SET value = ?1 WHERE key = 'current_year'",
-        rusqlite::params![new_year.to_string()],
-    )
-    .map_err(|e| format!("Falha ao atualizar meta current_year: {e}"))?;
-
-    let preseason_plan = initialize_preseason(conn, new_season.numero, &mut rng)
+fn initialize_preseason_phase(
+    conn: &Connection,
+    new_season: &Season,
+    save_path: &Path,
+    rng: &mut impl Rng,
+) -> Result<(bool, i32), String> {
+    let preseason_plan = initialize_preseason(conn, new_season.numero, rng)
         .map_err(|e| format!("Erro ao inicializar pre-temporada: {e}"))?;
     save_preseason_plan(save_path, &preseason_plan)
         .map_err(|e| format!("Erro ao salvar plano da pre-temporada: {e}"))?;
-
-    Ok(EndOfSeasonResult {
-        growth_reports,
-        motivation_reports,
-        retirements,
-        rookies_generated,
-        new_season_id,
-        new_year,
-        licenses_earned,
-        promotion_result,
-        preseason_initialized: true,
-        preseason_total_weeks: preseason_plan.state.total_weeks,
-    })
-}
-
-fn build_and_persist_standings(
-    conn: &Connection,
-    season: &Season,
-    contracts_by_driver: &HashMap<String, crate::models::contract::Contract>,
-) -> Result<Vec<StandingEntry>, String> {
-    conn.execute(
-        "DELETE FROM standings WHERE temporada_id = ?1",
-        rusqlite::params![&season.id],
-    )
-    .map_err(|e| format!("Falha ao limpar standings existentes: {e}"))?;
-
-    let mut all_standings = Vec::new();
-    for category in get_all_categories() {
-        let mut drivers = driver_queries::get_drivers_by_category(conn, category.id)
-            .map_err(|e| format!("Falha ao buscar pilotos de '{}': {e}", category.id))?;
-        if drivers.is_empty() {
-            continue;
-        }
-
-        drivers.sort_by(|a, b| {
-            b.stats_temporada
-                .pontos
-                .total_cmp(&a.stats_temporada.pontos)
-                .then_with(|| b.stats_temporada.vitorias.cmp(&a.stats_temporada.vitorias))
-                .then_with(|| b.stats_temporada.podios.cmp(&a.stats_temporada.podios))
-                .then_with(|| a.nome.cmp(&b.nome))
-        });
-
-        let total_drivers = drivers.len() as i32;
-        for (index, driver) in drivers.into_iter().enumerate() {
-            let team_id = contracts_by_driver
-                .get(&driver.id)
-                .map(|contract| contract.equipe_id.clone());
-            let standing = StandingEntry {
-                driver_id: driver.id.clone(),
-                driver_name: driver.nome.clone(),
-                category: category.id.to_string(),
-                team_id: team_id.clone(),
-                position: index as i32 + 1,
-                total_drivers,
-                stats: SeasonStats {
-                    posicao_campeonato: index as i32 + 1,
-                    total_pilotos: total_drivers,
-                    pontos: driver.stats_temporada.pontos.round() as i32,
-                    vitorias: driver.stats_temporada.vitorias as i32,
-                    podios: driver.stats_temporada.podios as i32,
-                    corridas: driver.stats_temporada.corridas as i32,
-                    dnfs: driver.stats_temporada.dnfs as i32,
-                },
-            };
-
-            if let Some(team_id) = &team_id {
-                conn.execute(
-                    "INSERT INTO standings (
-                        temporada_id, piloto_id, equipe_id, categoria, posicao, pontos, vitorias, podios, poles, corridas
-                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-                    rusqlite::params![
-                        &season.id,
-                        &standing.driver_id,
-                        team_id,
-                        &standing.category,
-                        standing.position,
-                        standing.stats.pontos as f64,
-                        standing.stats.vitorias,
-                        standing.stats.podios,
-                        0,
-                        standing.stats.corridas,
-                    ],
-                )
-                .map_err(|e| format!("Falha ao persistir standings: {e}"))?;
-            }
-
-            all_standings.push(standing);
-        }
-    }
-
-    Ok(all_standings)
-}
-
-fn persist_licenses(
-    conn: &Connection,
-    standings: &[StandingEntry],
-    standings_by_driver: &HashMap<String, StandingEntry>,
-) -> Result<Vec<LicenseEarned>, rusqlite::Error> {
-    let mut grouped: HashMap<&str, Vec<&StandingEntry>> = HashMap::new();
-    for standing in standings {
-        grouped
-            .entry(&standing.category)
-            .or_default()
-            .push(standing);
-    }
-
-    let timestamp = timestamp_now();
-    let mut licenses_earned = Vec::new();
-    for (category, entries) in grouped {
-        let license_level = get_category_config(category)
-            .map(|config| config.tier)
-            .unwrap_or(0);
-        let cutoff = (entries.len() + 1) / 2;
-        for standing in entries.into_iter().take(cutoff) {
-            let seasons_in_category = standings_by_driver
-                .get(&standing.driver_id)
-                .map(|_| standing.stats.corridas)
-                .unwrap_or(0);
-            conn.execute(
-                "INSERT INTO licenses (piloto_id, nivel, categoria_origem, data_obtencao, temporadas_na_categoria)
-                 SELECT ?1, ?2, ?3, ?4, ?5
-                 WHERE NOT EXISTS (
-                     SELECT 1 FROM licenses WHERE piloto_id = ?1 AND nivel = ?2 AND categoria_origem = ?3
-                 )",
-                rusqlite::params![
-                    &standing.driver_id,
-                    license_level.to_string(),
-                    category,
-                    &timestamp,
-                    seasons_in_category,
-                ],
-            )?;
-
-            licenses_earned.push(LicenseEarned {
-                driver_id: standing.driver_id.clone(),
-                driver_name: standing.driver_name.clone(),
-                license_level,
-                category: category.to_string(),
-            });
-        }
-    }
-
-    Ok(licenses_earned)
+    Ok((true, preseason_plan.state.total_weeks))
 }
 
 fn persist_retired_driver(
@@ -464,10 +291,6 @@ fn persist_retired_driver(
     Ok(())
 }
 
-fn timestamp_now() -> String {
-    Local::now().format("%Y-%m-%dT%H:%M:%S").to_string()
-}
-
 #[cfg(test)]
 mod tests {
     use rand::{rngs::StdRng, SeedableRng};
@@ -477,6 +300,7 @@ mod tests {
     use crate::calendar::generate_calendar_for_category;
     use crate::constants::teams::get_team_templates;
     use crate::db::migrations;
+    use crate::db::queries::calendar as calendar_queries;
     use crate::models::contract::Contract;
     use crate::models::driver::Driver;
     use crate::models::enums::TeamRole;

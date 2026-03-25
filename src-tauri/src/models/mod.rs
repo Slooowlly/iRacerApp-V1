@@ -1,5 +1,8 @@
 pub mod contract;
 pub mod driver;
+pub mod driver_attributes;
+pub mod driver_generation;
+pub mod driver_tags;
 pub mod enums;
 pub mod injury;
 pub mod license;

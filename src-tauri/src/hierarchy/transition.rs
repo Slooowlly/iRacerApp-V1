@@ -11,7 +11,7 @@
 use rusqlite::Connection;
 
 use crate::db::queries::teams as team_queries;
-use crate::models::team::HierarchyStatus;
+use crate::models::team::TeamHierarchyClimate;
 
 // ── Tipos ─────────────────────────────────────────────────────────────────────
 
@@ -114,10 +114,10 @@ pub fn resolve_transition_values(
     prev_status: &str,
 ) -> (f64, &'static str) {
     match decision {
-        HierarchyTransition::FullReset => (0.0, HierarchyStatus::Estavel.as_str()),
+        HierarchyTransition::FullReset => (0.0, TeamHierarchyClimate::Estavel.as_str()),
         HierarchyTransition::PartialPreserve => {
             // Normaliza via enum para rejeitar valores legacy ("n1", "n2", etc.)
-            let status = HierarchyStatus::from_str(prev_status).as_str();
+            let status = TeamHierarchyClimate::from_str(prev_status).as_str();
             (prev_tensao, status)
         }
     }
@@ -184,7 +184,7 @@ pub fn validate_and_normalize_team_hierarchies(conn: &Connection) -> Result<(), 
             &team_id,
             p1,
             p2,
-            HierarchyStatus::Estavel.as_str(),
+            TeamHierarchyClimate::Estavel.as_str(),
             0.0,
         )
         .map_err(|e| format!("Falha ao normalizar hierarquia da equipe '{team_id}': {e}"))?;

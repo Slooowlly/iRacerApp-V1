@@ -1,21 +1,22 @@
 use rand::Rng;
 
 use crate::evolution::growth::{get_attribute, set_attribute, AttributeChange};
+use crate::models::driver_attributes::DriverAttributeKey;
 use crate::models::driver::Driver;
 
-const DECLINE_RATES: [(&str, f64); 12] = [
-    ("fitness", 1.5),
-    ("ritmo_classificacao", 1.2),
-    ("skill", 1.0),
-    ("habilidade_largada", 0.8),
-    ("consistencia", 0.3),
-    ("confianca", 0.3),
-    ("fator_chuva", 0.2),
-    ("mentalidade", 0.2),
-    ("smoothness", 0.1),
-    ("racecraft", 0.1),
-    ("defesa", 0.1),
-    ("gestao_pneus", 0.1),
+const DECLINE_RATES: [(DriverAttributeKey, f64); 12] = [
+    (DriverAttributeKey::Fitness, 1.5),
+    (DriverAttributeKey::RitmoClassificacao, 1.2),
+    (DriverAttributeKey::Skill, 1.0),
+    (DriverAttributeKey::HabilidadeLargada, 0.8),
+    (DriverAttributeKey::Consistencia, 0.3),
+    (DriverAttributeKey::Confianca, 0.3),
+    (DriverAttributeKey::FatorChuva, 0.2),
+    (DriverAttributeKey::Mentalidade, 0.2),
+    (DriverAttributeKey::Smoothness, 0.1),
+    (DriverAttributeKey::Racecraft, 0.1),
+    (DriverAttributeKey::Defesa, 0.1),
+    (DriverAttributeKey::GestaoPneus, 0.1),
 ];
 
 pub fn apply_age_decline(driver: &mut Driver, rng: &mut impl Rng) -> Vec<AttributeChange> {
@@ -41,7 +42,7 @@ pub fn apply_age_decline(driver: &mut Driver, rng: &mut impl Rng) -> Vec<Attribu
     let exp_gain = rng.gen_range(1..=3) as f64;
     let current_exp = driver.atributos.experiencia;
     let new_exp = (current_exp + exp_gain).min(100.0);
-    if let Some(change) = build_change(driver, "experiencia", current_exp, new_exp) {
+    if let Some(change) = build_change(driver, DriverAttributeKey::Experiencia, current_exp, new_exp) {
         changes.push(change);
     }
 
@@ -50,7 +51,7 @@ pub fn apply_age_decline(driver: &mut Driver, rng: &mut impl Rng) -> Vec<Attribu
 
 fn build_change(
     driver: &mut Driver,
-    attribute: &str,
+    key: DriverAttributeKey,
     old_value: f64,
     new_value: f64,
 ) -> Option<AttributeChange> {
@@ -58,7 +59,7 @@ fn build_change(
         return None;
     }
 
-    set_attribute(driver, attribute, new_value);
+    set_attribute(driver, key, new_value);
 
     let old_rounded = old_value.round().clamp(0.0, 100.0) as u8;
     let new_rounded = new_value.round().clamp(0.0, 100.0) as u8;
@@ -66,14 +67,14 @@ fn build_change(
         return None;
     }
 
-    let reason = if attribute == "experiencia" {
+    let reason = if key == DriverAttributeKey::Experiencia {
         format!("Experiencia acumulada aos {}", driver.idade)
     } else {
         format!("Declinio por idade ({})", driver.idade)
     };
 
     Some(AttributeChange {
-        attribute: attribute.to_string(),
+        attribute: key.as_str().to_string(),
         old_value: old_rounded,
         new_value: new_rounded,
         delta: new_rounded as i8 - old_rounded as i8,

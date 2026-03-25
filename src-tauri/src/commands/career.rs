@@ -41,10 +41,11 @@ use crate::market::preseason::{
     PlannedEvent, PreSeasonPlan, PreSeasonState, WeekResult,
 };
 use crate::market::proposals::{MarketProposal, ProposalStatus};
+use crate::db::queries::meta as meta_queries;
 use crate::models::driver::Driver;
 use crate::models::enums::{ContractStatus, SeasonPhase, TeamRole};
 use crate::models::season::Season;
-use crate::models::team::{HierarchyStatus, Team};
+use crate::models::team::{TeamHierarchyClimate, Team};
 use crate::news::generator::{
     generate_news_from_end_of_season, generate_news_from_market_events,
     generate_player_rejection_news, generate_player_signing_news,
@@ -433,30 +434,12 @@ fn sync_meta_counters(
     total_seasons: usize,
     total_races: usize,
 ) -> Result<(), crate::db::connection::DbError> {
-    conn.execute(
-        "UPDATE meta SET value = ?1 WHERE key = 'next_driver_id'",
-        rusqlite::params![(total_drivers as u32 + 1).to_string()],
-    )?;
-    conn.execute(
-        "UPDATE meta SET value = ?1 WHERE key = 'next_team_id'",
-        rusqlite::params![(total_teams as u32 + 1).to_string()],
-    )?;
-    conn.execute(
-        "UPDATE meta SET value = ?1 WHERE key = 'next_contract_id'",
-        rusqlite::params![(total_contracts as u32 + 1).to_string()],
-    )?;
-    conn.execute(
-        "UPDATE meta SET value = ?1 WHERE key = 'next_season_id'",
-        rusqlite::params![(total_seasons as u32 + 1).to_string()],
-    )?;
-    conn.execute(
-        "UPDATE meta SET value = ?1 WHERE key = 'next_race_id'",
-        rusqlite::params![(total_races as u32 + 1).to_string()],
-    )?;
-    conn.execute(
-        "UPDATE meta SET value = ?1 WHERE key = 'current_season'",
-        rusqlite::params![total_seasons.to_string()],
-    )?;
+    meta_queries::set_meta_value(conn, "next_driver_id",   &(total_drivers   as u32 + 1).to_string())?;
+    meta_queries::set_meta_value(conn, "next_team_id",     &(total_teams     as u32 + 1).to_string())?;
+    meta_queries::set_meta_value(conn, "next_contract_id", &(total_contracts as u32 + 1).to_string())?;
+    meta_queries::set_meta_value(conn, "next_season_id",   &(total_seasons   as u32 + 1).to_string())?;
+    meta_queries::set_meta_value(conn, "next_race_id",     &(total_races     as u32 + 1).to_string())?;
+    meta_queries::set_meta_value(conn, "current_season",   &total_seasons.to_string())?;
     Ok(())
 }
 
@@ -1235,7 +1218,7 @@ fn refresh_team_hierarchy_now(conn: &rusqlite::Connection, team_id: &str) -> Res
         team_id,
         n1_id,
         n2_id,
-        HierarchyStatus::Estavel.as_str(),
+        TeamHierarchyClimate::Estavel.as_str(),
         0.0,
     )
     .map_err(|e| format!("Falha ao atualizar hierarquia da equipe: {e}"))?;

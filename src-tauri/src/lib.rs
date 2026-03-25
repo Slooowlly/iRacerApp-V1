@@ -7,6 +7,7 @@ struct ResizeThrottle(Mutex<Instant>);
 // ── Módulos do sistema ──
 mod calendar;
 mod commands;
+mod common;
 mod config;
 mod constants;
 mod convocation;

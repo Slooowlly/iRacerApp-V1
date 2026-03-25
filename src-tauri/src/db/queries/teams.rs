@@ -1,7 +1,7 @@
 use rusqlite::{params, types::FromSql, Connection, OptionalExtension};
 
 use crate::db::connection::DbError;
-use crate::models::team::{placeholder_team_from_db, HierarchyStatus, Team};
+use crate::models::team::{placeholder_team_from_db, TeamHierarchyClimate, Team};
 
 pub fn insert_team(conn: &Connection, team: &Team) -> Result<(), DbError> {
     conn.execute(
@@ -300,7 +300,7 @@ pub fn update_team_hierarchy(
     status: &str,
     tensao: f64,
 ) -> Result<(), DbError> {
-    let normalized = HierarchyStatus::from_str(status).as_str().to_string();
+    let normalized = TeamHierarchyClimate::from_str(status).as_str().to_string();
     conn.execute(
         "UPDATE teams
          SET hierarquia_n1_id = ?1,
@@ -488,8 +488,8 @@ fn team_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Team> {
     team.chassi = row.get("chassi").unwrap_or(50.0);
     team.hierarquia_status = row
         .get::<_, String>("hierarquia_status")
-        .map(|value| HierarchyStatus::from_str(&value).as_str().to_string())
-        .unwrap_or_else(|_| HierarchyStatus::Estavel.as_str().to_string());
+        .map(|value| TeamHierarchyClimate::from_str(&value).as_str().to_string())
+        .unwrap_or_else(|_| TeamHierarchyClimate::Estavel.as_str().to_string());
     team.parent_team_id = optional_column(row, "parent_team_id")?;
     team.aceita_rookies = row.get::<_, i64>("aceita_rookies").unwrap_or(1) != 0;
     team.meta_posicao = row.get::<_, i64>("meta_posicao").unwrap_or(10) as i32;

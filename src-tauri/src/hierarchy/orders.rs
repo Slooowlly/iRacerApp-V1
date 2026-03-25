@@ -11,7 +11,7 @@ use crate::db::connection::DbError;
 use crate::db::queries::drivers as driver_queries;
 use crate::db::queries::teams as team_queries;
 use crate::models::driver::Driver;
-use crate::models::team::{HierarchyStatus, Team};
+use crate::models::team::{TeamHierarchyClimate, Team};
 use crate::simulation::race::RaceDriverResult;
 
 // ── Tipos do confronto (Passo 4) ──────────────────────────────────────────────
@@ -167,7 +167,7 @@ pub fn update_tensao(team: &mut Team, duel: &DuelResult) {
 ///
 /// Deve ser chamada após `update_tensao`.
 pub fn update_status(team: &mut Team) {
-    team.hierarquia_status = HierarchyStatus::from_tensao(team.hierarquia_tensao)
+    team.hierarquia_status = TeamHierarchyClimate::from_tensao(team.hierarquia_tensao)
         .as_str()
         .to_string();
 }
@@ -183,10 +183,10 @@ pub fn update_status(team: &mut Team) {
 /// - Status atual é reavaliação, inversão ou crise
 pub fn is_em_reavaliacao(team: &Team) -> bool {
     let win_rate = n2_win_rate(team.hierarquia_duelos_total, team.hierarquia_duelos_n2_vencidos);
-    let status = HierarchyStatus::from_str(&team.hierarquia_status);
+    let status = TeamHierarchyClimate::from_str(&team.hierarquia_status);
     let status_critico = matches!(
         status,
-        HierarchyStatus::Reavaliacao | HierarchyStatus::Inversao | HierarchyStatus::Crise
+        TeamHierarchyClimate::Reavaliacao | TeamHierarchyClimate::Inversao | TeamHierarchyClimate::Crise
     );
 
     team.hierarquia_duelos_total >= 5
@@ -209,14 +209,14 @@ pub fn is_em_reavaliacao(team: &Team) -> bool {
 /// - Status atual é crise
 pub fn has_inversao_trigger(team: &Team, rodada_atual: i32, total_rounds: i32) -> bool {
     let win_rate = n2_win_rate(team.hierarquia_duelos_total, team.hierarquia_duelos_n2_vencidos);
-    let status = HierarchyStatus::from_str(&team.hierarquia_status);
+    let status = TeamHierarchyClimate::from_str(&team.hierarquia_status);
     let past_halfway = rodada_atual * 2 > total_rounds;
 
     team.hierarquia_duelos_total >= 8
         && team.hierarquia_sequencia_n2 >= 5
         && past_halfway
         && win_rate >= 0.65
-        && status == HierarchyStatus::Crise
+        && status == TeamHierarchyClimate::Crise
 }
 
 // ── Passo 11 — Executar a inversão ───────────────────────────────────────────

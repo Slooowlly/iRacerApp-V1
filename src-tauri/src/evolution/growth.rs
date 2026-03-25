@@ -2,6 +2,7 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 
 use crate::models::driver::Driver;
+use crate::models::driver_attributes::DriverAttributeKey;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SeasonStats {
@@ -31,17 +32,17 @@ pub struct AttributeChange {
     pub reason: String,
 }
 
-const GROWABLE_ATTRIBUTES: [(&str, f64); 10] = [
-    ("skill", 0.8),
-    ("consistencia", 0.6),
-    ("racecraft", 0.5),
-    ("defesa", 0.4),
-    ("ritmo_classificacao", 0.7),
-    ("gestao_pneus", 0.5),
-    ("adaptabilidade", 0.3),
-    ("mentalidade", 0.4),
-    ("confianca", 0.5),
-    ("smoothness", 0.3),
+const GROWABLE_ATTRIBUTES: [(DriverAttributeKey, f64); 10] = [
+    (DriverAttributeKey::Skill, 0.8),
+    (DriverAttributeKey::Consistencia, 0.6),
+    (DriverAttributeKey::Racecraft, 0.5),
+    (DriverAttributeKey::Defesa, 0.4),
+    (DriverAttributeKey::RitmoClassificacao, 0.7),
+    (DriverAttributeKey::GestaoPneus, 0.5),
+    (DriverAttributeKey::Adaptabilidade, 0.3),
+    (DriverAttributeKey::Mentalidade, 0.4),
+    (DriverAttributeKey::Confianca, 0.5),
+    (DriverAttributeKey::Smoothness, 0.3),
 ];
 
 pub fn calculate_growth(
@@ -68,7 +69,7 @@ pub fn calculate_growth(
     }
 
     let exp_gain = rng.gen_range(2..=5) as i8;
-    if let Some(change) = apply_growth(driver, "experiencia", exp_gain, "Experiencia acumulada") {
+    if let Some(change) = apply_growth(driver, DriverAttributeKey::Experiencia, exp_gain, "Experiencia acumulada") {
         changes.push(change);
     }
 
@@ -86,7 +87,7 @@ pub fn calculate_growth(
     let development_delta = (media_delta_int + rng.gen_range(0..=2)).clamp(-2, 6);
     if let Some(change) = apply_growth(
         driver,
-        "desenvolvimento",
+        DriverAttributeKey::Desenvolvimento,
         development_delta,
         "Desenvolvimento ajustado pela taxa de evolucao",
     ) {
@@ -100,7 +101,7 @@ pub fn calculate_growth(
     } else {
         0
     } as i8;
-    if let Some(change) = apply_growth(driver, "midia", media_boost, "Exposicao por resultados") {
+    if let Some(change) = apply_growth(driver, DriverAttributeKey::Midia, media_boost, "Exposicao por resultados") {
         changes.push(change);
     }
 
@@ -178,7 +179,7 @@ fn growth_for_attribute(
 
 fn apply_growth(
     driver: &mut Driver,
-    attribute: &str,
+    key: DriverAttributeKey,
     delta: i8,
     reason: &str,
 ) -> Option<AttributeChange> {
@@ -186,13 +187,13 @@ fn apply_growth(
         return None;
     }
 
-    let current = get_attribute(driver, attribute);
+    let current = get_attribute(driver, key);
     let new_value = (current + delta as f64).clamp(0.0, 100.0);
     if (new_value - current).abs() < f64::EPSILON {
         return None;
     }
 
-    set_attribute(driver, attribute, new_value);
+    set_attribute(driver, key, new_value);
 
     let old_rounded = current.round().clamp(0.0, 100.0) as u8;
     let new_rounded = new_value.round().clamp(0.0, 100.0) as u8;
@@ -201,7 +202,7 @@ fn apply_growth(
     }
 
     Some(AttributeChange {
-        attribute: attribute.to_string(),
+        attribute: key.as_str().to_string(),
         old_value: old_rounded,
         new_value: new_rounded,
         delta: new_rounded as i8 - old_rounded as i8,
@@ -209,49 +210,47 @@ fn apply_growth(
     })
 }
 
-pub(crate) fn get_attribute(driver: &Driver, name: &str) -> f64 {
-    match name {
-        "skill" => driver.atributos.skill,
-        "consistencia" => driver.atributos.consistencia,
-        "racecraft" => driver.atributos.racecraft,
-        "defesa" => driver.atributos.defesa,
-        "ritmo_classificacao" => driver.atributos.ritmo_classificacao,
-        "gestao_pneus" => driver.atributos.gestao_pneus,
-        "habilidade_largada" => driver.atributos.habilidade_largada,
-        "adaptabilidade" => driver.atributos.adaptabilidade,
-        "fator_chuva" => driver.atributos.fator_chuva,
-        "fitness" => driver.atributos.fitness,
-        "experiencia" => driver.atributos.experiencia,
-        "desenvolvimento" => driver.atributos.desenvolvimento,
-        "aggression" => driver.atributos.aggression,
-        "smoothness" => driver.atributos.smoothness,
-        "midia" => driver.atributos.midia,
-        "mentalidade" => driver.atributos.mentalidade,
-        "confianca" => driver.atributos.confianca,
-        _ => 50.0,
+pub(crate) fn get_attribute(driver: &Driver, key: DriverAttributeKey) -> f64 {
+    match key {
+        DriverAttributeKey::Skill => driver.atributos.skill,
+        DriverAttributeKey::Consistencia => driver.atributos.consistencia,
+        DriverAttributeKey::Racecraft => driver.atributos.racecraft,
+        DriverAttributeKey::Defesa => driver.atributos.defesa,
+        DriverAttributeKey::RitmoClassificacao => driver.atributos.ritmo_classificacao,
+        DriverAttributeKey::GestaoPneus => driver.atributos.gestao_pneus,
+        DriverAttributeKey::HabilidadeLargada => driver.atributos.habilidade_largada,
+        DriverAttributeKey::Adaptabilidade => driver.atributos.adaptabilidade,
+        DriverAttributeKey::FatorChuva => driver.atributos.fator_chuva,
+        DriverAttributeKey::Fitness => driver.atributos.fitness,
+        DriverAttributeKey::Experiencia => driver.atributos.experiencia,
+        DriverAttributeKey::Desenvolvimento => driver.atributos.desenvolvimento,
+        DriverAttributeKey::Aggression => driver.atributos.aggression,
+        DriverAttributeKey::Smoothness => driver.atributos.smoothness,
+        DriverAttributeKey::Midia => driver.atributos.midia,
+        DriverAttributeKey::Mentalidade => driver.atributos.mentalidade,
+        DriverAttributeKey::Confianca => driver.atributos.confianca,
     }
 }
 
-pub(crate) fn set_attribute(driver: &mut Driver, name: &str, value: f64) {
-    match name {
-        "skill" => driver.atributos.skill = value,
-        "consistencia" => driver.atributos.consistencia = value,
-        "racecraft" => driver.atributos.racecraft = value,
-        "defesa" => driver.atributos.defesa = value,
-        "ritmo_classificacao" => driver.atributos.ritmo_classificacao = value,
-        "gestao_pneus" => driver.atributos.gestao_pneus = value,
-        "habilidade_largada" => driver.atributos.habilidade_largada = value,
-        "adaptabilidade" => driver.atributos.adaptabilidade = value,
-        "fator_chuva" => driver.atributos.fator_chuva = value,
-        "fitness" => driver.atributos.fitness = value,
-        "experiencia" => driver.atributos.experiencia = value,
-        "desenvolvimento" => driver.atributos.desenvolvimento = value,
-        "aggression" => driver.atributos.aggression = value,
-        "smoothness" => driver.atributos.smoothness = value,
-        "midia" => driver.atributos.midia = value,
-        "mentalidade" => driver.atributos.mentalidade = value,
-        "confianca" => driver.atributos.confianca = value,
-        _ => {}
+pub(crate) fn set_attribute(driver: &mut Driver, key: DriverAttributeKey, value: f64) {
+    match key {
+        DriverAttributeKey::Skill => driver.atributos.skill = value,
+        DriverAttributeKey::Consistencia => driver.atributos.consistencia = value,
+        DriverAttributeKey::Racecraft => driver.atributos.racecraft = value,
+        DriverAttributeKey::Defesa => driver.atributos.defesa = value,
+        DriverAttributeKey::RitmoClassificacao => driver.atributos.ritmo_classificacao = value,
+        DriverAttributeKey::GestaoPneus => driver.atributos.gestao_pneus = value,
+        DriverAttributeKey::HabilidadeLargada => driver.atributos.habilidade_largada = value,
+        DriverAttributeKey::Adaptabilidade => driver.atributos.adaptabilidade = value,
+        DriverAttributeKey::FatorChuva => driver.atributos.fator_chuva = value,
+        DriverAttributeKey::Fitness => driver.atributos.fitness = value,
+        DriverAttributeKey::Experiencia => driver.atributos.experiencia = value,
+        DriverAttributeKey::Desenvolvimento => driver.atributos.desenvolvimento = value,
+        DriverAttributeKey::Aggression => driver.atributos.aggression = value,
+        DriverAttributeKey::Smoothness => driver.atributos.smoothness = value,
+        DriverAttributeKey::Midia => driver.atributos.midia = value,
+        DriverAttributeKey::Mentalidade => driver.atributos.mentalidade = value,
+        DriverAttributeKey::Confianca => driver.atributos.confianca = value,
     }
 }
 

@@ -1,5 +1,6 @@
-use chrono::Local;
 use rand::Rng;
+
+use crate::common::time::current_timestamp;
 use serde::{Deserialize, Serialize};
 
 use crate::constants::categories::get_category_config;
@@ -174,9 +175,6 @@ fn salary_range_for_tier(tier: u8) -> (f64, f64) {
     }
 }
 
-fn current_timestamp() -> String {
-    Local::now().format("%Y-%m-%dT%H:%M:%S").to_string()
-}
 
 #[cfg(test)]
 mod tests {

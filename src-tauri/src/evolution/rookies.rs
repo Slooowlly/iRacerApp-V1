@@ -1,11 +1,13 @@
 use std::collections::HashSet;
 
-use chrono::{Datelike, Local};
 use rand::Rng;
 
+use crate::generators::driver_helpers::{
+    career_start_year_from_age, random_primary_personality, random_secondary_personality,
+};
 use crate::generators::names::generate_pilot_identity;
 use crate::models::driver::{Driver, DriverAttributes};
-use crate::models::enums::{DriverStatus, PrimaryPersonality, SecondaryPersonality};
+use crate::models::enums::DriverStatus;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RookieType {
@@ -62,8 +64,7 @@ fn generate_single_rookie(
         18..=19 => rng.gen_range(70..=85),
         _ => rng.gen_range(65..=82),
     } as f64;
-    let current_year = Local::now().year().max(0) as u32;
-    let ano_inicio = current_year.saturating_sub((age - 16) as u32);
+    let ano_inicio = career_start_year_from_age(age as u32);
 
     let mut driver = Driver::new(
         format!("ROOKIE-TMP-{:03}", index + 1),
@@ -75,8 +76,8 @@ fn generate_single_rookie(
     );
     driver.categoria_atual = None;
     driver.status = DriverStatus::Ativo;
-    driver.personalidade_primaria = Some(random_primary(rng));
-    driver.personalidade_secundaria = Some(random_secondary(rng));
+    driver.personalidade_primaria = Some(random_primary_personality(rng));
+    driver.personalidade_secundaria = Some(random_secondary_personality(rng));
     driver.motivacao = rng.gen_range(70..=90) as f64;
     driver.atributos = DriverAttributes {
         skill,
@@ -115,27 +116,6 @@ fn correlated_stat(base: f64, variance: f64, rng: &mut impl Rng) -> f64 {
     (base + rng.gen_range(-variance..=variance)).clamp(0.0, 100.0)
 }
 
-fn random_primary(rng: &mut impl Rng) -> PrimaryPersonality {
-    match rng.gen_range(0_u8..4_u8) {
-        0 => PrimaryPersonality::Ambicioso,
-        1 => PrimaryPersonality::Consolidador,
-        2 => PrimaryPersonality::Mercenario,
-        _ => PrimaryPersonality::Leal,
-    }
-}
-
-fn random_secondary(rng: &mut impl Rng) -> SecondaryPersonality {
-    match rng.gen_range(0_u8..8_u8) {
-        0 => SecondaryPersonality::CabecaQuente,
-        1 => SecondaryPersonality::SangueFrio,
-        2 => SecondaryPersonality::Apostador,
-        3 => SecondaryPersonality::Calculista,
-        4 => SecondaryPersonality::Showman,
-        5 => SecondaryPersonality::TeamPlayer,
-        6 => SecondaryPersonality::Solitario,
-        _ => SecondaryPersonality::Estudioso,
-    }
-}
 
 #[cfg(test)]
 mod tests {

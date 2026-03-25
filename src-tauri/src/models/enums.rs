@@ -28,6 +28,19 @@ impl DriverStatus {
             _ => DriverStatus::Ativo,
         }
     }
+
+    /// Parser estrito para leitura de banco de dados.
+    /// Erros de valor inválido são propagados — sem fallback silencioso.
+    /// Para uso em row mappers de queries. Manter from_str() para contextos permissivos.
+    pub fn from_str_strict(s: &str) -> Result<Self, String> {
+        match s.trim() {
+            "Ativo" => Ok(DriverStatus::Ativo),
+            "Lesionado" => Ok(DriverStatus::Lesionado),
+            "Aposentado" => Ok(DriverStatus::Aposentado),
+            "Suspenso" => Ok(DriverStatus::Suspenso),
+            other => Err(format!("DriverStatus inválido: '{other}'")),
+        }
+    }
 }
 
 // ── Personalidade primária ────────────────────────────────────────────────────
@@ -174,26 +187,26 @@ impl std::fmt::Display for TeamRole {
 // ── Hierarquia da equipe (N1/N2) ──────────────────────────────────────────────
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum HierarchyStatus {
+pub enum DriverHierarchyRole {
     N1,
     N2,
     Independente,
 }
 
-impl HierarchyStatus {
+impl DriverHierarchyRole {
     pub fn as_str(&self) -> &str {
         match self {
-            HierarchyStatus::N1 => "N1",
-            HierarchyStatus::N2 => "N2",
-            HierarchyStatus::Independente => "Independente",
+            DriverHierarchyRole::N1 => "N1",
+            DriverHierarchyRole::N2 => "N2",
+            DriverHierarchyRole::Independente => "Independente",
         }
     }
 
     pub fn from_str(s: &str) -> Self {
         match s {
-            "N1" => HierarchyStatus::N1,
-            "N2" => HierarchyStatus::N2,
-            _ => HierarchyStatus::Independente,
+            "N1" => DriverHierarchyRole::N1,
+            "N2" => DriverHierarchyRole::N2,
+            _ => DriverHierarchyRole::Independente,
         }
     }
 }
@@ -296,6 +309,17 @@ impl SeasonStatus {
             _ => SeasonStatus::EmAndamento,
         }
     }
+
+    /// Parser estrito para leitura de banco de dados.
+    /// Erros de valor inválido são propagados — sem fallback silencioso.
+    /// Preserva alias legacy "Ativa" → EmAndamento.
+    pub fn from_str_strict(s: &str) -> Result<Self, String> {
+        match s.trim() {
+            "EmAndamento" | "Ativa" => Ok(SeasonStatus::EmAndamento),
+            "Finalizada" => Ok(SeasonStatus::Finalizada),
+            other => Err(format!("SeasonStatus inválido: '{other}'")),
+        }
+    }
 }
 
 impl std::fmt::Display for SeasonStatus {
@@ -322,6 +346,16 @@ impl RaceStatus {
         match s {
             "Concluida" => RaceStatus::Concluida,
             _ => RaceStatus::Pendente,
+        }
+    }
+
+    /// Parser estrito para leitura de banco de dados.
+    /// Erros de valor inválido são propagados — sem fallback silencioso.
+    pub fn from_str_strict(s: &str) -> Result<Self, String> {
+        match s.trim() {
+            "Pendente" => Ok(RaceStatus::Pendente),
+            "Concluida" => Ok(RaceStatus::Concluida),
+            other => Err(format!("RaceStatus inválido: '{other}'")),
         }
     }
 }
@@ -451,6 +485,18 @@ impl InjuryType {
             "Grave" => InjuryType::Grave,
             "Critica" => InjuryType::Critica,
             _ => InjuryType::Leve,
+        }
+    }
+
+    /// Parser estrito para leitura de banco de dados.
+    /// Erros de valor inválido são propagados — sem fallback silencioso.
+    pub fn from_str_strict(s: &str) -> Result<Self, String> {
+        match s.trim() {
+            "Leve" => Ok(InjuryType::Leve),
+            "Moderada" => Ok(InjuryType::Moderada),
+            "Grave" => Ok(InjuryType::Grave),
+            "Critica" => Ok(InjuryType::Critica),
+            other => Err(format!("InjuryType inválido: '{other}'")),
         }
     }
 }

@@ -20,7 +20,7 @@ use crate::market::visibility::calculate_visibility;
 use crate::models::contract::Contract;
 use crate::models::driver::Driver;
 use crate::models::enums::{ContractStatus, DriverStatus, TeamRole};
-use crate::models::team::HierarchyStatus;
+use crate::models::team::TeamHierarchyClimate;
 
 #[derive(Debug, Clone)]
 struct DriverMarketContext {
@@ -955,7 +955,7 @@ fn refresh_team_hierarchy(
             &team.id,
             n1,
             n2,
-            HierarchyStatus::Estavel.as_str(),
+            TeamHierarchyClimate::Estavel.as_str(),
             0.0,
         )
         .map_err(|e| {
@@ -1037,7 +1037,7 @@ mod tests {
         assert!(teams.iter().all(|team| team.hierarquia_n2_id.is_some()));
         assert!(teams
             .iter()
-            .all(|team| team.hierarquia_status == HierarchyStatus::Estavel.as_str()));
+            .all(|team| team.hierarquia_status == TeamHierarchyClimate::Estavel.as_str()));
     }
 
     #[test]

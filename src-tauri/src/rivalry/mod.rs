@@ -1,5 +1,6 @@
-use chrono::Local;
 use rusqlite::Connection;
+
+use crate::common::time::current_timestamp;
 
 use crate::db::connection::DbError;
 use crate::db::queries::drivers::get_driver;
@@ -313,21 +314,21 @@ pub fn process_hierarchy_rivalry(
     rodada:         i32,
     temporada:      i32,
 ) -> Result<(), DbError> {
-    use crate::models::team::HierarchyStatus;
+    use crate::models::team::TeamHierarchyClimate;
 
-    let old_status = HierarchyStatus::from_str(old_status_str);
-    let new_status = HierarchyStatus::from_str(new_status_str);
+    let old_status = TeamHierarchyClimate::from_str(old_status_str);
+    let new_status = TeamHierarchyClimate::from_str(new_status_str);
 
     let (h_delta, r_delta): (f64, f64) = if inversao {
         (8.0, 18.0)
-    } else if new_status == HierarchyStatus::Crise
-        && old_status != HierarchyStatus::Crise
+    } else if new_status == TeamHierarchyClimate::Crise
+        && old_status != TeamHierarchyClimate::Crise
     {
         (5.0, 14.0)
-    } else if new_status == HierarchyStatus::Reavaliacao
+    } else if new_status == TeamHierarchyClimate::Reavaliacao
         && !matches!(
             old_status,
-            HierarchyStatus::Reavaliacao | HierarchyStatus::Crise
+            TeamHierarchyClimate::Reavaliacao | TeamHierarchyClimate::Crise
         )
     {
         (3.0, 10.0)
@@ -493,9 +494,6 @@ fn clamp(v: f64) -> f64 {
     v.clamp(AXIS_MIN, AXIS_MAX)
 }
 
-fn current_timestamp() -> String {
-    Local::now().format("%Y-%m-%dT%H:%M:%S").to_string()
-}
 
 // ── Passo 15: Mapeamento Factual de Colisão ───────────────────────────────────
 

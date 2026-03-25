@@ -81,7 +81,8 @@ fn season_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Season> {
         id: row.get("id")?,
         numero: row.get("numero")?,
         ano: row.get("ano")?,
-        status: SeasonStatus::from_str(&row.get::<_, String>("status")?),
+        status: SeasonStatus::from_str_strict(&row.get::<_, String>("status")?)
+            .map_err(rusqlite::Error::InvalidParameterName)?,
         rodada_atual: optional_i32(row, "rodada_atual")?.unwrap_or(1),
         fase,
         created_at: optional_string(row, "created_at")?.unwrap_or_default(),

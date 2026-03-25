@@ -1,5 +1,6 @@
-use chrono::Local;
 use rand::Rng;
+
+use crate::common::time::current_timestamp;
 use serde::{Deserialize, Serialize};
 
 use crate::constants::categories::get_category_config;
@@ -7,7 +8,7 @@ use crate::constants::teams::{get_team_templates, TeamTemplate};
 
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum HierarchyStatus {
+pub enum TeamHierarchyClimate {
     Estavel,
     Competitivo,
     Tensao,
@@ -16,45 +17,45 @@ pub enum HierarchyStatus {
     Crise,
 }
 
-impl HierarchyStatus {
+impl TeamHierarchyClimate {
     pub fn as_str(&self) -> &'static str {
         match self {
-            HierarchyStatus::Estavel => "estavel",
-            HierarchyStatus::Competitivo => "competitivo",
-            HierarchyStatus::Tensao => "tensao",
-            HierarchyStatus::Reavaliacao => "reavaliacao",
-            HierarchyStatus::Inversao => "inversao",
-            HierarchyStatus::Crise => "crise",
+            TeamHierarchyClimate::Estavel => "estavel",
+            TeamHierarchyClimate::Competitivo => "competitivo",
+            TeamHierarchyClimate::Tensao => "tensao",
+            TeamHierarchyClimate::Reavaliacao => "reavaliacao",
+            TeamHierarchyClimate::Inversao => "inversao",
+            TeamHierarchyClimate::Crise => "crise",
         }
     }
 
     pub fn from_str(value: &str) -> Self {
         match value.trim().to_lowercase().as_str() {
-            "competitivo" => HierarchyStatus::Competitivo,
-            "tensao" => HierarchyStatus::Tensao,
-            "reavaliacao" => HierarchyStatus::Reavaliacao,
-            "inversao" => HierarchyStatus::Inversao,
-            "crise" => HierarchyStatus::Crise,
+            "competitivo" => TeamHierarchyClimate::Competitivo,
+            "tensao" => TeamHierarchyClimate::Tensao,
+            "reavaliacao" => TeamHierarchyClimate::Reavaliacao,
+            "inversao" => TeamHierarchyClimate::Inversao,
+            "crise" => TeamHierarchyClimate::Crise,
             // Compatibilidade com o schema antigo.
-            "n1" | "n2" | "independente" | "estavel" => HierarchyStatus::Estavel,
-            _ => HierarchyStatus::Estavel,
+            "n1" | "n2" | "independente" | "estavel" => TeamHierarchyClimate::Estavel,
+            _ => TeamHierarchyClimate::Estavel,
         }
     }
 
     pub fn from_tensao(tensao: f64) -> Self {
         let tensao = tensao.clamp(0.0, 100.0);
         if tensao < 20.0 {
-            HierarchyStatus::Estavel
+            TeamHierarchyClimate::Estavel
         } else if tensao < 40.0 {
-            HierarchyStatus::Competitivo
+            TeamHierarchyClimate::Competitivo
         } else if tensao < 60.0 {
-            HierarchyStatus::Tensao
+            TeamHierarchyClimate::Tensao
         } else if tensao < 75.0 {
-            HierarchyStatus::Reavaliacao
+            TeamHierarchyClimate::Reavaliacao
         } else if tensao < 90.0 {
-            HierarchyStatus::Inversao
+            TeamHierarchyClimate::Inversao
         } else {
-            HierarchyStatus::Crise
+            TeamHierarchyClimate::Crise
         }
     }
 }
@@ -168,7 +169,7 @@ impl Team {
             chassi: clamp_f64(50.0 + rng.gen_range(-10.0..=15.0), 0.0, 100.0),
             hierarquia_n1_id: None,
             hierarquia_n2_id: None,
-            hierarquia_status: HierarchyStatus::Estavel.as_str().to_string(),
+            hierarquia_status: TeamHierarchyClimate::Estavel.as_str().to_string(),
             hierarquia_tensao: 0.0,
             hierarquia_duelos_total: 0,
             hierarquia_duelos_n2_vencidos: 0,
@@ -240,13 +241,10 @@ where
     teams
 }
 
-pub fn hierarchy_status_from_tensao(tensao: f64) -> HierarchyStatus {
-    HierarchyStatus::from_tensao(tensao)
+pub fn hierarchy_status_from_tensao(tensao: f64) -> TeamHierarchyClimate {
+    TeamHierarchyClimate::from_tensao(tensao)
 }
 
-pub fn current_timestamp() -> String {
-    Local::now().format("%Y-%m-%dT%H:%M:%S").to_string()
-}
 
 pub fn placeholder_team_from_db(
     id: String,
@@ -280,7 +278,7 @@ pub fn placeholder_team_from_db(
         chassi: 0.0,
         hierarquia_n1_id: None,
         hierarquia_n2_id: None,
-        hierarquia_status: HierarchyStatus::Estavel.as_str().to_string(),
+        hierarquia_status: TeamHierarchyClimate::Estavel.as_str().to_string(),
         hierarquia_tensao: 0.0,
         hierarquia_duelos_total: 0,
         hierarquia_duelos_n2_vencidos: 0,
@@ -391,20 +389,20 @@ mod tests {
 
     #[test]
     fn test_hierarchy_status_from_tensao() {
-        assert_eq!(hierarchy_status_from_tensao(0.0), HierarchyStatus::Estavel);
+        assert_eq!(hierarchy_status_from_tensao(0.0), TeamHierarchyClimate::Estavel);
         assert_eq!(
             hierarchy_status_from_tensao(25.0),
-            HierarchyStatus::Competitivo
+            TeamHierarchyClimate::Competitivo
         );
-        assert_eq!(hierarchy_status_from_tensao(50.0), HierarchyStatus::Tensao);
+        assert_eq!(hierarchy_status_from_tensao(50.0), TeamHierarchyClimate::Tensao);
         assert_eq!(
             hierarchy_status_from_tensao(70.0),
-            HierarchyStatus::Reavaliacao
+            TeamHierarchyClimate::Reavaliacao
         );
         assert_eq!(
             hierarchy_status_from_tensao(85.0),
-            HierarchyStatus::Inversao
+            TeamHierarchyClimate::Inversao
         );
-        assert_eq!(hierarchy_status_from_tensao(95.0), HierarchyStatus::Crise);
+        assert_eq!(hierarchy_status_from_tensao(95.0), TeamHierarchyClimate::Crise);
     }
 }

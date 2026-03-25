@@ -14,31 +14,35 @@ pub struct MotivationReport {
     pub reasons: Vec<String>,
 }
 
-#[allow(clippy::too_many_arguments)]
+#[derive(Debug, Clone, Copy)]
+pub struct MotivationContext {
+    pub was_champion: bool,
+    pub was_promoted: bool,
+    pub was_relegated: bool,
+    pub contract_renewed: bool,
+    pub lost_seat: bool,
+    pub seasons_in_category: i32,
+}
+
 pub fn adjust_end_of_season_motivation(
     driver: &mut Driver,
     stats: &SeasonStats,
-    was_champion: bool,
-    was_promoted: bool,
-    was_relegated: bool,
-    contract_renewed: bool,
-    lost_seat: bool,
-    seasons_in_category: i32,
+    ctx: &MotivationContext,
     _rng: &mut impl Rng,
 ) -> MotivationReport {
     let old_motivation = driver.motivacao.round().clamp(0.0, 100.0) as u8;
     let mut delta = 0_i32;
     let mut reasons = Vec::new();
 
-    if was_champion {
+    if ctx.was_champion {
         delta += 20;
         reasons.push("Campeao da temporada! (+20)".to_string());
     }
-    if was_promoted {
+    if ctx.was_promoted {
         delta += 15;
         reasons.push("Promovido de categoria (+15)".to_string());
     }
-    if stats.posicao_campeonato <= 3 && !was_champion {
+    if stats.posicao_campeonato <= 3 && !ctx.was_champion {
         delta += 8;
         reasons.push("Top 3 no campeonato (+8)".to_string());
     }
@@ -48,19 +52,19 @@ pub fn adjust_end_of_season_motivation(
         delta += 3;
         reasons.push("Resultado solido (+3)".to_string());
     }
-    if contract_renewed {
+    if ctx.contract_renewed {
         delta += 5;
         reasons.push("Contrato renovado (+5)".to_string());
     }
-    if lost_seat {
+    if ctx.lost_seat {
         delta -= 10;
         reasons.push("Perdeu a vaga na equipe (-10)".to_string());
     }
-    if was_relegated {
+    if ctx.was_relegated {
         delta -= 8;
         reasons.push("Rebaixado de categoria (-8)".to_string());
     }
-    if seasons_in_category >= 3 {
+    if ctx.seasons_in_category >= 3 {
         delta -= 2;
         reasons.push("Estagnacao na mesma categoria (-2)".to_string());
     }
@@ -70,7 +74,7 @@ pub fn adjust_end_of_season_motivation(
     }
 
     match driver.personalidade_primaria {
-        Some(PrimaryPersonality::Ambicioso) if !was_promoted && seasons_in_category >= 2 => {
+        Some(PrimaryPersonality::Ambicioso) if !ctx.was_promoted && ctx.seasons_in_category >= 2 => {
             delta -= 5;
             reasons.push("Ambicioso frustrado por nao subir (-5)".to_string());
         }
@@ -114,17 +118,15 @@ mod tests {
         };
         let mut rng = StdRng::seed_from_u64(1);
 
-        let report = adjust_end_of_season_motivation(
-            &mut driver,
-            &stats,
-            true,
-            false,
-            false,
-            false,
-            false,
-            1,
-            &mut rng,
-        );
+        let ctx = MotivationContext {
+            was_champion: true,
+            was_promoted: false,
+            was_relegated: false,
+            contract_renewed: false,
+            lost_seat: false,
+            seasons_in_category: 1,
+        };
+        let report = adjust_end_of_season_motivation(&mut driver, &stats, &ctx, &mut rng);
 
         assert!(report.delta >= 20);
         assert!(driver.motivacao > 50.0);
@@ -144,17 +146,15 @@ mod tests {
         };
         let mut rng = StdRng::seed_from_u64(2);
 
-        let report = adjust_end_of_season_motivation(
-            &mut driver,
-            &stats,
-            false,
-            false,
-            false,
-            false,
-            false,
-            3,
-            &mut rng,
-        );
+        let ctx = MotivationContext {
+            was_champion: false,
+            was_promoted: false,
+            was_relegated: false,
+            contract_renewed: false,
+            lost_seat: false,
+            seasons_in_category: 3,
+        };
+        let report = adjust_end_of_season_motivation(&mut driver, &stats, &ctx, &mut rng);
 
         assert!(report.delta < 0);
         assert!(report
@@ -176,21 +176,27 @@ mod tests {
         };
         let mut low_driver = sample_driver(2.0, Some(PrimaryPersonality::Ambicioso));
         let mut rng_low = StdRng::seed_from_u64(3);
-        let low_report = adjust_end_of_season_motivation(
-            &mut low_driver,
-            &stats,
-            false,
-            false,
-            true,
-            false,
-            true,
-            4,
-            &mut rng_low,
-        );
+        let low_ctx = MotivationContext {
+            was_champion: false,
+            was_promoted: false,
+            was_relegated: true,
+            contract_renewed: false,
+            lost_seat: true,
+            seasons_in_category: 4,
+        };
+        let low_report = adjust_end_of_season_motivation(&mut low_driver, &stats, &low_ctx, &mut rng_low);
         assert_eq!(low_report.new_motivation, 0);
 
         let mut high_driver = sample_driver(95.0, Some(PrimaryPersonality::Consolidador));
         let mut rng_high = StdRng::seed_from_u64(4);
+        let high_ctx = MotivationContext {
+            was_champion: true,
+            was_promoted: true,
+            was_relegated: false,
+            contract_renewed: true,
+            lost_seat: false,
+            seasons_in_category: 1,
+        };
         let high_report = adjust_end_of_season_motivation(
             &mut high_driver,
             &SeasonStats {
@@ -202,12 +208,7 @@ mod tests {
                 corridas: 8,
                 dnfs: 0,
             },
-            true,
-            true,
-            false,
-            true,
-            false,
-            1,
+            &high_ctx,
             &mut rng_high,
         );
         assert_eq!(high_report.new_motivation, 100);

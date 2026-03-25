@@ -482,10 +482,11 @@ fn driver_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Driver> {
         genero: row.get("genero")?,
         categoria_atual: row.get("categoria_atual")?,
         categoria_especial_ativa: row.get("categoria_especial_ativa")?,
-        status: DriverStatus::from_str(
+        status: DriverStatus::from_str_strict(
             &row.get::<_, String>("status")
                 .unwrap_or_else(|_| "Ativo".to_string()),
-        ),
+        )
+        .map_err(rusqlite::Error::InvalidParameterName)?,
         personalidade_primaria: row
             .get::<_, Option<String>>("personalidade_primaria")?
             .map(|s| PrimaryPersonality::from_str(&s)),

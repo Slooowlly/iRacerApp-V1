@@ -40,7 +40,8 @@ pub fn get_active_injuries_for_category(
         Ok(Injury {
             id: row.get(0)?,
             pilot_id: row.get(1)?,
-            injury_type: InjuryType::from_str(&row.get::<_, String>(2)?),
+            injury_type: InjuryType::from_str_strict(&row.get::<_, String>(2)?)
+                .map_err(rusqlite::Error::InvalidParameterName)?,
             modifier: row.get(3)?,
             races_total: row.get(4)?,
             races_remaining: row.get(5)?,

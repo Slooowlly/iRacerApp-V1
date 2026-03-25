@@ -1,5 +1,6 @@
-use chrono::Local;
 use serde::{Deserialize, Serialize};
+
+use crate::common::time::current_timestamp;
 
 use crate::models::enums::{SeasonPhase, SeasonStatus};
 
@@ -65,10 +66,6 @@ impl Season {
     pub fn is_bloco_especial(&self) -> bool {
         self.fase == SeasonPhase::BlocoEspecial
     }
-}
-
-fn current_timestamp() -> String {
-    Local::now().format("%Y-%m-%dT%H:%M:%S").to_string()
 }
 
 #[cfg(test)]

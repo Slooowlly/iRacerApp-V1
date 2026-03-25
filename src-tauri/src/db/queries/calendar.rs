@@ -279,9 +279,10 @@ fn calendar_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<CalendarEntry>
             .unwrap_or(60) as i32,
         duracao_classificacao_min: optional_i64(row, "duracao_classificacao_min")?.unwrap_or(15)
             as i32,
-        status: RaceStatus::from_str(
+        status: RaceStatus::from_str_strict(
             &optional_string(row, "status")?.unwrap_or_else(|| "Pendente".to_string()),
-        ),
+        )
+        .map_err(rusqlite::Error::InvalidParameterName)?,
         horario: optional_string(row, "horario")?.unwrap_or_else(|| "14:00".to_string()),
         week_of_year: optional_i64(row, "week_of_year")?.unwrap_or(0) as i32,
         season_phase: optional_string(row, "season_phase")?
