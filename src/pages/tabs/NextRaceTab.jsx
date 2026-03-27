@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState } from "react";
+﻿import { useEffect, useMemo, useStaté } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
 import GlassButton from "../../components/ui/GlassButton";
@@ -107,7 +107,7 @@ function NextRaceTab() {
         setBriefingError(
           typeof invokeError === "string"
             ? invokeError
-            : invokeError?.toString?.() ?? "Nao foi possivel montar o briefing.",
+            : invokeError?.toString?.() ?? "Não foi possível montar o briefing.",
         );
       } finally {
         if (active) {
@@ -195,7 +195,7 @@ function NextRaceTab() {
           setBriefingPhraseHistory(updatedHistory);
         }
       } catch (_error) {
-        // Silencioso: a variacao recente melhora a imersao, mas nao deve quebrar o briefing.
+        // Silencioso: a variacao recente melhora a imersao, mas não deve quebrar o briefing.
       }
     }
 
@@ -222,7 +222,7 @@ function NextRaceTab() {
       setError(
         typeof invokeError === "string"
           ? invokeError
-          : invokeError?.toString?.() ?? "Nao foi possivel simular a corrida.",
+          : invokeError?.toString?.() ?? "Não foi possível simular a corrida.",
       );
     }
   }
@@ -242,13 +242,13 @@ function NextRaceTab() {
       setError(
         typeof invokeError === "string"
           ? invokeError
-          : invokeError?.toString?.() ?? "Nao foi possivel avancar para a pre-temporada.",
+          : invokeError?.toString?.() ?? "Não foi possível avancar para a pré-temporada.",
       );
     }
   }
 
   function handleExport() {
-    setExportNotice("Exportacao para o iRacing chega em breve.");
+    setExportNotice("Exportação para o iRacing chega em breve.");
   }
 
   if (!nextRace) {
@@ -257,22 +257,22 @@ function NextRaceTab() {
         <LoadingOverlay
           open={isAdvancing}
           title="Virando a temporada"
-          message="Evolucao, aposentadorias, promocoes e preparacao da pre-temporada em andamento."
+          message="Evolucao, aposentadorias, promocoes e preparação da pré-temporada em andamento."
         />
 
         <GlassCard hover={false} className="rounded-[28px] p-10">
           <div className="py-6 text-center">
             <div className="text-6xl">PQ</div>
             <p className="mt-4 text-sm uppercase tracking-[0.22em] text-accent-primary">
-              Proxima corrida
+              Próxima corrida
             </p>
             <h2 className="mt-3 text-3xl font-semibold text-text-primary">
               Temporada finalizada
             </h2>
             <p className="mt-3 text-sm text-text-secondary">
               {hasExistingPreseason
-                ? "A pre-temporada ja foi iniciada. Voce pode voltar direto para o mercado semanal."
-                : "Todas as corridas da temporada atual ja foram disputadas."}
+                ? "A pré-temporada já foi iniciada. Você pode voltar direto para o mercado semanal."
+                : "Todas as corridas da temporada atual já foram disputadas."}
             </p>
             <div className="mt-6">
               <GlassButton
@@ -283,8 +283,8 @@ function NextRaceTab() {
                 {isAdvancing
                   ? "Processando..."
                   : hasExistingPreseason
-                    ? "Continuar pre-temporada"
-                    : "Avancar para pre-temporada"}
+                    ? "Continuar pré-temporada"
+                    : "Avancar para pré-temporada"}
               </GlassButton>
             </div>
             {error ? <p className="mt-4 text-sm text-status-red">{error}</p> : null}
@@ -299,7 +299,7 @@ function NextRaceTab() {
       <LoadingOverlay
         open={isSimulating}
         title="Simulando corrida"
-        message="Classificacao, corrida e atualizacao do campeonato em andamento."
+        message="Classificacao, corrida e atualização do campeonato em andamento."
       />
 
       <div className="grid gap-5 xl:grid-cols-[1.08fr_0.92fr]">
@@ -357,7 +357,7 @@ function NextRaceTab() {
                   featured={briefing.broadcastLabel === "Cobertura"}
                 />
                 <EventSummaryBox
-                  label="Historico"
+                  label="Histórico"
                   value={briefing.historyValue}
                   meta={briefing.historyMeta}
                 />
@@ -367,14 +367,14 @@ function NextRaceTab() {
 
           <GlassCard hover={false} className="rounded-[28px] border-white/8 bg-black/15 p-5">
             <p className="text-[10px] uppercase tracking-[0.22em] text-accent-primary">
-              Previa da corrida
+              Prévia da corrida
             </p>
 
             <div className="relative mt-4 overflow-hidden rounded-[26px] border border-white/8 bg-[linear-gradient(115deg,rgba(255,123,114,0.08),transparent_30%),linear-gradient(180deg,rgba(255,255,255,0.04),rgba(255,255,255,0.02))] px-5 py-5">
               <div className="pointer-events-none absolute -right-8 -top-8 h-36 w-36 rounded-full bg-[radial-gradient(circle,rgba(240,195,107,0.16),transparent_65%)]" />
               <div className="relative">
                 <p className="text-[11px] uppercase tracking-[0.24em] text-accent-gold">
-                  Chamada da etapa
+                  Chamada da Etapa
                 </p>
                 <h3 className="mt-3 max-w-4xl text-[32px] font-semibold leading-[1.05] tracking-[-0.05em] text-text-primary">
                   {briefing.headline}
@@ -401,7 +401,7 @@ function NextRaceTab() {
           </GlassCard>
 
           <GlassCard hover={false} className="rounded-[24px] border-white/8 bg-black/15 p-5">
-            <p className="text-[10px] uppercase tracking-[0.22em] text-accent-primary">Condicoes</p>
+            <p className="text-[10px] uppercase tracking-[0.22em] text-accent-primary">Condições</p>
             <div className="mt-4 space-y-3">
               <ConditionReportRow
                 badge={briefing.weatherIcon}
@@ -430,10 +430,10 @@ function NextRaceTab() {
           <GlassCard hover={false} className="rounded-[28px]">
             <SectionTitle
               eyebrow="Sobre o grid"
-              title="Favoritos ao podio"
+              title="Favoritos ao pódio"
               meta={
                 isLoadingBriefing
-                  ? "Montando analise..."
+                  ? "Montando análise..."
                   : `${briefing.favorites.length} pilotos em destaque`
               }
             />
@@ -470,7 +470,7 @@ function NextRaceTab() {
               <div className="mt-5 rounded-[22px] border border-white/8 bg-white/[0.03] p-3">
                 <table
                   aria-label="Tabela do campeonato"
-                  className="w-full table-fixed border-separate border-spacing-y-1.5"
+                  className="w-full table-fixed border-separaté border-spacing-y-1.5"
                 >
                   <thead>
                     <tr className="text-[10px] uppercase tracking-[0.18em] text-text-muted">
@@ -488,7 +488,7 @@ function NextRaceTab() {
               </div>
             ) : (
               <p className="mt-5 text-sm text-text-secondary">
-                Classificacao do campeonato indisponivel no momento.
+                Classificacao do campeonato indisponível no momento.
               </p>
             )}
           </GlassCard>
@@ -505,10 +505,10 @@ function NextRaceTab() {
         <div className="flex items-start justify-between gap-6">
           <div className="flex-1 min-w-0">
             <p className="text-[10px] uppercase tracking-[0.22em] text-accent-primary">
-              Sala de estrategia
+              Sala de estratégia
             </p>
             <h3 className="mt-2 text-2xl font-semibold text-text-primary">
-              Escolha o proximo passo
+              Escolha o próximo passo
             </h3>
             <p className="mt-2 text-sm text-text-secondary">
               {isLoadingBriefing
@@ -626,7 +626,7 @@ function FavoriteRow({ driver, index }) {
       </div>
 
       <div className="min-w-0">
-        <p className="truncate text-base font-semibold text-text-primary">{driver.nome}</p>
+        <p className="truncaté text-base font-semibold text-text-primary">{driver.nome}</p>
         <p
           className="mt-1 text-[12px] uppercase tracking-[0.12em]"
           style={{ color: getReadableTeamColor(driver.equipe_cor) }}
@@ -656,11 +656,11 @@ function FavoriteRow({ driver, index }) {
 function ChampionshipTableRow({ driver }) {
   const isPlayer = driver.is_jogador;
   const positionTone =
-    driver.posicao_campeonato === 1
+    driver.posição_campeonato === 1
       ? "text-accent-gold"
-      : driver.posicao_campeonato === 2
+      : driver.posição_campeonato === 2
         ? "text-accent-primary"
-        : driver.posicao_campeonato === 3
+        : driver.posição_campeonato === 3
           ? "text-[#d7c6ff]"
           : "text-text-secondary";
 
@@ -675,7 +675,7 @@ function ChampionshipTableRow({ driver }) {
           positionTone,
         ].join(" ")}
       >
-        {driver.posicao_campeonato}
+        {driver.posição_campeonato}
       </td>
       <td
         className={[
@@ -712,10 +712,10 @@ function buildBriefingContext({
   briefingPhraseHistory,
 }) {
   const orderedDrivers = [...driverStandings].sort(
-    (left, right) => (left.posicao_campeonato ?? 999) - (right.posicao_campeonato ?? 999),
+    (left, right) => (left.posição_campeonato ?? 999) - (right.posição_campeonato ?? 999),
   );
   const orderedTeams = [...teamStandings].sort(
-    (left, right) => (left.posicao ?? 999) - (right.posicao ?? 999),
+    (left, right) => (left.posição ?? 999) - (right.posição ?? 999),
   );
   const playerStanding =
     orderedDrivers.find((driver) => driver.is_jogador) ??
@@ -727,7 +727,7 @@ function buildBriefingContext({
   const briefingRival = nextRaceBriefing?.primary_rival ?? null;
   const weekendStories = normalizeWeekendStories(nextRaceBriefing?.weekend_stories);
   const rival = resolvePrimaryRival(orderedDrivers, playerStanding, briefingRival);
-  const teammate =
+  const teammaté =
     playerStanding && playerStanding.equipe_id
       ? orderedDrivers.find(
           (driver) => driver.equipe_id === playerStanding.equipe_id && driver.id !== playerStanding.id,
@@ -737,8 +737,8 @@ function buildBriefingContext({
     orderedTeams.find((team) => team.id === playerTeam?.id) ?? orderedTeams[0] ?? null;
   const gapToLeader = Math.max(0, (leader?.pontos ?? 0) - (playerStanding?.pontos ?? 0));
   const behindDriver =
-    playerStanding && playerStanding.posicao_campeonato > 0
-      ? orderedDrivers[playerStanding.posicao_campeonato] ?? null
+    playerStanding && playerStanding.posição_campeonato > 0
+      ? orderedDrivers[playerStanding.posição_campeonato] ?? null
       : null;
   const gapBehind =
     playerStanding && behindDriver
@@ -752,10 +752,10 @@ function buildBriefingContext({
       formLabel: buildFormLabel(driver),
       formChips: buildFormChips(driver),
     }))
-    .sort((left, right) => right.rating - left.rating || left.posicao_campeonato - right.posicao_campeonato);
+    .sort((left, right) => right.rating - left.rating || left.posição_campeonato - right.posição_campeonato);
   const favorites = ratedDrivers
     .slice()
-    .sort((left, right) => right.rating - left.rating || left.posicao_campeonato - right.posicao_campeonato)
+    .sort((left, right) => right.rating - left.rating || left.posição_campeonato - right.posição_campeonato)
     .slice(0, 5)
     .map((driver, index) => {
       const selection = buildFavoriteExpectationSelection(driver, index, {
@@ -771,7 +771,7 @@ function buildBriefingContext({
         expectationBucketKey: selection.bucketKey,
       };
     });
-  const audienceEstimate = nextRace?.event_interest?.display_value ?? estimateAudience(nextRace?.event_interest?.tier_label);
+  const audienceEstimaté = nextRace?.event_interest?.display_value ?? estimateAudience(nextRace?.event_interest?.tier_label);
   const totalRounds = Math.max(1, season?.total_rodadas ?? 1);
   const currentRound = Math.max(1, nextRace?.rodada ?? 1);
   const playerCompetitive = ratedDrivers.find((driver) => driver.id === playerStanding?.id) ?? null;
@@ -784,17 +784,17 @@ function buildBriefingContext({
     leaderRating: leaderCompetitive?.rating ?? 0,
   });
   const attendanceNarrative =
-    audienceEstimate > 0
+    audienceEstimaté > 0
       ? `A expectativa do paddock aponta para ${formatAudience(audienceEstimate)} de publico estimado ao longo do fim de semana.`
       : "O paddock espera bom movimento de publico nesta etapa.";
-  const championshipState = classifyChampionshipState({
+  const championshipStaté = classifyChampionshipState({
     playerStanding,
     leader,
     remainingRounds,
     outlook,
     gapBehind,
   });
-  const weekendState = classifyWeekendState({
+  const weekendStaté = classifyWeekendState({
     trackHistory,
     briefingRival,
     nextRace,
@@ -886,7 +886,7 @@ function resolvePrimaryRival(orderedDrivers, playerStanding, briefingRival) {
     return {
       id: briefingRival.driver_id,
       nome: briefingRival.driver_name,
-      posicao_campeonato: briefingRival.championship_position,
+      posição_campeonato: briefingRival.championship_position,
       pontos:
         briefingRival.is_ahead || !playerStanding
           ? (playerStanding?.pontos ?? 0) + (briefingRival.gap_points ?? 0)
@@ -918,7 +918,7 @@ function buildCompetitiveOutlook({ playerStanding, leader, remainingRounds, play
   const weakRecentForm = averageFinish != null && averageFinish >= 7;
   const strongRecentForm = averageFinish != null && averageFinish <= 4.5;
   const titleLongshot =
-    playerStanding.posicao_campeonato >= 6 ||
+    playerStanding.posição_campeonato >= 6 ||
     gapToLeader > racesLeftIncludingCurrent * 12 ||
     (racesLeftIncludingCurrent <= 2 && (weakRecentForm || topFiveCount === 0 || ratingGap >= 10));
   const titleContender =
@@ -926,7 +926,7 @@ function buildCompetitiveOutlook({ playerStanding, leader, remainingRounds, play
     (strongRecentForm || topFiveCount >= 2 || podiumCount >= 1 || ratingGap <= 4);
 
   let titleFight = "outsider";
-  if (playerStanding.posicao_campeonato === 1) {
+  if (playerStanding.posição_campeonato === 1) {
     titleFight = "leader";
   } else if (titleContender) {
     titleFight = "contender";
@@ -954,15 +954,15 @@ function buildCompetitiveOutlook({ playerStanding, leader, remainingRounds, play
 }
 
 function resolveDirectRival(driverStandings, playerStanding) {
-  if (!playerStanding || playerStanding.posicao_campeonato <= 0) {
+  if (!playerStanding || playerStanding.posição_campeonato <= 0) {
     return null;
   }
 
-  if (playerStanding.posicao_campeonato === 1) {
+  if (playerStanding.posição_campeonato === 1) {
     return driverStandings[1] ?? null;
   }
 
-  return driverStandings[playerStanding.posicao_campeonato - 2] ?? null;
+  return driverStandings[playerStanding.posição_campeonato - 2] ?? null;
 }
 
 function buildFavoriteRating(driver) {
@@ -991,7 +991,7 @@ function buildFormLabel(driver) {
     })
     .join(" - ");
 
-  return snapshot ? `Forma recente: ${snapshot}` : "Sem historico recente.";
+  return snapshot ? `Forma recente: ${snapshot}` : "Sem histórico recente.";
 }
 
 function buildFormChips(driver) {
@@ -1045,7 +1045,7 @@ function buildFormChips(driver) {
 
   return chips.length > 0
     ? chips
-    : [{ label: "Sem historico", tone: "border-white/10 bg-white/[0.04] text-text-secondary" }];
+    : [{ label: "Sem histórico", tone: "border-white/10 bg-white/[0.04] text-text-secondary" }];
 }
 
 function getFavoritePositionTone(index) {
@@ -1057,10 +1057,10 @@ function getFavoritePositionTone(index) {
 
 function buildGoals({ playerStanding, teammate, teamStanding, gapToLeader, remainingRounds, outlook }) {
   const teamGoal =
-    teamStanding?.posicao === 1
-      ? "Manter a lideranca do campeonato de equipes."
+    teamStanding?.posição === 1
+      ? "Manter a liderança do campeonato de equipes."
       : teamStanding
-        ? `Levar a equipe ao top ${Math.min(3, teamStanding.posicao)} entre os construtores.`
+        ? `Levar a equipe ao top ${Math.min(3, teamStanding.posição)} entre os construtores.`
         : "Sair da etapa com pontos fortes para a equipe.";
 
   const personalGoal = teammate
@@ -1068,14 +1068,14 @@ function buildGoals({ playerStanding, teammate, teamStanding, gapToLeader, remai
     : "Executar um fim de semana limpo, sem perdas na largada.";
 
   let championshipGoal = "Pontuar forte para manter o campeonato vivo.";
-  if (playerStanding?.posicao_campeonato === 1) {
+  if (playerStanding?.posição_campeonato === 1) {
     championshipGoal = "Controlar os danos e sair da etapa ainda no topo.";
   } else if (outlook?.titleFight === "longshot") {
-    championshipGoal = "Somar o maximo de pontos possivel e manter o campeonato respeitavel ate o fim.";
+    championshipGoal = "Somar o maximo de pontos possível e manter o campeonato respeitavel até o fim.";
   } else if (gapToLeader <= 7) {
-    championshipGoal = "Atacar a lideranca agora que a distancia e curta.";
+    championshipGoal = "Atacar a liderança agora que a distância e curta.";
   } else if (remainingRounds <= 3) {
-    championshipGoal = "Maximizar pontos agora para nao deixar a temporada escapar.";
+    championshipGoal = "Maximizar pontos agora para não deixar a temporada escapar.";
   }
 
   return [
@@ -1189,7 +1189,7 @@ function isLiveCoverageEvent(nextRace, season) {
 }
 
 function buildTeamExpectationValue({ playerStanding, teamStanding, gapToLeader, outlook }) {
-  if (playerStanding?.posicao_campeonato === 1) {
+  if (playerStanding?.posição_campeonato === 1) {
     return "Controlar a ponta";
   }
 
@@ -1201,7 +1201,7 @@ function buildTeamExpectationValue({ playerStanding, teamStanding, gapToLeader, 
     return "Pressionar a frente";
   }
 
-  if ((teamStanding?.posicao ?? 99) <= 3) {
+  if ((teamStanding?.posição ?? 99) <= 3) {
     return "Top 5 no radar";
   }
 
