@@ -630,7 +630,7 @@ export function buildEditorialCopy({
   weekendStories = [],
   gapToLeader = 0,
   remainingRounds = 0,
-  audienceEstimaté = 0,
+  audienceEstimate = 0,
 }) {
   const rivalName = briefingRival?.driver_name ?? rival?.nome ?? "o rival direto";
   const trackName = nextRace?.track_name ?? "esta etapa";
@@ -655,50 +655,50 @@ export function buildEditorialCopy({
     formSentence,
   };
   const headlineKey =
-    championshipStaté === "leader" &&
-    (weekendStaté === "weather_unstable" || weekendStaté === "weekend_hot")
+    championshipState === "leader" &&
+    (weekendState === "weather_unstable" || weekendState === "weekend_hot")
       ? "leader_hot"
       : championshipState;
   const weekendParagraphKey =
-    championshipStaté === "outsider" && weekendStaté !== "weekend_hot"
+    championshipState === "outsider" && weekendState !== "weekend_hot"
       ? "outsider"
-      : weekendStaté === "rival_spotlight" || weekendStaté === "weekend_neutral"
+      : weekendState === "rival_spotlight" || weekendState === "weekend_neutral"
         ? "neutral"
         : weekendState;
   const quoteKey =
-    championshipStaté === "leader" ||
-    championshipStaté === "chase" ||
-    championshipStaté === "pressure" ||
-    championshipStaté === "outsider"
+    championshipState === "leader" ||
+    championshipState === "chase" ||
+    championshipState === "pressure" ||
+    championshipState === "outsider"
       ? championshipState
       : "survival";
   const rivalSummaryKey = !briefingRival
     ? "neutral"
     : briefingRival.is_ahead
-      ? championshipStaté === "outsider"
+      ? championshipState === "outsider"
         ? "aheadOutsider"
         : "ahead"
       : "behind";
   const scenarioKey =
-    championshipStaté === "leader"
+    championshipState === "leader"
       ? "leader"
-      : championshipStaté === "outsider"
+      : championshipState === "outsider"
         ? "outsider"
-        : championshipStaté === "pressure"
+        : championshipState === "pressure"
           ? "pressure"
-          : championshipStaté === "chase" && weekendStaté === "rival_spotlight"
+          : championshipState === "chase" && weekendState === "rival_spotlight"
             ? "chaseRivalSpotlight"
-            : weekendStaté === "weather_unstable"
+            : weekendState === "weather_unstable"
               ? "weatherUnstable"
               : "fallback";
   const actionHintKey =
-    championshipStaté === "leader"
+    championshipState === "leader"
       ? "leader"
-      : championshipStaté === "outsider"
+      : championshipState === "outsider"
         ? "outsider"
-        : championshipStaté === "pressure"
+        : championshipState === "pressure"
           ? "pressure"
-          : championshipStaté === "chase"
+          : championshipState === "chase"
             ? "chase"
             : "fallback";
   const seedBase = buildSeed(
@@ -745,7 +745,7 @@ export function buildEditorialCopy({
 function buildRivalSupport({ championshipState, briefingRival, rivalName, gapToLeader }) {
   if (briefingRival?.driver_name) {
     if (briefingRival.is_ahead) {
-      if (championshipStaté === "outsider") {
+      if (championshipState === "outsider") {
         return `O duelo com ${briefingRival.driver_name} vale mais pela reaceleraçao da campanha do que pela conta do título neste momento.`;
       }
 
@@ -760,15 +760,15 @@ function buildRivalSupport({ championshipState, briefingRival, rivalName, gapToL
 
 
 function buildPaddockSupport({ weekendState, audienceEstimate, trackName }) {
-  if (weekendStaté === "weekend_hot") {
+  if (weekendState === "weekend_hot") {
     return `O paddock trata ${trackName} como uma das rodadas mais tensas deste trecho da temporada.`;
   }
 
-  if (weekendStaté === "history_negative") {
+  if (weekendState === "history_negative") {
     return "A leitura do fim de semana passa menos por bravata e mais por disciplina de execução.";
   }
 
-  if (audienceEstimaté > 0) {
+  if (audienceEstimate > 0) {
     return `A expectativa do paddock aponta para ${formatAudience(audienceEstimate)} de publico estimado ao longo do fim de semana.`;
   }
 
