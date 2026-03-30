@@ -116,7 +116,11 @@ pub fn compute_public_media_impacts(
     // Converter em Vec ordenado deterministicamente por driver_id
     let mut result: Vec<DriverMediaImpact> = accum
         .into_iter()
-        .map(|(driver_id, (delta, reasons))| DriverMediaImpact { driver_id, delta, reasons })
+        .map(|(driver_id, (delta, reasons))| DriverMediaImpact {
+            driver_id,
+            delta,
+            reasons,
+        })
         .collect();
     result.sort_by(|a, b| a.driver_id.cmp(&b.driver_id));
     result
@@ -250,7 +254,13 @@ mod tests {
     #[test]
     fn test_excluded_driver_absent_from_all_roles() {
         // O jogador é o vencedor — não deve aparecer no Vec
-        let ctx = ctx_simple("PLAYER", "PLAYER", &["P002", "P003"], Some("PLAYER"), "PLAYER");
+        let ctx = ctx_simple(
+            "PLAYER",
+            "PLAYER",
+            &["P002", "P003"],
+            Some("PLAYER"),
+            "PLAYER",
+        );
         let injury = make_injury("PLAYER");
         let impacts =
             compute_public_media_impacts(&ctx, &[injury], &make_realized(InterestTier::Alto));
@@ -300,7 +310,11 @@ mod tests {
             injured.delta
         );
         assert_eq!(
-            injured.reasons.iter().filter(|r| **r == MediaImpactReason::Injury).count(),
+            injured
+                .reasons
+                .iter()
+                .filter(|r| **r == MediaImpactReason::Injury)
+                .count(),
             1,
             "Injury deve aparecer apenas uma vez em reasons"
         );
@@ -340,7 +354,7 @@ mod tests {
         assert!(ids.contains(&"P003")); // Podium P2
         assert!(ids.contains(&"P004")); // Podium P3
         assert!(ids.contains(&"P005")); // MainIncident
-        // Nenhum piloto fora dos papéis definidos
+                                        // Nenhum piloto fora dos papéis definidos
         assert_eq!(impacts.len(), 5);
     }
 }

@@ -127,8 +127,8 @@ pub fn coletar_candidatos(
 /// Máximo 1 por classe; o pipeline aplica a cota.
 fn is_wildcard_candidate(driver: &Driver) -> bool {
     let muito_jovem_e_talentoso = driver.idade < 21 && driver.atributos.skill > 75.0;
-    let campiao_recente = driver.melhor_resultado_temp == Some(1)
-        && driver.stats_temporada.vitorias >= 3;
+    let campiao_recente =
+        driver.melhor_resultado_temp == Some(1) && driver.stats_temporada.vitorias >= 3;
     muito_jovem_e_talentoso || campiao_recente
 }
 
@@ -200,16 +200,19 @@ mod tests {
 
         // Nenhum driver_id duplicado
         let ids: HashSet<_> = candidatos.iter().map(|c| &c.driver_id).collect();
-        assert_eq!(ids.len(), candidatos.len(), "driver_ids duplicados detectados");
+        assert_eq!(
+            ids.len(),
+            candidatos.len(),
+            "driver_ids duplicados detectados"
+        );
     }
 
     #[test]
     fn test_coletar_candidatos_source_a_only_active_drivers() {
         let (conn, _) = setup_world_db();
 
-        let candidatos =
-            coletar_candidatos(&conn, "production_challenger", "bmw", "bmw_m2")
-                .expect("coletar candidatos");
+        let candidatos = coletar_candidatos(&conn, "production_challenger", "bmw", "bmw_m2")
+            .expect("coletar candidatos");
 
         for c in &candidatos {
             if c.fonte == FonteConvocacao::MeritoRegular || c.fonte == FonteConvocacao::Wildcard {
@@ -250,12 +253,14 @@ mod tests {
             coletar_candidatos(&conn, "production_challenger", "toyota", "toyota_amador")
                 .expect("coletar candidatos");
 
-        for c in candidatos.iter().filter(|c| c.fonte == FonteConvocacao::PoolGlobal) {
+        for c in candidatos
+            .iter()
+            .filter(|c| c.fonte == FonteConvocacao::PoolGlobal)
+        {
             let has_regular =
                 contract_queries::has_active_regular_contract(&conn, &c.driver_id).expect("check");
             let has_especial =
-                contract_queries::has_active_especial_contract(&conn, &c.driver_id)
-                    .expect("check");
+                contract_queries::has_active_especial_contract(&conn, &c.driver_id).expect("check");
             assert!(
                 !has_regular && !has_especial,
                 "piloto do pool {} tem contrato ativo",

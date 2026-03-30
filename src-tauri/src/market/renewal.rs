@@ -124,7 +124,8 @@ fn classify_renewal_continuity(
 ) -> RenewalContinuityContext {
     if performance_score >= 70.0 && *papel == TeamRole::Numero1 {
         RenewalContinuityContext::Forte
-    } else if performance_score < 50.0 || (*papel == TeamRole::Numero2 && performance_score < 65.0) {
+    } else if performance_score < 50.0 || (*papel == TeamRole::Numero2 && performance_score < 65.0)
+    {
         RenewalContinuityContext::Fraco
     } else {
         RenewalContinuityContext::Neutro
@@ -287,7 +288,10 @@ mod tests {
         for media in [0.0_f64, 30.0, 60.0, 90.0] {
             let profile = derive_market_visibility_profile(media);
             let r = market_visibility_renewal_resistance(&profile, RenewalContinuityContext::Forte);
-            assert!((r - 0.0).abs() < 1e-9, "Forte deve ser 0.0 para midia={media}");
+            assert!(
+                (r - 0.0).abs() < 1e-9,
+                "Forte deve ser 0.0 para midia={media}"
+            );
         }
     }
 
@@ -297,7 +301,10 @@ mod tests {
             let profile = derive_market_visibility_profile(media);
             let r =
                 market_visibility_renewal_resistance(&profile, RenewalContinuityContext::Neutro);
-            assert!((r - 0.0).abs() < 1e-9, "Neutro deve ser 0.0 para midia={media}");
+            assert!(
+                (r - 0.0).abs() < 1e-9,
+                "Neutro deve ser 0.0 para midia={media}"
+            );
         }
     }
 
@@ -307,12 +314,10 @@ mod tests {
         let alta = derive_market_visibility_profile(70.0);
         let rel = derive_market_visibility_profile(40.0);
         let baixa = derive_market_visibility_profile(10.0);
-        let r_elite =
-            market_visibility_renewal_resistance(&elite, RenewalContinuityContext::Fraco);
+        let r_elite = market_visibility_renewal_resistance(&elite, RenewalContinuityContext::Fraco);
         let r_alta = market_visibility_renewal_resistance(&alta, RenewalContinuityContext::Fraco);
         let r_rel = market_visibility_renewal_resistance(&rel, RenewalContinuityContext::Fraco);
-        let r_baixa =
-            market_visibility_renewal_resistance(&baixa, RenewalContinuityContext::Fraco);
+        let r_baixa = market_visibility_renewal_resistance(&baixa, RenewalContinuityContext::Fraco);
         assert!((r_elite - 0.08).abs() < 1e-9);
         assert!((r_alta - 0.05).abs() < 1e-9);
         assert!((r_rel - 0.02).abs() < 1e-9);
@@ -370,10 +375,8 @@ mod tests {
         // performance=82, N1 → Forte → resistance=0.0 → sem gate extra
         let mut rng_e = StdRng::seed_from_u64(42);
         let mut rng_b = StdRng::seed_from_u64(42);
-        let dec_elite =
-            should_renew_contract(&driver_elite, 82.0, &contract, 50_000.0, &mut rng_e);
-        let dec_baixa =
-            should_renew_contract(&driver_baixa, 82.0, &contract, 50_000.0, &mut rng_b);
+        let dec_elite = should_renew_contract(&driver_elite, 82.0, &contract, 50_000.0, &mut rng_e);
+        let dec_baixa = should_renew_contract(&driver_baixa, 82.0, &contract, 50_000.0, &mut rng_b);
 
         assert_eq!(dec_elite.should_renew, dec_baixa.should_renew);
     }

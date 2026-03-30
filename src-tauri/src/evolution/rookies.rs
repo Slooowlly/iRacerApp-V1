@@ -116,7 +116,6 @@ fn correlated_stat(base: f64, variance: f64, rng: &mut impl Rng) -> f64 {
     (base + rng.gen_range(-variance..=variance)).clamp(0.0, 100.0)
 }
 
-
 #[cfg(test)]
 mod tests {
     use rand::{rngs::StdRng, SeedableRng};

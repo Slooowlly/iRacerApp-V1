@@ -4,16 +4,10 @@ import { useLocation, useNavigate } from "react-router-dom";
 
 import useCareerStore from "../../stores/useCareerStore";
 
-const widgetItems = [
-  { emoji: "⚙️", route: "/settings", title: "Configurações" },
-  { emoji: "📂", route: "/load-save", title: "Carregar save" },
-  { emoji: "🏠", route: "/menu", title: "Menu principal", clearsCareer: true },
-];
+const widgetItems = [{ emoji: "🏠", route: "/menu", title: "Home", clearsCareer: true }];
 
 const buttonClass =
   "flex h-9 w-9 items-center justify-center rounded-xl text-text-secondary transition-glass hover:bg-white/8 hover:text-text-primary";
-
-// ── Modal de confirmação de save ──────────────────────────────────────────────
 
 function SaveConfirmModal({ onSave, onDiscard, onCancel, isSaving }) {
   return (
@@ -21,10 +15,10 @@ function SaveConfirmModal({ onSave, onDiscard, onCancel, isSaving }) {
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onCancel} />
       <div className="glass-strong relative w-[340px] rounded-2xl border border-white/12 p-6 shadow-2xl">
         <h3 className="mb-1 text-[15px] font-semibold text-text-primary">
-          Salvar antes de sair?
+          Deseja sair da carreira agora?
         </h3>
         <p className="mb-5 text-[13px] text-text-secondary">
-          Há mudanças não consolidadas nesta sessão. Deseja salvar agora?
+          Voce pode salvar antes de voltar ao menu principal ou fechar o jogo.
         </p>
         <div className="flex flex-col gap-2">
           <button
@@ -33,7 +27,7 @@ function SaveConfirmModal({ onSave, onDiscard, onCancel, isSaving }) {
             onClick={onSave}
             className="flex h-9 w-full items-center justify-center rounded-xl bg-accent-primary text-[13px] font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
           >
-            {isSaving ? "Salvando…" : "Salvar e sair"}
+            {isSaving ? "Salvando..." : "Salvar e sair"}
           </button>
           <button
             type="button"
@@ -57,23 +51,16 @@ function SaveConfirmModal({ onSave, onDiscard, onCancel, isSaving }) {
   );
 }
 
-// ── WindowControlsDrawer ──────────────────────────────────────────────────────
-
 function WindowControlsDrawer() {
   const navigate = useNavigate();
   const location = useLocation();
-  const shouldHideDrawer =
-    location.pathname === "/" || location.pathname === "/splash";
+  const shouldHideDrawer = location.pathname === "/" || location.pathname === "/splash";
   const clearCareer = useCareerStore((state) => state.clearCareer);
-  const isDirty = useCareerStore((state) => state.isDirty);
-  const isLoaded = useCareerStore((state) => state.isLoaded);
   const flushSave = useCareerStore((state) => state.flushSave);
   const [isFullscreen, setIsFullscreen] = useState(true);
   const [isOpen, setIsOpen] = useState(false);
   const [showWidgets, setShowWidgets] = useState(false);
   const widgetsTimerRef = useRef(null);
-
-  // Modal de confirmação: null | { onConfirm, onDiscard }
   const [savePrompt, setSavePrompt] = useState(null);
   const [isSaving, setIsSaving] = useState(false);
 
@@ -154,32 +141,14 @@ function WindowControlsDrawer() {
     }
   }
 
-  async function handleClose(event) {
+  function handleClose(event) {
     event.stopPropagation();
-
-    if (isLoaded && isDirty) {
-      setSavePrompt({ mode: "close" });
-      return;
-    }
-
-    await doClose();
+    setSavePrompt({ mode: "close" });
   }
 
   function handleWidgetClick(event, widget) {
     event.stopPropagation();
-
-    if (widget.clearsCareer && isLoaded && isDirty) {
-      setSavePrompt({ mode: "navigate", widget });
-      return;
-    }
-
-    if (widget.clearsCareer) {
-      clearCareer();
-    }
-
-    if (location.pathname !== widget.route) {
-      navigate(widget.route);
-    }
+    setSavePrompt({ mode: "navigate", widget });
   }
 
   async function handleSaveAndProceed() {
@@ -187,7 +156,7 @@ function WindowControlsDrawer() {
     try {
       await flushSave();
     } catch (_) {
-      // falha no flush não impede a ação — o banco já está persistido
+      // Falha no flush nao impede a saida.
     }
     setIsSaving(false);
     await proceedAfterPrompt(savePrompt);
@@ -203,10 +172,17 @@ function WindowControlsDrawer() {
 
     if (prompt.mode === "close") {
       await doClose();
-    } else if (prompt.mode === "navigate") {
+      return;
+    }
+
+    if (prompt.mode === "navigate") {
       const { widget } = prompt;
-      if (widget.clearsCareer) clearCareer();
-      if (location.pathname !== widget.route) navigate(widget.route);
+      if (widget.clearsCareer) {
+        clearCareer();
+      }
+      if (location.pathname !== widget.route) {
+        navigate(widget.route);
+      }
     }
   }
 
@@ -237,19 +213,8 @@ function WindowControlsDrawer() {
       />
 
       <div className="fixed right-5 top-[36px] z-50">
-        <div
-          className="relative h-[390px] w-[148px]"
-          onMouseLeave={handleDrawerLeave}
-        >
-          <div
-            className="absolute -left-[32px] top-0 h-[390px] w-[188px]"
-            onMouseEnter={handleDrawerEnter}
-          />
-
-          <div
-            className="relative z-10 ml-auto w-[132px]"
-            onMouseEnter={handleDrawerEnter}
-          >
+        <div className="relative h-[390px] w-[148px]" onMouseLeave={handleDrawerLeave}>
+          <div className="relative z-10 ml-auto w-[132px]" onMouseEnter={handleDrawerEnter}>
             <div
               className={[
                 "absolute right-0 top-0 flex w-[132px] flex-col items-center transition-all duration-300 ease-out",
@@ -261,15 +226,12 @@ function WindowControlsDrawer() {
                 <button type="button" className={buttonClass} onClick={handleMinimize}>
                   <span className="block -translate-y-[1px] text-[11px]">&minus;</span>
                 </button>
-                <button
-                  type="button"
-                  className={buttonClass}
-                  onClick={handleToggleFullscreen}
-                >
+                <button type="button" className={buttonClass} onClick={handleToggleFullscreen}>
                   <span className="block text-[12px]">{isFullscreen ? "❐" : "□"}</span>
                 </button>
                 <button
                   type="button"
+                  aria-label="Fechar app"
                   className={`${buttonClass} hover:bg-status-red/20 hover:text-status-red`}
                   onClick={handleClose}
                 >
@@ -288,10 +250,8 @@ function WindowControlsDrawer() {
 
               <div
                 className={[
-                  "glass-strong absolute left-1/2 -translate-x-1/2 top-[84px] flex w-[58px] flex-col items-center gap-2 rounded-[28px] border border-white/10 px-2 py-3 transition-all duration-500 ease-out",
-                  showWidgets
-                    ? "translate-y-0 opacity-100"
-                    : "-translate-x-1/2 -translate-y-4 opacity-0",
+                  "glass-strong absolute left-1/2 top-[84px] flex w-[58px] -translate-x-1/2 flex-col items-center gap-2 rounded-[28px] border border-white/10 px-2 py-3 transition-all duration-500 ease-out",
+                  showWidgets ? "translate-y-0 opacity-100" : "-translate-x-1/2 -translate-y-4 opacity-0",
                 ].join(" ")}
                 style={{ pointerEvents: showWidgets ? "auto" : "none" }}
               >
@@ -322,11 +282,18 @@ function WindowControlsDrawer() {
             </div>
           </div>
 
-          <div className="absolute right-0 top-[8px] flex h-11 items-center justify-center pr-1">
+          <div
+            data-testid="window-controls-hover-target"
+            className={[
+              "absolute right-0 top-[8px] z-20 flex h-10 w-10 items-center justify-center rounded-xl transition-all duration-300 ease-out",
+              isOpen ? "pointer-events-none" : "",
+            ].join(" ")}
+            onMouseEnter={handleDrawerEnter}
+          >
             <span
               className={[
                 "select-none text-[22px] leading-none text-accent-primary/75 transition-all duration-300 ease-out",
-                isOpen ? "-translate-x-1 opacity-35" : "translate-x-0 opacity-90",
+                isOpen ? "-translate-x-0.5 opacity-35" : "translate-x-0 opacity-90",
               ].join(" ")}
             >
               &#x2039;

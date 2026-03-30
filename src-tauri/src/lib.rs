@@ -20,8 +20,8 @@ mod hierarchy;
 mod market;
 mod models;
 mod news;
-mod public_presence;
 mod promotion;
+mod public_presence;
 mod rivalry;
 mod simulation;
 
@@ -32,13 +32,18 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .setup(|app| {
-            let base_dir = app.path().app_data_dir()
+            let base_dir = app
+                .path()
+                .app_data_dir()
                 .map_err(|e| format!("Falha ao obter app_data_dir: {e}"))?;
             let config = config::app_config::AppConfig::load_or_default(&base_dir);
-            
+
             if let Some(window) = app.get_webview_window("main") {
                 // Aplicar tamanho
-                let _ = window.set_size(tauri::LogicalSize::new(config.window_width, config.window_height));
+                let _ = window.set_size(tauri::LogicalSize::new(
+                    config.window_width,
+                    config.window_height,
+                ));
 
                 // Maximizar se necessário
                 if config.window_maximized {
@@ -102,6 +107,10 @@ pub fn run() {
             commands::career_commands::get_calendar_for_category,
             commands::career_commands::get_driver,
             commands::career_commands::get_driver_detail,
+            commands::career_commands::get_briefing_phrase_history,
+            commands::career_commands::save_briefing_phrase_history,
+            commands::news_tab::get_news_tab_bootstrap,
+            commands::news_tab::get_news_tab_snapshot,
             commands::race::simulate_race_weekend,
             commands::window::minimize_window,
             commands::window::toggle_maximize_window,

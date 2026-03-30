@@ -80,7 +80,7 @@ mod tests {
     fn setup_test_db() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
         run_all(&conn).unwrap();
-        
+
         // Insert driver
         let driver = Driver::create_player(
             "P001".to_string(),
@@ -89,19 +89,19 @@ mod tests {
             30,
         );
         crate::db::queries::drivers::insert_driver(&conn, &driver).unwrap();
-        
+
         conn
     }
 
     #[test]
     fn test_process_injury_recovery_ticks_down_and_recovers() {
         let mut conn = setup_test_db();
-        
+
         let tx = conn.transaction().unwrap();
-        
+
         // Start by making the driver injured
         update_driver_status(&tx, "P001", &DriverStatus::Lesionado).unwrap();
-        
+
         // Manually insert an injury with 2 races remaining
         let injury = crate::models::injury::Injury {
             id: "INJ-1".to_string(),
@@ -116,29 +116,49 @@ mod tests {
             active: true,
         };
         insert_injury(&tx, &injury).unwrap();
-        
+
         // Update driver's category just in case so the fetch queries it correctly
-        tx.execute("UPDATE drivers SET categoria_atual = 'F1' WHERE id = 'P001'", []).unwrap();
-        
+        tx.execute(
+            "UPDATE drivers SET categoria_atual = 'F1' WHERE id = 'P001'",
+            [],
+        )
+        .unwrap();
+
         // Tick 1
         process_injury_recovery(&tx, "F1").unwrap();
-        
-        let mut stmt = tx.prepare("SELECT races_remaining, active FROM injuries").unwrap();
-        let (rem, act): (i32, bool) = stmt.query_row([], |row| Ok((row.get(0)?, row.get(1)?))).unwrap();
+
+        let mut stmt = tx
+            .prepare("SELECT races_remaining, active FROM injuries")
+            .unwrap();
+        let (rem, act): (i32, bool) = stmt
+            .query_row([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap();
         assert_eq!(rem, 1);
         assert!(act);
-        
-        let status: String = tx.query_row("SELECT status FROM drivers WHERE id = 'P001'", [], |r| r.get(0)).unwrap();
+
+        let status: String = tx
+            .query_row("SELECT status FROM drivers WHERE id = 'P001'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
         assert_eq!(status, "Lesionado");
-        
+
         // Tick 2 (Recovers!)
         process_injury_recovery(&tx, "F1").unwrap();
-        
-        let (rem2, act2): (i32, bool) = tx.query_row("SELECT races_remaining, active FROM injuries", [], |row| Ok((row.get(0)?, row.get(1)?))).unwrap();
+
+        let (rem2, act2): (i32, bool) = tx
+            .query_row("SELECT races_remaining, active FROM injuries", [], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })
+            .unwrap();
         assert_eq!(rem2, 0);
         assert!(!act2);
-        
-        let status2: String = tx.query_row("SELECT status FROM drivers WHERE id = 'P001'", [], |r| r.get(0)).unwrap();
+
+        let status2: String = tx
+            .query_row("SELECT status FROM drivers WHERE id = 'P001'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
         assert_eq!(status2, "Ativo");
     }
 
@@ -146,15 +166,25 @@ mod tests {
     fn test_process_new_injuries_generation() {
         let mut conn = setup_test_db();
         let tx = conn.transaction().unwrap();
-        tx.execute("UPDATE drivers SET categoria_atual = 'F1' WHERE id = 'P001'", []).unwrap();
-        
+        tx.execute(
+            "UPDATE drivers SET categoria_atual = 'F1' WHERE id = 'P001'",
+            [],
+        )
+        .unwrap();
+
         // Mock a 100% chance RNG for testing
         struct ForceInjuryRng;
         impl rand::RngCore for ForceInjuryRng {
-            fn next_u32(&mut self) -> u32 { 1 } // Will roll 1 on gen_range -> Leve
-            fn next_u64(&mut self) -> u64 { 1 }
+            fn next_u32(&mut self) -> u32 {
+                1
+            } // Will roll 1 on gen_range -> Leve
+            fn next_u64(&mut self) -> u64 {
+                1
+            }
             fn fill_bytes(&mut self, _dest: &mut [u8]) {}
-            fn try_fill_bytes(&mut self, _dest: &mut [u8]) -> Result<(), rand::Error> { Ok(()) }
+            fn try_fill_bytes(&mut self, _dest: &mut [u8]) -> Result<(), rand::Error> {
+                Ok(())
+            }
         }
 
         let incident = IncidentResult {
@@ -166,18 +196,29 @@ mod tests {
             is_dnf: true,
             description: "Huge crash".to_string(),
             linked_pilot_id: None,
+            is_two_car_incident: false,
+            injury_risk_multiplier: 1.5,
+            narrative_importance_hint: 2,
+            catalog_id: None,
+            damage_origin_segment: None,
         };
 
         let mut rng = ForceInjuryRng;
-        
+
         let new_injuries = process_new_injuries(&tx, 1, "R001", &[incident], &mut rng).unwrap();
         assert_eq!(new_injuries.len(), 1);
         assert_eq!(new_injuries[0].pilot_id, "P001");
-        
-        let count: i32 = tx.query_row("SELECT COUNT(*) FROM injuries", [], |r| r.get(0)).unwrap();
+
+        let count: i32 = tx
+            .query_row("SELECT COUNT(*) FROM injuries", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(count, 1);
-        
-        let status: String = tx.query_row("SELECT status FROM drivers WHERE id = 'P001'", [], |r| r.get(0)).unwrap();
+
+        let status: String = tx
+            .query_row("SELECT status FROM drivers WHERE id = 'P001'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
         assert_eq!(status, "Lesionado");
     }
 }

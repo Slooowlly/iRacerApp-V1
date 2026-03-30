@@ -51,6 +51,7 @@ pub struct CareerData {
     pub player_team: TeamSummary,
     pub season: SeasonSummary,
     pub next_race: Option<RaceSummary>,
+    pub next_race_briefing: Option<NextRaceBriefingSummary>,
     pub total_drivers: usize,
     pub total_teams: usize,
 }
@@ -115,6 +116,202 @@ pub struct RaceSummary {
     pub season_phase: String,
     pub display_date: String,
     pub event_interest: Option<EventInterestSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NextRaceBriefingSummary {
+    pub track_history: Option<TrackHistorySummary>,
+    pub primary_rival: Option<PrimaryRivalSummary>,
+    #[serde(default)]
+    pub weekend_stories: Vec<BriefingStorySummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrackHistorySummary {
+    pub has_data: bool,
+    pub starts: i32,
+    pub best_finish: Option<i32>,
+    pub last_finish: Option<i32>,
+    pub dnfs: i32,
+    pub last_visit_season: Option<i32>,
+    pub last_visit_round: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrimaryRivalSummary {
+    pub driver_id: String,
+    pub driver_name: String,
+    pub championship_position: i32,
+    pub gap_points: i32,
+    pub is_ahead: bool,
+    pub rivalry_label: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BriefingStorySummary {
+    pub id: String,
+    pub icon: String,
+    pub title: String,
+    pub summary: String,
+    pub importance: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct BriefingPhraseHistory {
+    pub season_number: i32,
+    #[serde(default)]
+    pub entries: Vec<BriefingPhraseEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BriefingPhraseEntry {
+    #[serde(default)]
+    pub season_number: i32,
+    pub round_number: i32,
+    pub driver_id: String,
+    pub bucket_key: String,
+    pub phrase_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BriefingPhraseEntryInput {
+    pub round_number: i32,
+    pub driver_id: String,
+    pub bucket_key: String,
+    pub phrase_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NewsTabBootstrap {
+    pub default_scope_type: String,
+    pub default_scope_id: String,
+    pub default_primary_filter: Option<String>,
+    pub scopes: Vec<NewsTabScopeTab>,
+    pub season_number: i32,
+    pub season_year: i32,
+    pub current_round: i32,
+    pub total_rounds: i32,
+    pub pub_date_label: String,
+    pub last_race_name: Option<String>,
+    pub next_race_date_label: Option<String>,
+    pub next_race_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NewsTabScopeTab {
+    pub id: String,
+    pub label: String,
+    pub short_label: String,
+    pub scope_type: String,
+    pub special: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NewsTabSnapshotRequest {
+    pub scope_type: String,
+    pub scope_id: String,
+    pub scope_class: Option<String>,
+    pub primary_filter: Option<String>,
+    pub context_type: Option<String>,
+    pub context_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NewsTabSnapshot {
+    pub hero: NewsTabHero,
+    pub primary_filters: Vec<NewsTabFilterOption>,
+    pub contextual_filters: Vec<NewsTabFilterOption>,
+    pub stories: Vec<NewsTabStory>,
+    pub scope_meta: NewsTabScopeMeta,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NewsTabHero {
+    pub section_label: String,
+    pub title: String,
+    pub subtitle: String,
+    pub badge: String,
+    pub badge_tone: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NewsTabFilterOption {
+    pub id: String,
+    pub label: String,
+    pub meta: Option<String>,
+    pub tone: Option<String>,
+    pub kind: Option<String>,
+    pub color_primary: Option<String>,
+    pub color_secondary: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NewsTabScopeMeta {
+    pub scope_type: String,
+    pub scope_id: String,
+    pub scope_label: String,
+    pub scope_class: Option<String>,
+    pub primary_filter: Option<String>,
+    pub context_type: Option<String>,
+    pub context_id: Option<String>,
+    pub context_label: Option<String>,
+    pub is_special: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NewsTabStoryBlock {
+    pub label: String,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NewsTabStory {
+    pub id: String,
+    pub icon: String,
+    pub title: String,
+    pub headline: String,
+    pub summary: String,
+    pub deck: String,
+    pub body_text: String,
+    pub blocks: Vec<NewsTabStoryBlock>,
+    pub news_type: String,
+    pub importance: String,
+    pub importance_label: String,
+    pub category_label: Option<String>,
+    pub meta_label: String,
+    pub time_label: String,
+    pub entity_label: Option<String>,
+    pub driver_label: Option<String>,
+    pub team_label: Option<String>,
+    pub race_label: Option<String>,
+    pub accent_tone: String,
+    pub driver_id: Option<String>,
+    pub team_id: Option<String>,
+    pub round: Option<i32>,
+
+    // 1.1 — campos brutos do NewsItem
+    pub original_text: Option<String>,
+    pub preseason_week: Option<i32>,
+    pub season_number: i32,
+    pub driver_id_secondary: Option<String>,
+    pub driver_secondary_label: Option<String>,
+
+    // 1.2 — contexto competitivo
+    pub driver_position: Option<i32>,
+    pub driver_points: Option<i32>,
+    pub team_position: Option<i32>,
+    pub team_points: Option<i32>,
+
+    // 1.3 — contexto visual de equipe
+    pub team_color_primary: Option<String>,
+    pub team_color_secondary: Option<String>,
+
+    // 1.4 — próxima etapa
+    pub next_race_label: Option<String>,
+    pub next_race_date_label: Option<String>,
+
+    // 1.5 — presença pública da equipe
+    pub team_public_presence_tier: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -6,9 +6,9 @@ const initialState = {
   isLoading: false,
   isSimulating: false,
   isAdvancing: false,
+  isCalendarAdvancing: false,
   isAdvancingWeek: false,
   isRespondingProposal: false,
-  // true quando houve ação relevante desde o último flush_save ou load inicial
   isDirty: false,
   lastSaved: null,
   error: null,
@@ -18,11 +18,16 @@ const initialState = {
   playerTeam: null,
   season: null,
   nextRace: null,
+  nextRaceBriefing: null,
+  temporalSummary: null,
+  calendarDisplayDate: null,
+  displayDaysUntilNextEvent: null,
   totalDrivers: 0,
   totalTeams: 0,
   lastRaceResult: null,
   otherCategoriesResult: null,
   showResult: false,
+  showRaceBriefing: false,
   preseasonState: null,
   preseasonWeeks: [],
   playerProposals: [],
@@ -46,10 +51,13 @@ function applyCareerData(data) {
     playerTeam: data.player_team,
     season: data.season,
     nextRace: data.next_race,
+    nextRaceBriefing: data.next_race_briefing ?? null,
     totalDrivers: data.total_drivers,
     totalTeams: data.total_teams,
     isSimulating: false,
+    isCalendarAdvancing: false,
     showResult: false,
+    showRaceBriefing: false,
     lastRaceResult: null,
     otherCategoriesResult: null,
   };
@@ -80,6 +88,97 @@ function buildWeeksFromNews(newsItems = []) {
   return [...grouped.values()].sort((a, b) => a.week_number - b.week_number);
 }
 
+function parseIsoDate(value) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value ?? "");
+  if (!match) return null;
+
+  return new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+}
+
+function formatIsoDate(date) {
+  const year = date.getUTCFullYear();
+  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(date.getUTCDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function buildDateSequence(startDate, endDate) {
+  const start = parseIsoDate(startDate);
+  const end = parseIsoDate(endDate);
+  if (!start || !end) {
+    return [];
+  }
+
+  if (start > end) {
+    return [endDate];
+  }
+
+  const dates = [];
+  const cursor = new Date(start.getTime());
+
+  while (cursor <= end) {
+    dates.push(formatIsoDate(cursor));
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+
+  return dates;
+}
+
+export function buildCalendarAdvanceTiming(totalSteps) {
+  const steps = Math.max(0, totalSteps);
+  if (steps === 0) {
+    return {
+      totalDurationMs: 0,
+      stepMs: 0,
+    };
+  }
+
+  const minDurationMs = 1500;
+  const maxDurationMs = 3000;
+  const shortJumpThreshold = 3;
+  const longJumpThreshold = 14;
+
+  let totalDurationMs = minDurationMs;
+
+  if (steps >= longJumpThreshold) {
+    totalDurationMs = maxDurationMs;
+  } else if (steps > shortJumpThreshold) {
+    const ratio = (steps - shortJumpThreshold) / (longJumpThreshold - shortJumpThreshold);
+    totalDurationMs = Math.round(minDurationMs + ratio * (maxDurationMs - minDurationMs));
+  }
+
+  return {
+    totalDurationMs,
+    stepMs: Math.round(totalDurationMs / steps),
+  };
+}
+
+function buildTemporalUiState(temporalSummary) {
+  return {
+    temporalSummary,
+    calendarDisplayDate: temporalSummary?.current_display_date ?? null,
+    displayDaysUntilNextEvent: temporalSummary?.days_until_next_event ?? null,
+  };
+}
+
+async function loadTemporalSummary(careerId, season, playerTeam) {
+  if (!careerId || !season?.id || !playerTeam?.categoria) {
+    return null;
+  }
+
+  return invoke("get_temporal_summary", {
+    careerId,
+    seasonId: season.id,
+    playerCategory: playerTeam.categoria,
+  });
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
 const useCareerStore = create((set, get) => ({
   ...initialState,
 
@@ -87,8 +186,10 @@ const useCareerStore = create((set, get) => ({
     set({
       isLoading: true,
       isSimulating: false,
+      isCalendarAdvancing: false,
       error: null,
       showResult: false,
+      showRaceBriefing: false,
       lastRaceResult: null,
       otherCategoriesResult: null,
       showEndOfSeason: false,
@@ -101,8 +202,18 @@ const useCareerStore = create((set, get) => ({
 
     try {
       const data = await invoke("load_career", { careerId });
+      const temporalSummary = await loadTemporalSummary(
+        data.career_id,
+        data.season,
+        data.player_team,
+      ).catch((error) => {
+        console.error("Erro ao carregar resumo temporal:", error);
+        return null;
+      });
+
       set({
         ...applyCareerData(data),
+        ...buildTemporalUiState(temporalSummary),
         showEndOfSeason: false,
         showPreseason: false,
         endOfSeasonResult: null,
@@ -145,6 +256,7 @@ const useCareerStore = create((set, get) => ({
         otherCategoriesResult: result.other_categories,
         isSimulating: false,
         showResult: true,
+        showRaceBriefing: false,
         isDirty: true,
       });
 
@@ -170,7 +282,12 @@ const useCareerStore = create((set, get) => ({
   },
 
   clearLastResult: () => {
-    set({ lastRaceResult: null, otherCategoriesResult: null, showResult: false });
+    set({
+      lastRaceResult: null,
+      otherCategoriesResult: null,
+      showResult: false,
+      showRaceBriefing: false,
+    });
   },
 
   clearCareer: () => {
@@ -191,11 +308,16 @@ const useCareerStore = create((set, get) => ({
         isAdvancing: false,
         endOfSeasonResult: result,
         showEndOfSeason: true,
+        showRaceBriefing: false,
         showPreseason: false,
         preseasonState: null,
         preseasonWeeks: [],
         playerProposals: [],
         nextRace: null,
+        nextRaceBriefing: null,
+        temporalSummary: null,
+        calendarDisplayDate: null,
+        displayDaysUntilNextEvent: null,
         lastRaceResult: null,
         otherCategoriesResult: null,
         isDirty: true,
@@ -230,6 +352,7 @@ const useCareerStore = create((set, get) => ({
 
       set({
         showEndOfSeason: false,
+        showRaceBriefing: false,
         showPreseason: true,
         preseasonState: state,
         preseasonWeeks: buildWeeksFromNews(news),
@@ -335,9 +458,18 @@ const useCareerStore = create((set, get) => ({
     try {
       await invoke("finalize_preseason", { careerId });
       const data = await invoke("load_career", { careerId });
+      const temporalSummary = await loadTemporalSummary(
+        data.career_id,
+        data.season,
+        data.player_team,
+      ).catch((error) => {
+        console.error("Erro ao carregar resumo temporal:", error);
+        return null;
+      });
 
       set({
         ...applyCareerData(data),
+        ...buildTemporalUiState(temporalSummary),
         showPreseason: false,
         showEndOfSeason: false,
         preseasonState: null,
@@ -368,7 +500,109 @@ const useCareerStore = create((set, get) => ({
     set({ nextRace: raceData });
   },
 
-  // Consolida o save: WAL checkpoint + atualiza last_saved no meta.json
+  closeRaceBriefing: () => {
+    set({ showRaceBriefing: false });
+  },
+
+  startCalendarAdvance: async () => {
+    const {
+      careerId,
+      season,
+      playerTeam,
+      nextRace,
+      temporalSummary,
+      calendarDisplayDate,
+      displayDaysUntilNextEvent,
+      isCalendarAdvancing,
+    } = get();
+
+    if (isCalendarAdvancing || !nextRace) {
+      return;
+    }
+
+    let effectiveTemporalSummary = temporalSummary;
+    if (!effectiveTemporalSummary) {
+      effectiveTemporalSummary = await loadTemporalSummary(careerId, season, playerTeam).catch(
+        (error) => {
+          console.error("Erro ao sincronizar resumo temporal:", error);
+          return null;
+        },
+      );
+
+      if (effectiveTemporalSummary) {
+        set(buildTemporalUiState(effectiveTemporalSummary));
+      }
+    }
+
+    const targetDate =
+      effectiveTemporalSummary?.next_event_display_date ?? nextRace.display_date ?? null;
+    const startDate =
+      calendarDisplayDate ??
+      effectiveTemporalSummary?.current_display_date ??
+      targetDate;
+
+    if (!targetDate || !startDate) {
+      set({
+        calendarDisplayDate: targetDate ?? startDate,
+        displayDaysUntilNextEvent: 0,
+        showRaceBriefing: true,
+      });
+      return;
+    }
+
+    if ((displayDaysUntilNextEvent ?? effectiveTemporalSummary?.days_until_next_event ?? 0) <= 0) {
+      set({
+        calendarDisplayDate: targetDate,
+        displayDaysUntilNextEvent: 0,
+        showRaceBriefing: true,
+      });
+      return;
+    }
+
+    const sequence = buildDateSequence(startDate, targetDate);
+    if (sequence.length <= 1) {
+      set({
+        calendarDisplayDate: targetDate,
+        displayDaysUntilNextEvent: 0,
+        showRaceBriefing: true,
+      });
+      return;
+    }
+
+    const { stepMs } = buildCalendarAdvanceTiming(sequence.length - 1);
+
+    set({
+      isCalendarAdvancing: true,
+      error: null,
+      showRaceBriefing: false,
+      calendarDisplayDate: sequence[0],
+      displayDaysUntilNextEvent: sequence.length - 1,
+    });
+
+    try {
+      for (let index = 1; index < sequence.length; index += 1) {
+        await sleep(stepMs);
+        set({
+          calendarDisplayDate: sequence[index],
+          displayDaysUntilNextEvent: sequence.length - index - 1,
+        });
+      }
+
+      set({
+        isCalendarAdvancing: false,
+        showRaceBriefing: true,
+        calendarDisplayDate: targetDate,
+        displayDaysUntilNextEvent: 0,
+      });
+    } catch (error) {
+      set({
+        isCalendarAdvancing: false,
+        error: getErrorMessage(error, "Erro ao avancar calendario."),
+      });
+      throw error;
+    }
+  },
+
   flushSave: async () => {
     const { careerId } = get();
     if (!careerId) return;

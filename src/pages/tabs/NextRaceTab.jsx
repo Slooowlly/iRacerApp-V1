@@ -302,6 +302,40 @@ function NextRaceTab() {
         message="Classificacao, corrida e atualizacao do campeonato em andamento."
       />
 
+      <GlassCard hover={false} className="rounded-[28px]">
+        <div className="flex items-start justify-between gap-6">
+          <div className="flex-1 min-w-0">
+            <p className="text-[10px] uppercase tracking-[0.22em] text-accent-primary">
+              Sala de estrategia
+            </p>
+            <h3 className="mt-2 text-2xl font-semibold text-text-primary">
+              Escolha o proximo passo
+            </h3>
+            {exportNotice ? <p className="mt-2 text-sm text-accent-primary">{exportNotice}</p> : null}
+
+            <div className="mt-4 grid gap-3 sm:grid-cols-3">
+              {briefing.goals.map((goal) => (
+                <GoalCard key={goal.label} label={goal.label} value={goal.value} />
+              ))}
+            </div>
+          </div>
+
+          <div className="flex flex-shrink-0 flex-col gap-3 pt-9">
+            <GlassButton
+              variant="primary"
+              disabled={isSimulating || !nextRace}
+              className="min-w-48"
+              onClick={handleSimulate}
+            >
+              {isSimulating ? "Simulando..." : "Simular corrida"}
+            </GlassButton>
+            <GlassButton variant="secondary" className="min-w-48" onClick={handleExport}>
+              Exportar
+            </GlassButton>
+          </div>
+        </div>
+      </GlassCard>
+
       <div className="grid gap-5 xl:grid-cols-[1.08fr_0.92fr]">
         <div className="space-y-5">
           <GlassCard
@@ -320,7 +354,7 @@ function NextRaceTab() {
                     <p className="text-[40px] font-semibold leading-none tracking-[-0.06em] text-text-primary">
                       {briefing.eventDateShort}
                     </p>
-                    <p className="text-[12px] uppercase tracking-[0.14em] text-text-muted">
+                    <p className="text-[12px] uppercase tracking-[0.14em] text-text-secondary">
                       Etapa {nextRace.rodada} de {season?.total_rodadas ?? "?"}
                     </p>
                   </div>
@@ -330,7 +364,7 @@ function NextRaceTab() {
                 </div>
 
                 <div className="text-left md:text-right">
-                  <p className="text-[11px] uppercase tracking-[0.14em] text-text-muted">
+                  <p className="text-[11px] uppercase tracking-[0.14em] text-text-secondary">
                     Horario local
                   </p>
                   <p className="mt-2 text-[28px] font-semibold tracking-[-0.04em] text-text-primary">
@@ -379,7 +413,7 @@ function NextRaceTab() {
                 <h3 className="mt-3 max-w-4xl text-[32px] font-semibold leading-[1.05] tracking-[-0.05em] text-text-primary">
                   {briefing.headline}
                 </h3>
-                <p className="mt-4 max-w-3xl text-[15px] leading-7 text-text-secondary">
+                <p className="mt-4 max-w-3xl text-[15px] leading-7 text-text-primary">
                   {briefing.paragraphs[0] ?? briefing.attendanceNarrative}
                 </p>
               </div>
@@ -446,7 +480,7 @@ function NextRaceTab() {
               <p className="mt-5 text-sm text-status-red">{briefingError}</p>
             ) : (
               <div className="mt-5 overflow-hidden rounded-[24px] border border-white/8">
-                <div className="grid gap-3 bg-accent-primary/8 px-4 py-3 text-[11px] uppercase tracking-[0.16em] text-text-muted md:grid-cols-[72px_0.95fr_0.85fr_1.35fr]">
+                <div className="grid gap-3 bg-accent-primary/8 px-4 py-3 text-[11px] uppercase tracking-[0.16em] text-text-secondary md:grid-cols-[72px_0.95fr_0.85fr_1.35fr]">
                   <div>Pos.</div>
                   <div>Piloto</div>
                   <div>Forma recente</div>
@@ -473,7 +507,7 @@ function NextRaceTab() {
                   className="w-full table-fixed border-separate border-spacing-y-1.5"
                 >
                   <thead>
-                    <tr className="text-[10px] uppercase tracking-[0.18em] text-text-muted">
+                    <tr className="text-[10px] uppercase tracking-[0.18em] text-text-secondary">
                       <th className="w-9 px-2 text-left font-medium">#</th>
                       <th className="px-2 text-left font-medium">Piloto</th>
                       <th className="w-[46px] px-2 text-right font-medium">Pts</th>
@@ -500,45 +534,6 @@ function NextRaceTab() {
           <p>Erro ao simular: {error}</p>
         </div>
       ) : null}
-
-      <GlassCard hover={false} className="rounded-[28px]">
-        <div className="flex items-start justify-between gap-6">
-          <div className="flex-1 min-w-0">
-            <p className="text-[10px] uppercase tracking-[0.22em] text-accent-primary">
-              Sala de estrategia
-            </p>
-            <h3 className="mt-2 text-2xl font-semibold text-text-primary">
-              Escolha o proximo passo
-            </h3>
-            <p className="mt-2 text-sm text-text-secondary">
-              {isLoadingBriefing
-                ? "Fechando ultimos detalhes do briefing antes da largada."
-                : briefing.actionHint}
-            </p>
-            {exportNotice ? <p className="mt-3 text-sm text-accent-primary">{exportNotice}</p> : null}
-
-            <div className="mt-4 grid gap-3 sm:grid-cols-3">
-              {briefing.goals.map((goal) => (
-                <GoalCard key={goal.label} label={goal.label} value={goal.value} />
-              ))}
-            </div>
-          </div>
-
-          <div className="flex flex-shrink-0 flex-col gap-3 pt-9">
-            <GlassButton
-              variant="primary"
-              disabled={isSimulating || !nextRace}
-              className="min-w-48"
-              onClick={handleSimulate}
-            >
-              {isSimulating ? "Simulando..." : "Simular corrida"}
-            </GlassButton>
-            <GlassButton variant="secondary" className="min-w-48" onClick={handleExport}>
-              Exportar
-            </GlassButton>
-          </div>
-        </div>
-      </GlassCard>
     </div>
   );
 }
@@ -546,7 +541,7 @@ function NextRaceTab() {
 function EventSummaryBox({ label, value, meta, featured = false }) {
   return (
     <div className="rounded-[18px] bg-white/[0.08] px-4 py-4 text-center">
-      <p className="flex items-center justify-center gap-2 text-[11px] uppercase tracking-[0.14em] text-text-muted">
+      <p className="flex items-center justify-center gap-2 text-[11px] uppercase tracking-[0.14em] text-text-secondary">
         {label}
       </p>
       <p
@@ -557,7 +552,7 @@ function EventSummaryBox({ label, value, meta, featured = false }) {
       >
         {value}
       </p>
-      {meta ? <p className="mt-2 text-[13px] leading-5 text-text-secondary">{meta}</p> : null}
+      {meta ? <p className="mt-2 text-[13px] leading-5 text-text-primary">{meta}</p> : null}
     </div>
   );
 }
@@ -569,11 +564,11 @@ function ConditionReportRow({ badge, label, value, meta }) {
         {badge}
       </div>
       <div>
-        <p className="text-[11px] uppercase tracking-[0.18em] text-text-muted">{label}</p>
+        <p className="text-[11px] uppercase tracking-[0.18em] text-text-secondary">{label}</p>
         <p className="mt-1 text-[21px] font-semibold tracking-[-0.03em] text-text-primary">
           {value}
         </p>
-        <p className="mt-1 text-sm leading-6 text-text-secondary">{meta}</p>
+        <p className="mt-1 text-sm leading-6 text-text-primary">{meta}</p>
       </div>
     </div>
   );
@@ -582,7 +577,7 @@ function ConditionReportRow({ badge, label, value, meta }) {
 function GoalCard({ label, value }) {
   return (
     <div className="rounded-[20px] border border-white/8 bg-white/[0.04] px-4 py-4">
-      <p className="text-[10px] uppercase tracking-[0.18em] text-text-muted">{label}</p>
+      <p className="text-[10px] uppercase tracking-[0.18em] text-text-secondary">{label}</p>
       <p className="mt-2 text-sm font-semibold leading-6 text-text-primary">{value}</p>
     </div>
   );
@@ -591,14 +586,14 @@ function GoalCard({ label, value }) {
 function BriefingPreviewPanel({ title, accentLabel, accentColor, body, support }) {
   return (
     <div className="rounded-[20px] border border-white/8 bg-white/[0.03] p-4">
-      <p className="text-[11px] uppercase tracking-[0.16em] text-text-muted">{title}</p>
+      <p className="text-[11px] uppercase tracking-[0.16em] text-text-secondary">{title}</p>
       {accentLabel ? (
         <p className="mt-3 text-[12px] font-semibold uppercase tracking-[0.12em]" style={{ color: getReadableTeamColor(accentColor) }}>
           {accentLabel}
         </p>
       ) : null}
       <p className="mt-3 text-[14px] leading-7 text-text-primary">{body}</p>
-      {support ? <p className="mt-3 text-[14px] leading-7 text-text-secondary">{support}</p> : null}
+      {support ? <p className="mt-3 text-[14px] leading-7 text-text-primary">{support}</p> : null}
     </div>
   );
 }
@@ -830,7 +825,17 @@ function buildBriefingContext({
     historyValue: editorialCopy.historyValue,
     historyMeta: editorialCopy.historyMeta,
     paragraphs: editorialCopy.paragraphs,
-    goals: buildGoals({ playerStanding, teammate, teamStanding, gapToLeader, remainingRounds, outlook }),
+    goals: buildGoals({
+      playerStanding,
+      teammate,
+      teamStanding,
+      gapToLeader,
+      remainingRounds,
+      outlook,
+      driverAbove: playerStanding?.posicao_campeonato > 1
+        ? orderedDrivers[playerStanding.posicao_campeonato - 2] ?? null
+        : null,
+    }),
     favorites,
     championshipTable: orderedDrivers,
     standingsTopFive,
@@ -1055,7 +1060,7 @@ function getFavoritePositionTone(index) {
   return "text-text-primary";
 }
 
-function buildGoals({ playerStanding, teammate, teamStanding, gapToLeader, remainingRounds, outlook }) {
+function buildGoals({ playerStanding, teammate, teamStanding, gapToLeader, remainingRounds, outlook, driverAbove }) {
   const teamGoal =
     teamStanding?.posicao === 1
       ? "Manter a lideranca do campeonato de equipes."
@@ -1063,9 +1068,15 @@ function buildGoals({ playerStanding, teammate, teamStanding, gapToLeader, remai
         ? `Levar a equipe ao top ${Math.min(3, teamStanding.posicao)} entre os construtores.`
         : "Sair da etapa com pontos fortes para a equipe.";
 
-  const personalGoal = teammate
+  const playerPos = playerStanding?.posicao_campeonato ?? 0;
+  const teammatePos = teammate?.posicao_campeonato ?? 0;
+  const teammateIsClose = teammate && Math.abs(playerPos - teammatePos) <= 2;
+
+  const personalGoal = teammateIsClose
     ? `Terminar a frente de ${teammate.nome} na leitura interna do box.`
-    : "Executar um fim de semana limpo, sem perdas na largada.";
+    : driverAbove
+      ? `Superar ${driverAbove.nome} e subir para o ${playerPos - 1}º no campeonato.`
+      : "Executar um fim de semana limpo, sem perdas na largada.";
 
   let championshipGoal = "Pontuar forte para manter o campeonato vivo.";
   if (playerStanding?.posicao_campeonato === 1) {

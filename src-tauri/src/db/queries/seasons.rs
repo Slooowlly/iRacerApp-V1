@@ -74,8 +74,8 @@ pub fn get_all_seasons(conn: &Connection) -> Result<Vec<Season>, DbError> {
 
 fn season_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Season> {
     let fase_str = optional_string(row, "fase")?.unwrap_or_else(|| "BlocoRegular".to_string());
-    let fase = SeasonPhase::from_str_strict(&fase_str)
-        .map_err(rusqlite::Error::InvalidParameterName)?;
+    let fase =
+        SeasonPhase::from_str_strict(&fase_str).map_err(rusqlite::Error::InvalidParameterName)?;
 
     Ok(Season {
         id: row.get("id")?,
@@ -90,11 +90,7 @@ fn season_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Season> {
     })
 }
 
-pub fn update_season_fase(
-    conn: &Connection,
-    id: &str,
-    fase: &SeasonPhase,
-) -> Result<(), DbError> {
+pub fn update_season_fase(conn: &Connection, id: &str, fase: &SeasonPhase) -> Result<(), DbError> {
     conn.execute(
         "UPDATE seasons
          SET fase = ?1, updated_at = CURRENT_TIMESTAMP

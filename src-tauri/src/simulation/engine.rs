@@ -1,5 +1,6 @@
 use rand::Rng;
 
+use super::catalog::IncidentCatalog;
 use super::context::{SimDriver, SimulationContext};
 use super::qualifying::simulate_qualifying;
 use super::race::{simulate_race, RaceResult};
@@ -9,10 +10,11 @@ pub fn run_full_race(
     drivers: &[SimDriver],
     ctx: &SimulationContext,
     is_endurance: bool,
+    catalog: &IncidentCatalog,
     rng: &mut impl Rng,
 ) -> RaceResult {
     let qualifying = simulate_qualifying(drivers, ctx, rng);
-    let mut race_result = simulate_race(drivers, &qualifying, ctx, rng);
+    let mut race_result = simulate_race(drivers, &qualifying, ctx, catalog, is_endurance, rng);
 
     let fastest_lap_id = determine_fastest_lap(&mut race_result.race_results).unwrap_or_default();
     assign_points(&mut race_result.race_results, is_endurance);
@@ -77,6 +79,7 @@ mod tests {
             tire_degradation_rate: 0.02,
             physical_degradation_rate: 0.01,
             incidents_enabled: false,
+            ..SimulationContext::test_default()
         }
     }
 
@@ -84,7 +87,13 @@ mod tests {
     fn test_full_race_integration() {
         let drivers: Vec<SimDriver> = (0..12).map(build_driver).collect();
         let mut rng = StdRng::seed_from_u64(41);
-        let result = run_full_race(&drivers, &sample_context(), false, &mut rng);
+        let result = run_full_race(
+            &drivers,
+            &sample_context(),
+            false,
+            &IncidentCatalog::empty(),
+            &mut rng,
+        );
 
         assert_eq!(result.qualifying_results.len(), 12);
         assert_eq!(result.race_results.len(), 12);
@@ -96,7 +105,13 @@ mod tests {
     fn test_full_race_positions_consistent() {
         let drivers: Vec<SimDriver> = (0..12).map(build_driver).collect();
         let mut rng = StdRng::seed_from_u64(42);
-        let result = run_full_race(&drivers, &sample_context(), false, &mut rng);
+        let result = run_full_race(
+            &drivers,
+            &sample_context(),
+            false,
+            &IncidentCatalog::empty(),
+            &mut rng,
+        );
 
         assert!(result.race_results[0].points_earned > result.race_results[1].points_earned);
     }

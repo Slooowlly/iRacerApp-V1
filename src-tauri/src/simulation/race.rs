@@ -1,12 +1,18 @@
+use std::collections::HashMap;
+
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 
-use crate::constants::scoring::{get_weather_penalty, RACE_SCORE_TO_LAP_MS};
-use crate::models::enums::WeatherCondition;
+use crate::constants::scoring::RACE_SCORE_TO_LAP_MS;
 
+use super::catalog::IncidentCatalog;
 use super::context::{SimDriver, SimulationContext};
-use super::incidents::{process_segment_incidents, IncidentResult};
+use super::incidents::{
+    process_segment_incidents, IncidentResult, IncidentSeverity, IncidentType, PendingDamage,
+};
+use super::math::{adjusted_weather_multiplier, normalize_car_performance};
 use super::qualifying::QualifyingResult;
+use super::track_profile::TrackCharacter;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum RaceSegment {
@@ -27,6 +33,23 @@ impl RaceSegment {
             Self::Finish => "FINISH",
         }
     }
+
+    /// Ordinal para comparação de segmento em DNF ordering (maior = mais tarde na corrida).
+    fn ordinal(self) -> u8 {
+        match self {
+            Self::Start => 0,
+            Self::Early => 1,
+            Self::Mid => 2,
+            Self::Late => 3,
+            Self::Finish => 4,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ClassificationStatus {
+    Finished,
+    Dnf,
 }
 
 #[derive(Debug, Clone)]
@@ -40,6 +63,8 @@ pub struct RaceState {
     pub incidents: Vec<IncidentResult>,
     pub dnf_reason: Option<String>,
     pub dnf_segment: Option<RaceSegment>,
+    /// Danos latentes pós-colisão aguardando manifestação.
+    pub pending_damage: Vec<PendingDamage>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -67,6 +92,17 @@ pub struct RaceDriverResult {
     pub laps_completed: i32,
     pub final_tire_wear: f64,
     pub final_physical: f64,
+    pub classification_status: ClassificationStatus,
+    /// Descrição de conveniência do pior incidente (narrative_importance_hint >= 2).
+    /// Campo derivado — não é fonte factual primária.
+    #[serde(default)]
+    pub notable_incident: Option<String>,
+    /// ID da entry do catálogo do incidente que causou o DNF.
+    #[serde(default)]
+    pub dnf_catalog_id: Option<String>,
+    /// Segmento de origem do dano (pode diferir do segmento do DNF para dano latente).
+    #[serde(default)]
+    pub damage_origin_segment: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -83,12 +119,23 @@ pub struct RaceResult {
     pub total_incidents: i32,
     #[serde(default)]
     pub total_dnfs: i32,
+    /// Incidentes com narrative_importance_hint >= 1.
+    #[serde(default)]
+    pub main_incident_count: i32,
+    /// Pilot IDs com incidente headline (hint >= 2).
+    #[serde(default)]
+    pub notable_incident_pilot_ids: Vec<String>,
+    /// Piloto que mais ganhou posições.
+    #[serde(default)]
+    pub most_positions_gained_id: Option<String>,
 }
 
 pub fn simulate_race(
     drivers: &[SimDriver],
     qualifying: &[QualifyingResult],
     ctx: &SimulationContext,
+    catalog: &IncidentCatalog,
+    is_endurance: bool,
     rng: &mut impl Rng,
 ) -> RaceResult {
     let total_drivers = qualifying.len() as i32;
@@ -104,6 +151,7 @@ pub fn simulate_race(
             incidents: Vec::new(),
             dnf_reason: None,
             dnf_segment: None,
+            pending_damage: Vec::new(),
         })
         .collect();
 
@@ -115,16 +163,33 @@ pub fn simulate_race(
         RaceSegment::Finish,
     ] {
         if ctx.incidents_enabled {
-            let segment_incidents = process_segment_incidents(
+            // Processar danos latentes ANTES dos rolls normais do segmento
+            process_pending_damage(
+                &mut states,
+                segment,
+                drivers,
+                catalog,
+                ctx.vehicle_class,
+                is_endurance,
+                rng,
+            );
+
+            let result = process_segment_incidents(
                 drivers,
                 &states,
                 segment,
                 ctx.weather,
                 ctx.is_championship_deciding,
+                ctx.incident_rate_multiplier,
+                ctx.start_chaos_multiplier,
+                ctx.pack_density_factor,
+                catalog,
+                ctx.vehicle_class,
+                is_endurance,
                 rng,
             );
 
-            for incident in segment_incidents {
+            for incident in result.incidents {
                 if let Some(state) = states.iter_mut().find(|s| s.driver_id == incident.pilot_id) {
                     if incident.is_dnf {
                         state.is_dnf = true;
@@ -132,6 +197,13 @@ pub fn simulate_race(
                         state.dnf_segment = Some(segment);
                     }
                     state.incidents.push(incident);
+                }
+            }
+
+            // Aplicar novos danos latentes gerados neste segmento
+            for (driver_id, pd) in result.new_pending_damage {
+                if let Some(state) = states.iter_mut().find(|s| s.driver_id == driver_id) {
+                    state.pending_damage.push(pd);
                 }
             }
         }
@@ -180,11 +252,27 @@ pub fn simulate_race(
         .first()
         .map(|result| result.pilot_id.clone())
         .unwrap_or_default();
-    let total_incidents = race_results
+    let total_incidents: i32 = race_results.iter().map(|r| r.incidents_count).sum();
+    let total_dnfs = race_results.iter().filter(|r| r.is_dnf).count() as i32;
+
+    // Aggregate narrative fields
+    let main_incident_count: i32 = race_results
         .iter()
-        .map(|result| result.incidents_count)
-        .sum();
-    let total_dnfs = race_results.iter().filter(|result| result.is_dnf).count() as i32;
+        .flat_map(|r| &r.incidents)
+        .filter(|i| i.narrative_importance_hint >= 1)
+        .count() as i32;
+
+    let notable_incident_pilot_ids: Vec<String> = race_results
+        .iter()
+        .filter(|r| r.notable_incident.is_some())
+        .map(|r| r.pilot_id.clone())
+        .collect();
+
+    let most_positions_gained_id = race_results
+        .iter()
+        .filter(|r| !r.is_dnf && r.positions_gained > 0)
+        .max_by_key(|r| r.positions_gained)
+        .map(|r| r.pilot_id.clone());
 
     RaceResult {
         qualifying_results: qualifying.to_vec(),
@@ -197,6 +285,9 @@ pub fn simulate_race(
         track_name: ctx.track_name.clone(),
         total_incidents,
         total_dnfs,
+        main_incident_count,
+        notable_incident_pilot_ids,
+        most_positions_gained_id,
     }
 }
 
@@ -207,30 +298,89 @@ fn build_race_results(
     states: &[RaceState],
     rng: &mut impl Rng,
 ) -> Vec<RaceDriverResult> {
-    let winner_score = states
-        .first()
-        .map(|state| state.cumulative_score)
-        .unwrap_or(0.0);
+    // Lookup maps para evitar O(n²)
+    let driver_map: HashMap<&str, &SimDriver> =
+        drivers.iter().map(|d| (d.id.as_str(), d)).collect();
+    let quali_map: HashMap<&str, &QualifyingResult> = qualifying
+        .iter()
+        .map(|q| (q.pilot_id.as_str(), q))
+        .collect();
+
+    // Separar finishers e DNFs para ordenação correta
+    let mut finishers: Vec<&RaceState> = states.iter().filter(|s| !s.is_dnf).collect();
+    let mut dnfs: Vec<&RaceState> = states.iter().filter(|s| s.is_dnf).collect();
+
+    // Finishers: por cumulative_score desc
+    finishers.sort_by(|a, b| {
+        b.cumulative_score
+            .partial_cmp(&a.cumulative_score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    // DNFs: segmento mais tardio primeiro; desempate por cumulative_score
+    dnfs.sort_by(|a, b| {
+        let seg_ord_b = b.dnf_segment.map(|s| s.ordinal()).unwrap_or(0);
+        let seg_ord_a = a.dnf_segment.map(|s| s.ordinal()).unwrap_or(0);
+        seg_ord_b.cmp(&seg_ord_a).then_with(|| {
+            b.cumulative_score
+                .partial_cmp(&a.cumulative_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+    });
+
+    let ordered: Vec<&RaceState> = finishers.into_iter().chain(dnfs).collect();
+
+    let winner_score = ordered.first().map(|s| s.cumulative_score).unwrap_or(0.0);
     let winner_lap_time_ms = ctx.base_lap_time_ms;
     let winner_total_time_ms = winner_lap_time_ms * ctx.total_laps as f64;
 
-    let mut results: Vec<RaceDriverResult> = states
+    ordered
         .iter()
-        .filter_map(|state| {
-            let driver = drivers.iter().find(|driver| driver.id == state.driver_id)?;
-            let qualifying_result = qualifying
-                .iter()
-                .find(|result| result.pilot_id == state.driver_id)?;
-            let lap_time_ms =
-                ctx.base_lap_time_ms + (winner_score - state.cumulative_score).max(0.0) * RACE_SCORE_TO_LAP_MS;
-            let total_race_time_ms = lap_time_ms * ctx.total_laps as f64;
+        .enumerate()
+        .filter_map(|(finish_idx, state)| {
+            let driver = driver_map.get(state.driver_id.as_str())?;
+            let qualifying_result = quali_map.get(state.driver_id.as_str())?;
+
+            let lap_time_ms = ctx.base_lap_time_ms
+                + (winner_score - state.cumulative_score).max(0.0) * RACE_SCORE_TO_LAP_MS;
             let best_lap_factor = rng.gen_range(0.97..=1.0);
             let best_lap_time_ms = lap_time_ms * best_lap_factor;
+
             let laps_completed = if state.is_dnf {
                 estimate_laps_at_dnf(state.dnf_segment, ctx.total_laps)
             } else {
                 ctx.total_laps
             };
+
+            let total_race_time_ms = if state.is_dnf {
+                // Tempo proporcional às voltas completadas + pequeno overhead
+                winner_total_time_ms * (laps_completed as f64 / ctx.total_laps as f64) * 1.05
+            } else {
+                lap_time_ms * ctx.total_laps as f64
+            };
+
+            // gap sempre >= 0
+            let gap_to_winner_ms = (total_race_time_ms - winner_total_time_ms).max(0.0);
+
+            // Incidente mais importante para campo de conveniência
+            let notable_incident = state
+                .incidents
+                .iter()
+                .filter(|i| i.narrative_importance_hint >= 2)
+                .max_by_key(|i| i.narrative_importance_hint)
+                .map(|i| i.description.clone());
+
+            let dnf_incident = state.incidents.iter().find(|i| i.is_dnf);
+            let dnf_catalog_id = dnf_incident.and_then(|i| i.catalog_id.clone());
+            let damage_origin_segment = dnf_incident.and_then(|i| i.damage_origin_segment.clone());
+
+            let classification_status = if state.is_dnf {
+                ClassificationStatus::Dnf
+            } else {
+                ClassificationStatus::Finished
+            };
+
+            let finish_position = finish_idx as i32 + 1;
 
             Some(RaceDriverResult {
                 pilot_id: driver.id.clone(),
@@ -238,16 +388,14 @@ fn build_race_results(
                 team_id: driver.team_id.clone(),
                 team_name: driver.team_name.clone(),
                 grid_position: qualifying_result.position,
-                finish_position: state.current_position,
-                positions_gained: qualifying_result.position - state.current_position,
+                finish_position,
+                positions_gained: qualifying_result.position - finish_position,
                 best_lap_time_ms,
                 total_race_time_ms,
-                gap_to_winner_ms: (total_race_time_ms - winner_total_time_ms).max(0.0),
+                gap_to_winner_ms,
                 is_dnf: state.is_dnf,
                 dnf_reason: state.dnf_reason.clone(),
-                dnf_segment: state
-                    .dnf_segment
-                    .map(|segment| segment.as_str().to_string()),
+                dnf_segment: state.dnf_segment.map(|s| s.as_str().to_string()),
                 incidents_count: state.incidents.len() as i32,
                 incidents: state.incidents.clone(),
                 has_fastest_lap: false,
@@ -256,12 +404,13 @@ fn build_race_results(
                 laps_completed,
                 final_tire_wear: state.tire_wear,
                 final_physical: state.physical_condition,
+                classification_status,
+                notable_incident,
+                dnf_catalog_id,
+                damage_origin_segment,
             })
         })
-        .collect();
-
-    results.sort_by_key(|result| result.finish_position);
-    results
+        .collect()
 }
 
 fn estimate_laps_at_dnf(segment: Option<RaceSegment>, total_laps: i32) -> i32 {
@@ -271,7 +420,7 @@ fn estimate_laps_at_dnf(segment: Option<RaceSegment>, total_laps: i32) -> i32 {
         Some(RaceSegment::Mid) => 0.50,
         Some(RaceSegment::Late) => 0.70,
         Some(RaceSegment::Finish) => 0.90,
-        None => 1.0,
+        None => 0.05,
     };
     ((total_laps as f64 * fraction) as i32).max(1)
 }
@@ -360,26 +509,69 @@ fn calculate_segment_score(
         + driver.mentalidade as f64 * weights.mentalidade
         + driver.confianca as f64 * weights.confianca;
 
+    // Penalidade de pneu
     let tire_penalty = (1.0 - state.tire_wear) * 0.15;
     score *= 1.0 - tire_penalty;
 
+    // Penalidade de fadiga (apenas Late e Finish)
     if matches!(segment, RaceSegment::Late | RaceSegment::Finish) {
         let fatigue_penalty = (1.0 - state.physical_condition) * 0.10;
         score *= 1.0 - fatigue_penalty;
     }
 
-    score *= weather_multiplier(ctx.weather, driver.fator_chuva);
+    // Chuva com sensibilidade do contexto
+    score *= adjusted_weather_multiplier(ctx.weather, driver.fator_chuva, ctx.rain_sensitivity);
 
-    let variance_range = (100.0 - driver.consistencia as f64) / 100.0 * 5.0;
-    score += rng.gen_range(-variance_range..=variance_range);
+    // Bônus contextual em pista difícil: adaptabilidade vale mais
+    if ctx.track_difficulty_multiplier > 1.0 {
+        let difficulty_bonus =
+            (driver.adaptabilidade as f64 / 100.0) * (ctx.track_difficulty_multiplier - 1.0) * 0.05;
+        let consistency_bonus =
+            (driver.consistencia as f64 / 100.0) * (ctx.track_difficulty_multiplier - 1.0) * 0.03;
+        score += difficulty_bonus + consistency_bonus;
+    }
 
+    // Bias de caráter de pista: pequenos ajustes relativos de atributos (skill, car, adaptabilidade)
+    let (char_skill_bias, char_car_bias, char_adapt_bias) = match ctx.track_character {
+        TrackCharacter::Flowing => (0.02_f64, 0.02, -0.03),
+        TrackCharacter::Technical => (0.00, 0.00, 0.00),
+        TrackCharacter::Tight => (-0.03, -0.04, 0.05),
+        TrackCharacter::Roval => (0.04, 0.03, -0.05),
+    };
+    score += driver.skill as f64 * char_skill_bias
+        + normalize_car_performance(driver.car_performance) * char_car_bias
+        + driver.adaptabilidade as f64 * char_adapt_bias;
+
+    // Comprime ou expande spread de habilidade (endurance = campo mais fechado, rookie = mais aberto)
+    let midpoint = 60.0_f64;
+    score = midpoint + (score - midpoint) * ctx.race_pace_spread_multiplier;
+
+    if driver.corridas_na_categoria < 10 {
+        let inexperience_factor = (10 - driver.corridas_na_categoria).max(0) as f64 * 0.003;
+        score *= 1.0 - inexperience_factor;
+    }
+
+    // Variância escalada pelo perfil da categoria
+    let base_variance = (100.0 - driver.consistencia as f64) / 100.0 * 5.0;
+    let scaled_variance = base_variance * ctx.race_variance_multiplier;
+
+    // Caos extra na largada amplificado por densidade do pelotão
+    let actual_variance = if segment == RaceSegment::Start {
+        scaled_variance * ctx.start_chaos_multiplier * ctx.pack_density_factor
+    } else {
+        scaled_variance
+    };
+
+    score += rng.gen_range(-actual_variance..=actual_variance);
     score.max(5.0)
 }
 
 fn apply_tire_degradation(state: &mut RaceState, driver: &SimDriver, ctx: &SimulationContext) {
     let mgmt_factor = 1.0 - (driver.gestao_pneus as f64 / 100.0 * 0.50);
+    let smoothness_factor = 1.0 - (driver.smoothness as f64 / 100.0 * 0.20);
     let duration_factor = (ctx.race_duration_minutes as f64 / 30.0).max(0.25);
-    let actual_degradation = ctx.tire_degradation_rate * mgmt_factor * duration_factor;
+    let actual_degradation =
+        ctx.tire_degradation_rate * mgmt_factor * smoothness_factor * duration_factor;
     state.tire_wear = (state.tire_wear - actual_degradation).max(0.1);
 }
 
@@ -390,19 +582,97 @@ fn apply_physical_degradation(state: &mut RaceState, driver: &SimDriver, ctx: &S
     state.physical_condition = (state.physical_condition - actual_degradation).max(0.2);
 }
 
-fn weather_multiplier(weather: WeatherCondition, fator_chuva: u8) -> f64 {
-    if weather == WeatherCondition::Dry {
-        return 1.0;
+/// Processa danos latentes pós-colisão antes dos rolls normais do segmento.
+/// Para cada piloto não-DNF com pending_damage, testa a chance de manifestação.
+fn process_pending_damage(
+    states: &mut Vec<RaceState>,
+    segment: RaceSegment,
+    drivers: &[SimDriver],
+    catalog: &IncidentCatalog,
+    vehicle_class: super::catalog::VehicleClass,
+    is_endurance: bool,
+    rng: &mut impl Rng,
+) {
+    let seg_str = segment.as_str();
+    for state in states.iter_mut() {
+        if state.is_dnf || state.pending_damage.is_empty() {
+            continue;
+        }
+        let driver_name = drivers
+            .iter()
+            .find(|d| d.id == state.driver_id)
+            .map(|d| d.nome.as_str())
+            .unwrap_or("Piloto");
+
+        let mut indices_to_remove: Vec<usize> = Vec::new();
+
+        for (i, pd) in state.pending_damage.iter_mut().enumerate() {
+            if rng.gen::<f64>() < pd.manifest_chance {
+                // Dano manifestou — determinar se é DNF
+                let is_dnf = pd.is_dnf_capable && rng.gen::<f64>() < 0.70;
+                // Re-renderizar o catálogo com o nome correto e severidade correta
+                let (desc, cat_id) = if let Some(sel) = catalog.select_and_render(
+                    vehicle_class,
+                    is_endurance,
+                    super::catalog::IncidentSource::PostCollision,
+                    super::catalog::TriggerType::PostCollision,
+                    is_dnf,
+                    driver_name,
+                    rng,
+                ) {
+                    (sel.rendered_text, Some(sel.catalog_id))
+                } else if is_dnf {
+                    (
+                        format!("{} abandona por dano de colisao anterior", driver_name),
+                        None,
+                    )
+                } else {
+                    (
+                        format!(
+                            "{} perde posicoes por dano de colisao anterior",
+                            driver_name
+                        ),
+                        None,
+                    )
+                };
+
+                let incident = IncidentResult {
+                    pilot_id: state.driver_id.clone(),
+                    incident_type: IncidentType::Mechanical,
+                    severity: if is_dnf {
+                        IncidentSeverity::Major
+                    } else {
+                        IncidentSeverity::Minor
+                    },
+                    segment: seg_str.to_string(),
+                    positions_lost: if is_dnf { 0 } else { 2 },
+                    is_dnf,
+                    description: desc,
+                    linked_pilot_id: None,
+                    is_two_car_incident: false,
+                    injury_risk_multiplier: if is_dnf { 1.5 } else { 1.0 },
+                    narrative_importance_hint: if is_dnf { 2 } else { 1 },
+                    catalog_id: cat_id,
+                    damage_origin_segment: Some(pd.origin_segment.clone()),
+                };
+
+                if is_dnf {
+                    state.is_dnf = true;
+                    state.dnf_reason = Some(incident.description.clone());
+                    state.dnf_segment = Some(segment);
+                }
+                state.incidents.push(incident);
+                indices_to_remove.push(i);
+            } else {
+                pd.manifest_chance += 0.15;
+            }
+        }
+
+        // Remover manifestados de trás para frente
+        for &i in indices_to_remove.iter().rev() {
+            state.pending_damage.remove(i);
+        }
     }
-
-    let (base_penalty, _) = get_weather_penalty(&weather);
-    let absorption = fator_chuva as f64 / 100.0 * 0.90;
-    let rain_penalty = base_penalty * (1.0 - absorption);
-    1.0 - rain_penalty
-}
-
-fn normalize_car_performance(car_performance: f64) -> f64 {
-    ((car_performance + 5.0) / 21.0 * 100.0).clamp(0.0, 100.0)
 }
 
 #[cfg(test)]
@@ -410,26 +680,18 @@ mod tests {
     use rand::{rngs::StdRng, SeedableRng};
 
     use crate::models::driver::Driver;
+    use crate::models::enums::WeatherCondition;
     use crate::models::team::placeholder_team_from_db;
+    use crate::simulation::context::SimulationContext;
 
     use super::*;
     use crate::simulation::qualifying::simulate_qualifying;
 
     fn sample_context(duration: i32, weather: WeatherCondition) -> SimulationContext {
         SimulationContext {
-            category_id: "gt4".to_string(),
-            category_tier: 3,
-            track_id: 2,
-            track_name: "Interlagos".to_string(),
             weather,
-            temperature: 24.0,
-            total_laps: 18,
             race_duration_minutes: duration,
-            is_championship_deciding: false,
-            base_lap_time_ms: 90_000.0,
-            tire_degradation_rate: 0.02,
-            physical_degradation_rate: 0.01,
-            incidents_enabled: false,
+            ..SimulationContext::test_default()
         }
     }
 
@@ -439,7 +701,9 @@ mod tests {
     ) -> SimulationContext {
         SimulationContext {
             incidents_enabled: true,
-            ..sample_context(duration, weather)
+            weather,
+            race_duration_minutes: duration,
+            ..SimulationContext::test_default()
         }
     }
 
@@ -503,7 +767,14 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(21);
         let ctx = sample_context(30, WeatherCondition::Dry);
         let qualifying = simulate_qualifying(&grid, &ctx, &mut rng);
-        let result = simulate_race(&grid, &qualifying, &ctx, &mut rng);
+        let result = simulate_race(
+            &grid,
+            &qualifying,
+            &ctx,
+            &IncidentCatalog::empty(),
+            false,
+            &mut rng,
+        );
 
         assert_eq!(result.race_results.len(), 12);
     }
@@ -514,7 +785,14 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(22);
         let ctx = sample_context(30, WeatherCondition::Dry);
         let qualifying = simulate_qualifying(&grid, &ctx, &mut rng);
-        let result = simulate_race(&grid, &qualifying, &ctx, &mut rng);
+        let result = simulate_race(
+            &grid,
+            &qualifying,
+            &ctx,
+            &IncidentCatalog::empty(),
+            false,
+            &mut rng,
+        );
         assert_eq!(
             result
                 .race_results
@@ -531,7 +809,14 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(23);
         let ctx = sample_context(45, WeatherCondition::Dry);
         let qualifying = simulate_qualifying(&grid, &ctx, &mut rng);
-        let result = simulate_race(&grid, &qualifying, &ctx, &mut rng);
+        let result = simulate_race(
+            &grid,
+            &qualifying,
+            &ctx,
+            &IncidentCatalog::empty(),
+            false,
+            &mut rng,
+        );
 
         assert!(result
             .race_results
@@ -545,7 +830,14 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(24);
         let ctx = sample_context(45, WeatherCondition::Dry);
         let qualifying = simulate_qualifying(&grid, &ctx, &mut rng);
-        let result = simulate_race(&grid, &qualifying, &ctx, &mut rng);
+        let result = simulate_race(
+            &grid,
+            &qualifying,
+            &ctx,
+            &IncidentCatalog::empty(),
+            false,
+            &mut rng,
+        );
 
         assert!(result
             .race_results
@@ -559,15 +851,18 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(25);
         let ctx = sample_context(30, WeatherCondition::Dry);
         let qualifying = simulate_qualifying(&grid, &ctx, &mut rng);
-        let result = simulate_race(&grid, &qualifying, &ctx, &mut rng);
-
-        assert!(
-            result
-                .race_results
-                .iter()
-                .all(|driver| driver.positions_gained
-                    == driver.grid_position - driver.finish_position)
+        let result = simulate_race(
+            &grid,
+            &qualifying,
+            &ctx,
+            &IncidentCatalog::empty(),
+            false,
+            &mut rng,
         );
+
+        assert!(result.race_results.iter().all(|driver| {
+            driver.positions_gained == driver.grid_position - driver.finish_position
+        }));
     }
 
     #[test]
@@ -585,7 +880,14 @@ mod tests {
             let mut rng = StdRng::seed_from_u64(seed);
             let ctx = sample_context(35, WeatherCondition::Dry);
             let qualifying = simulate_qualifying(&grid, &ctx, &mut rng);
-            let result = simulate_race(&grid, &qualifying, &ctx, &mut rng);
+            let result = simulate_race(
+                &grid,
+                &qualifying,
+                &ctx,
+                &IncidentCatalog::empty(),
+                false,
+                &mut rng,
+            );
             if result.winner_id == ace.id {
                 wins += 1;
             }
@@ -605,13 +907,98 @@ mod tests {
             let mut rng = StdRng::seed_from_u64(seed);
             let ctx = sample_context(60, WeatherCondition::Dry);
             let qualifying = simulate_qualifying(&grid, &ctx, &mut rng);
-            let result = simulate_race(&grid, &qualifying, &ctx, &mut rng);
+            let result = simulate_race(
+                &grid,
+                &qualifying,
+                &ctx,
+                &IncidentCatalog::empty(),
+                false,
+                &mut rng,
+            );
             if result.winner_id == tire_saver.id {
                 saver_better += 1;
             }
         }
 
         assert!(saver_better >= 20);
+    }
+
+    #[test]
+    fn test_rookie_category_experience_penalizes_race_score() {
+        let mut rookie = build_driver("ROOKIE", 80.0, 78.0, 75.0, 76.0, 10.0);
+        rookie.corridas_na_categoria = 2;
+
+        let mut veteran = rookie.clone();
+        veteran.id = "VETERAN".to_string();
+        veteran.nome = "Driver VETERAN".to_string();
+        veteran.corridas_na_categoria = 18;
+
+        let ctx = SimulationContext {
+            race_variance_multiplier: 0.0,
+            ..sample_context(30, WeatherCondition::Dry)
+        };
+        let state = RaceState {
+            driver_id: rookie.id.clone(),
+            tire_wear: 1.0,
+            physical_condition: 1.0,
+            cumulative_score: 0.0,
+            is_dnf: false,
+            current_position: 1,
+            incidents: Vec::new(),
+            dnf_reason: None,
+            dnf_segment: None,
+            pending_damage: Vec::new(),
+        };
+
+        let mut rookie_rng = StdRng::seed_from_u64(101);
+        let rookie_score =
+            calculate_segment_score(&rookie, &state, RaceSegment::Mid, &ctx, &mut rookie_rng);
+
+        let mut veteran_rng = StdRng::seed_from_u64(101);
+        let veteran_score =
+            calculate_segment_score(&veteran, &state, RaceSegment::Mid, &ctx, &mut veteran_rng);
+
+        assert!(
+            rookie_score < veteran_score,
+            "rookie_score={rookie_score} should be lower than veteran_score={veteran_score}"
+        );
+    }
+
+    #[test]
+    fn test_smoothness_reduces_tire_degradation() {
+        let ctx = sample_context(45, WeatherCondition::Dry);
+        let mut smooth = build_driver("SMOOTH", 75.0, 72.0, 70.0, 74.0, 10.0);
+        smooth.smoothness = 92;
+
+        let mut rough = smooth.clone();
+        rough.id = "ROUGH".to_string();
+        rough.nome = "Driver ROUGH".to_string();
+        rough.smoothness = 18;
+
+        let mut smooth_state = RaceState {
+            driver_id: smooth.id.clone(),
+            tire_wear: 1.0,
+            physical_condition: 1.0,
+            cumulative_score: 0.0,
+            is_dnf: false,
+            current_position: 1,
+            incidents: Vec::new(),
+            dnf_reason: None,
+            dnf_segment: None,
+            pending_damage: Vec::new(),
+        };
+        let mut rough_state = smooth_state.clone();
+        rough_state.driver_id = rough.id.clone();
+
+        apply_tire_degradation(&mut smooth_state, &smooth, &ctx);
+        apply_tire_degradation(&mut rough_state, &rough, &ctx);
+
+        assert!(
+            smooth_state.tire_wear > rough_state.tire_wear,
+            "smooth tire_wear={} should be greater than rough tire_wear={}",
+            smooth_state.tire_wear,
+            rough_state.tire_wear
+        );
     }
 
     #[test]
@@ -629,7 +1016,14 @@ mod tests {
             let mut rng = StdRng::seed_from_u64(seed);
             let ctx = sample_context_with_incidents(50, WeatherCondition::HeavyRain);
             let qualifying = simulate_qualifying(&grid, &ctx, &mut rng);
-            let result = simulate_race(&grid, &qualifying, &ctx, &mut rng);
+            let result = simulate_race(
+                &grid,
+                &qualifying,
+                &ctx,
+                &IncidentCatalog::empty(),
+                false,
+                &mut rng,
+            );
 
             if result.race_results.iter().any(|driver| driver.is_dnf) {
                 found_dnf = true;
@@ -655,13 +1049,141 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(999);
         let ctx = sample_context_with_incidents(45, WeatherCondition::Wet);
         let qualifying = simulate_qualifying(&grid, &ctx, &mut rng);
-        let result = simulate_race(&grid, &qualifying, &ctx, &mut rng);
+        let result = simulate_race(
+            &grid,
+            &qualifying,
+            &ctx,
+            &IncidentCatalog::empty(),
+            false,
+            &mut rng,
+        );
 
-        let sum: i32 = result
-            .race_results
-            .iter()
-            .map(|driver| driver.incidents_count)
-            .sum();
+        let sum: i32 = result.race_results.iter().map(|d| d.incidents_count).sum();
         assert_eq!(result.total_incidents, sum);
+    }
+
+    #[test]
+    fn test_dnf_ordering_later_segment_ahead_of_earlier() {
+        let driver_a = build_driver("A", 70.0, 70.0, 70.0, 70.0, 8.0);
+        let driver_b = build_driver("B", 70.0, 70.0, 70.0, 70.0, 8.0);
+
+        // Simular manualmente: A abandona no Late, B abandona no Early
+        let state_a = RaceState {
+            driver_id: "A".to_string(),
+            tire_wear: 0.6,
+            physical_condition: 0.8,
+            cumulative_score: 200.0,
+            is_dnf: true,
+            current_position: 1,
+            incidents: Vec::new(),
+            dnf_reason: Some("Engine".to_string()),
+            dnf_segment: Some(RaceSegment::Late),
+            pending_damage: Vec::new(),
+        };
+        let state_b = RaceState {
+            driver_id: "B".to_string(),
+            tire_wear: 0.9,
+            physical_condition: 0.95,
+            cumulative_score: 50.0,
+            is_dnf: true,
+            current_position: 2,
+            incidents: Vec::new(),
+            dnf_reason: Some("Crash".to_string()),
+            dnf_segment: Some(RaceSegment::Early),
+            pending_damage: Vec::new(),
+        };
+
+        // A (Late DNF) deve ter laps_completed > B (Early DNF)
+        let laps_a = estimate_laps_at_dnf(state_a.dnf_segment, 20);
+        let laps_b = estimate_laps_at_dnf(state_b.dnf_segment, 20);
+        assert!(
+            laps_a > laps_b,
+            "Late DNF laps={laps_a} should > Early DNF laps={laps_b}"
+        );
+
+        // Na ordenação de DNFs, A (Late) deve vir antes de B (Early)
+        let mut dnfs = vec![&state_a, &state_b];
+        dnfs.sort_by(|a, b| {
+            let seg_ord_b = b.dnf_segment.map(|s| s.ordinal()).unwrap_or(0);
+            let seg_ord_a = a.dnf_segment.map(|s| s.ordinal()).unwrap_or(0);
+            seg_ord_b.cmp(&seg_ord_a).then_with(|| {
+                b.cumulative_score
+                    .partial_cmp(&a.cumulative_score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+        });
+        assert_eq!(
+            dnfs[0].driver_id, "A",
+            "Late DNF driver should rank ahead of Early DNF"
+        );
+
+        let _ = (driver_a, driver_b); // suppress unused warnings
+    }
+
+    #[test]
+    fn test_dnf_gap_never_negative() {
+        let mut risky = build_driver("RISK", 50.0, 30.0, 50.0, 50.0, 5.0);
+        risky.consistencia = 15;
+        risky.aggression = 95;
+        risky.car_reliability = 15.0;
+
+        let grid: Vec<SimDriver> = std::iter::once(risky)
+            .chain((0..11).map(|i| build_driver(&format!("R{i}"), 70.0, 70.0, 70.0, 70.0, 8.0)))
+            .collect();
+
+        for seed in 0..50 {
+            let mut rng = StdRng::seed_from_u64(seed);
+            let ctx = sample_context_with_incidents(40, WeatherCondition::Wet);
+            let qualifying = simulate_qualifying(&grid, &ctx, &mut rng);
+            let result = simulate_race(
+                &grid,
+                &qualifying,
+                &ctx,
+                &IncidentCatalog::empty(),
+                false,
+                &mut rng,
+            );
+
+            for r in &result.race_results {
+                assert!(
+                    r.gap_to_winner_ms >= 0.0,
+                    "gap_to_winner_ms={} must be >= 0 for driver {}",
+                    r.gap_to_winner_ms,
+                    r.pilot_id
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_dnf_laps_completed_coherence() {
+        let laps_start = estimate_laps_at_dnf(Some(RaceSegment::Start), 30);
+        let laps_early = estimate_laps_at_dnf(Some(RaceSegment::Early), 30);
+        let laps_mid = estimate_laps_at_dnf(Some(RaceSegment::Mid), 30);
+        let laps_late = estimate_laps_at_dnf(Some(RaceSegment::Late), 30);
+        let laps_finish = estimate_laps_at_dnf(Some(RaceSegment::Finish), 30);
+
+        assert!(laps_start < laps_early);
+        assert!(laps_early < laps_mid);
+        assert!(laps_mid < laps_late);
+        assert!(laps_late < laps_finish);
+        assert!(laps_finish < 30);
+    }
+
+    #[test]
+    fn test_endurance_more_tire_degradation_than_sprint() {
+        use crate::simulation::profile::resolve_simulation_profile;
+
+        let endurance_profile =
+            resolve_simulation_profile("endurance", 288, 25.0, WeatherCondition::Dry, 0, 10);
+        let gt4_profile =
+            resolve_simulation_profile("gt4", 47, 25.0, WeatherCondition::Dry, 30, 12);
+
+        assert!(
+            endurance_profile.tire_degradation_rate > gt4_profile.tire_degradation_rate,
+            "endurance tire_degr={} should > gt4={}",
+            endurance_profile.tire_degradation_rate,
+            gt4_profile.tire_degradation_rate
+        );
     }
 }

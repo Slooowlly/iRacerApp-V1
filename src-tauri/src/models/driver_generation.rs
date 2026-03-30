@@ -47,10 +47,8 @@ where
     R: Rng,
 {
     let normalized_tier = category_tier.min(4);
-    let skill_range =
-        skill_ranges::get_skill_range_by_tier(normalized_tier).unwrap_or_else(|| {
-            skill_ranges::get_skill_range_by_tier(4).expect("skill range tier 4")
-        });
+    let skill_range = skill_ranges::get_skill_range_by_tier(normalized_tier)
+        .unwrap_or_else(|| skill_ranges::get_skill_range_by_tier(4).expect("skill range tier 4"));
 
     let difficulty_id = normalize_difficulty_id(difficulty);
     let difficulty_config = scoring::get_difficulty_config(difficulty_id)
@@ -221,5 +219,3 @@ fn development_for_profile(rng: &mut impl Rng, age: u32, skill: u8, rookie_prodi
         roll_stat(rng, 40, 60)
     }
 }
-
-

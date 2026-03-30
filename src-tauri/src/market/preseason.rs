@@ -89,6 +89,9 @@ pub struct PlannedEvent {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum PendingAction {
+    PhaseMarker {
+        phase: PreSeasonPhase,
+    },
     ExpireContract {
         contract_id: String,
         driver_id: String,
@@ -200,11 +203,34 @@ pub fn initialize_preseason(
         &temp_conn,
         &market_report.new_signings,
     )?);
-    planned_events.extend(build_transfer_events(
+    if !planned_events.iter().any(|event| {
+        event.week == 2 && phase_for_action(&event.event) == PreSeasonPhase::ContractExpiry
+    }) {
+        planned_events.push(PlannedEvent {
+            week: 2,
+            event: PendingAction::PhaseMarker {
+                phase: PreSeasonPhase::ContractExpiry,
+            },
+            executed: false,
+        });
+    }
+
+    let transfer_events = build_transfer_events(
         &temp_conn,
         &market_report.new_signings,
         &original_contracts_by_driver,
-    )?);
+    )?;
+    if transfer_events.is_empty() {
+        planned_events.push(PlannedEvent {
+            week: 3,
+            event: PendingAction::PhaseMarker {
+                phase: PreSeasonPhase::Transfers,
+            },
+            executed: false,
+        });
+    } else {
+        planned_events.extend(transfer_events);
+    }
 
     let mut current_week = planned_events
         .iter()
@@ -212,7 +238,16 @@ pub fn initialize_preseason(
         .max()
         .unwrap_or(2)
         + 1;
-    if !market_report.player_proposals.is_empty() {
+    if market_report.player_proposals.is_empty() {
+        planned_events.push(PlannedEvent {
+            week: current_week,
+            event: PendingAction::PhaseMarker {
+                phase: PreSeasonPhase::PlayerProposals,
+            },
+            executed: false,
+        });
+        current_week += 1;
+    } else {
         for proposal in market_report.player_proposals.iter().cloned() {
             planned_events.push(PlannedEvent {
                 week: current_week,
@@ -223,19 +258,41 @@ pub fn initialize_preseason(
         current_week += 1;
     }
 
-    planned_events.extend(build_rookie_events(
+    let rookie_events = build_rookie_events(
         &temp_conn,
         &market_report.new_signings,
         &temp_drivers_by_id,
         current_week,
-    )?);
+    )?;
+    if rookie_events.is_empty() {
+        planned_events.push(PlannedEvent {
+            week: current_week,
+            event: PendingAction::PhaseMarker {
+                phase: PreSeasonPhase::RookiePlacement,
+            },
+            executed: false,
+        });
+    } else {
+        planned_events.extend(rookie_events);
+    }
     current_week += 1;
-    planned_events.extend(build_hierarchy_events(
+    let hierarchy_events = build_hierarchy_events(
         &temp_teams,
         &original_teams_by_id,
         &temp_drivers_by_id,
         current_week,
-    ));
+    );
+    if hierarchy_events.is_empty() {
+        planned_events.push(PlannedEvent {
+            week: current_week,
+            event: PendingAction::PhaseMarker {
+                phase: PreSeasonPhase::Finalization,
+            },
+            executed: false,
+        });
+    } else {
+        planned_events.extend(hierarchy_events);
+    }
 
     let total_weeks = current_week.max(3);
     cleanup_temp_db(&temp_db_path);
@@ -394,6 +451,7 @@ fn phase_for_week(week: i32, planned_events: &[PlannedEvent]) -> PreSeasonPhase 
 
 fn phase_for_action(action: &PendingAction) -> PreSeasonPhase {
     match action {
+        PendingAction::PhaseMarker { phase } => phase.clone(),
         PendingAction::ExpireContract { .. } | PendingAction::RenewContract { .. } => {
             PreSeasonPhase::ContractExpiry
         }
@@ -606,9 +664,7 @@ fn build_hierarchy_events(
                 prev_status: prev
                     .map(|t| t.hierarquia_status.clone())
                     .unwrap_or_else(|| "estavel".to_string()),
-                prev_categoria: prev
-                    .map(|t| t.categoria.clone())
-                    .unwrap_or_default(),
+                prev_categoria: prev.map(|t| t.categoria.clone()).unwrap_or_default(),
             },
             executed: false,
         });
@@ -726,6 +782,7 @@ fn execute_action(
     player_proposals: &mut Vec<MarketProposal>,
 ) -> Result<(), String> {
     match action {
+        PendingAction::PhaseMarker { .. } => {}
         PendingAction::ExpireContract {
             contract_id,
             driver_id,
@@ -851,7 +908,10 @@ fn execute_action(
             player_proposals.push(proposal.clone());
             events.push(MarketEvent {
                 event_type: MarketEventType::PlayerProposalReceived,
-                headline: format!("Voce recebeu uma proposta de {}", proposal.equipe_nome),
+                headline: format!(
+                    "{} recebe proposta de {}",
+                    proposal.piloto_nome, proposal.equipe_nome
+                ),
                 description: format!(
                     "{} oferece {} por {} ano(s).",
                     proposal.equipe_nome,
@@ -1139,6 +1199,18 @@ fn sync_team_slots_from_active_contracts(conn: &Connection) -> Result<(), String
             )
         })?;
     }
+
+    // Limpa categoria_atual de pilotos que não têm contrato ativo.
+    // Necessário porque expire_ending_contracts expira contratos via SQL bulk sem
+    // resetar esse campo, causando pilotos "órfãos" que aparecem em get_drivers_by_category
+    // mas não têm equipe — o que derruba a simulação de corrida na temporada seguinte.
+    conn.execute(
+        "UPDATE drivers SET categoria_atual = NULL
+         WHERE categoria_atual IS NOT NULL
+         AND id NOT IN (SELECT piloto_id FROM contracts WHERE status = 'Ativo')",
+        [],
+    )
+    .map_err(|e| format!("Falha ao limpar categoria_atual de pilotos sem contrato: {e}"))?;
 
     Ok(())
 }
@@ -1598,8 +1670,13 @@ mod tests {
         // Licenças — necessárias para que o filtro de mercado não bloqueie os pilotos.
         // gt4 exige nível 2, gt3 exige nível 3.
         for (piloto_id, nivel) in [
-            ("P001", 2), ("P002", 2), ("P003", 2), ("P004", 2),
-            ("P005", 0), ("P006", 3), ("P007", 2),
+            ("P001", 2),
+            ("P002", 2),
+            ("P003", 2),
+            ("P004", 2),
+            ("P005", 0),
+            ("P006", 3),
+            ("P007", 2),
         ] {
             conn.execute(
                 "INSERT INTO licenses (piloto_id, nivel, categoria_origem, data_obtencao, temporadas_na_categoria)
@@ -1719,7 +1796,9 @@ mod tests {
         execute_action(&conn, "S002", 2, &action, &mut events, &mut proposals)
             .expect("ação deve executar com lineup válido");
 
-        let team = team_queries::get_team_by_id(&conn, "T001").unwrap().unwrap();
+        let team = team_queries::get_team_by_id(&conn, "T001")
+            .unwrap()
+            .unwrap();
         assert_eq!(team.hierarquia_n1_id.as_deref(), Some("P001"));
         assert_eq!(team.hierarquia_n2_id.as_deref(), Some("P002"));
         assert_eq!(team.piloto_1_id.as_deref(), Some("P001"));
@@ -1735,8 +1814,8 @@ mod tests {
         let mut events = Vec::new();
         let mut proposals = Vec::new();
 
-        let err = execute_action(&conn, "S002", 2, &action, &mut events, &mut proposals)
-            .unwrap_err();
+        let err =
+            execute_action(&conn, "S002", 2, &action, &mut events, &mut proposals).unwrap_err();
         assert!(err.contains("N1 ausente"), "erro inesperado: {err}");
     }
 
@@ -1747,8 +1826,8 @@ mod tests {
         let mut events = Vec::new();
         let mut proposals = Vec::new();
 
-        let err = execute_action(&conn, "S002", 2, &action, &mut events, &mut proposals)
-            .unwrap_err();
+        let err =
+            execute_action(&conn, "S002", 2, &action, &mut events, &mut proposals).unwrap_err();
         assert!(err.contains("mesmo piloto"), "erro inesperado: {err}");
     }
 
@@ -1787,7 +1866,9 @@ mod tests {
         execute_action(&conn, "S002", 2, &action, &mut events, &mut proposals)
             .expect("ação deve executar");
 
-        let team = team_queries::get_team_by_id(&conn, "T001").unwrap().unwrap();
+        let team = team_queries::get_team_by_id(&conn, "T001")
+            .unwrap()
+            .unwrap();
         // Tensao e status preservados
         assert!(
             (team.hierarquia_tensao - 45.0).abs() < f64::EPSILON,
@@ -1833,7 +1914,9 @@ mod tests {
         execute_action(&conn, "S002", 2, &action, &mut events, &mut proposals)
             .expect("ação deve executar");
 
-        let team = team_queries::get_team_by_id(&conn, "T001").unwrap().unwrap();
+        let team = team_queries::get_team_by_id(&conn, "T001")
+            .unwrap()
+            .unwrap();
         // FullReset: tensao e status resetados para defaults seguros
         assert!(
             (team.hierarquia_tensao - 0.0).abs() < f64::EPSILON,

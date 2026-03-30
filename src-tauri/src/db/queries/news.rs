@@ -3,8 +3,8 @@ mod tests {
     use rusqlite::Connection;
 
     use super::{
-        get_news_by_preseason_week, get_news_by_season, get_news_by_type, get_recent_news,
-        insert_news, insert_news_batch, trim_news,
+        get_news_by_driver, get_news_by_preseason_week, get_news_by_season, get_news_by_type,
+        get_recent_news, insert_news, insert_news_batch, trim_news,
     };
     use crate::db::migrations;
     use crate::db::queries::seasons::insert_season;
@@ -121,6 +121,20 @@ mod tests {
         assert_eq!(items[1].id, "N001");
     }
 
+    #[test]
+    fn test_get_news_by_driver_matches_secondary_driver() {
+        let conn = setup_news_db();
+        let mut item = sample_news("N003", 1, Some(1), None, NewsType::Rivalidade, 30);
+        item.driver_id = Some("P001".to_string());
+        item.driver_id_secondary = Some("P002".to_string());
+        insert_news(&conn, &item).expect("insert rivalry");
+
+        let items = get_news_by_driver(&conn, "P002", 10).expect("driver news");
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].id, "N003");
+    }
+
     fn setup_news_db() -> Connection {
         let conn = Connection::open_in_memory().expect("in-memory db");
         migrations::run_all(&conn).expect("schema");
@@ -151,6 +165,7 @@ mod tests {
             importancia: NewsImportance::Media,
             timestamp,
             driver_id: Some("P001".to_string()),
+            driver_id_secondary: None,
             team_id: Some("T001".to_string()),
         }
     }
@@ -171,6 +186,7 @@ struct StoredNewsPayload {
     importancia: String,
     timestamp: i64,
     driver_id: Option<String>,
+    driver_id_secondary: Option<String>,
     team_id: Option<String>,
 }
 
@@ -185,6 +201,7 @@ pub fn insert_news(conn: &Connection, news: &NewsItem) -> Result<(), DbError> {
         importancia: news.importancia.as_str().to_string(),
         timestamp: news.timestamp,
         driver_id: news.driver_id.clone(),
+        driver_id_secondary: news.driver_id_secondary.clone(),
         team_id: news.team_id.clone(),
     };
     let serialized = serde_json::to_string(&payload)
@@ -284,7 +301,10 @@ pub fn get_news_by_driver(
     let items = get_recent_news(conn, 400)?;
     Ok(items
         .into_iter()
-        .filter(|item| item.driver_id.as_deref() == Some(driver_id))
+        .filter(|item| {
+            item.driver_id.as_deref() == Some(driver_id)
+                || item.driver_id_secondary.as_deref() == Some(driver_id)
+        })
         .take(limit.max(1) as usize)
         .collect())
 }
@@ -398,6 +418,9 @@ fn news_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<NewsItem> {
         driver_id: payload
             .as_ref()
             .and_then(|payload| payload.driver_id.clone()),
+        driver_id_secondary: payload
+            .as_ref()
+            .and_then(|payload| payload.driver_id_secondary.clone()),
         team_id: payload.as_ref().and_then(|payload| payload.team_id.clone()),
     })
 }
@@ -415,12 +438,13 @@ fn dedup_key(news: &NewsItem) -> String {
         })
         .collect::<String>();
     format!(
-        "{}_s{}_r{}_w{}_d{}_t{}_{}",
+        "{}_s{}_r{}_w{}_d{}_ds{}_t{}_{}",
         news.tipo.as_str().to_ascii_lowercase(),
         news.temporada,
         news.rodada.unwrap_or(0),
         news.semana_pretemporada.unwrap_or(0),
         news.driver_id.as_deref().unwrap_or("none"),
+        news.driver_id_secondary.as_deref().unwrap_or("none"),
         news.team_id.as_deref().unwrap_or("none"),
         title
     )

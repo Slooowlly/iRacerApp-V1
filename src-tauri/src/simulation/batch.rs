@@ -28,4 +28,3 @@ pub struct SimHighlight {
     pub headline: String,
     pub category: String,
 }
-

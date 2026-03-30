@@ -11,9 +11,7 @@ use crate::db::queries::teams as team_queries;
 use crate::generators::ids::{next_id, IdType};
 use crate::market::driver_ai::evaluate_proposal;
 use crate::market::evaluation::{estimate_expected_position, evaluate_driver_performance};
-use crate::market::proposals::{
-    MarketProposal, MarketReport, SigningInfo, Vacancy,
-};
+use crate::market::proposals::{MarketProposal, MarketReport, SigningInfo, Vacancy};
 use crate::market::renewal::should_renew_contract;
 use crate::market::team_ai::{generate_team_proposals, AvailableDriver};
 use crate::market::visibility::calculate_visibility;
@@ -316,7 +314,7 @@ pub fn fill_all_remaining_vacancies(
         // Se após tentar preencher ainda persistirem as mesmas vagas (ex: erro na geração), quebra para evitar loop infinito
         let final_vacancies = find_vacancies(conn)?;
         if final_vacancies.len() >= regular_vacancies.len() {
-             break;
+            break;
         }
     }
 
@@ -527,6 +525,16 @@ fn sync_team_slots(
             )
         })?;
     }
+
+    // Limpa categoria_atual de pilotos sem contrato ativo para evitar órfãos
+    // que aparecem em get_drivers_by_category mas não têm equipe.
+    conn.execute(
+        "UPDATE drivers SET categoria_atual = NULL
+         WHERE categoria_atual IS NOT NULL
+         AND id NOT IN (SELECT piloto_id FROM contracts WHERE status = 'Ativo')",
+        [],
+    )
+    .map_err(|e| format!("Falha ao limpar categoria_atual de pilotos sem contrato: {e}"))?;
 
     Ok(())
 }
@@ -753,7 +761,7 @@ fn generate_player_proposals(
         driver: player_as_driver,
         visibility,
         posicao_campeonato: context.posicao_campeonato,
-        categoria_atual: context.categoria,
+        categoria_atual: context.categoria.clone(),
         category_tier: context.category_tier,
         max_license_level,
     };
@@ -778,7 +786,103 @@ fn generate_player_proposals(
         }
     }
 
+    // Garantia de proposta mínima:
+    // - S1 → S2: o jogador teve contrato expirando mas não recebeu nenhuma proposta.
+    // - 1+ temporada sem contrato: já estava livre antes desta pré-temporada.
+    // Nesses casos garante ao menos uma proposta da equipe anterior (se vaga) ou
+    // da pior equipe da categoria, sem filtro de visibilidade.
+    let is_first_season_transition = new_season_number == 2 && player_was_expiring;
+    let already_free_season = player_is_free && !player_was_expiring;
+    if proposals.is_empty() && (is_first_season_transition || already_free_season) {
+        // Categoria do jogador: contexto dos standings ou último contrato no DB.
+        let player_category = if !context.categoria.is_empty() {
+            context.categoria.clone()
+        } else {
+            find_last_player_category(conn, &player.id)?
+        };
+
+        if !player_category.is_empty() {
+            let category_vacancies: Vec<&Vacancy> = vacancies
+                .iter()
+                .filter(|v| v.categoria == player_category)
+                .collect();
+
+            // Para S1→S2 tenta primeiro a vaga da equipe anterior do jogador.
+            let fallback = if is_first_season_transition {
+                find_previous_team_vacancy(conn, &player.id, &category_vacancies)?
+                    .or_else(|| worst_vacancy(&category_vacancies))
+            } else {
+                worst_vacancy(&category_vacancies)
+            };
+
+            if let Some(vacancy) = fallback {
+                let proposal = MarketProposal {
+                    id: format!(
+                        "MP-{}-{}-{}-fallback",
+                        new_season_number, vacancy.team_id, player.id
+                    ),
+                    equipe_id: vacancy.team_id.clone(),
+                    equipe_nome: vacancy.team_name.clone(),
+                    piloto_id: player.id.clone(),
+                    piloto_nome: player.nome.clone(),
+                    categoria: vacancy.categoria.clone(),
+                    papel: vacancy.papel_necessario.clone(),
+                    salario_oferecido: calculate_emergency_salary(vacancy, &player),
+                    duracao_anos: 1,
+                    status: crate::market::proposals::ProposalStatus::Pendente,
+                    motivo_recusa: None,
+                };
+                persist_player_proposal(conn, season_id, &proposal)?;
+                proposals.push(proposal);
+            }
+        }
+    }
+
     Ok(proposals)
+}
+
+/// Retorna a categoria do contrato mais recente do jogador (qualquer status).
+fn find_last_player_category(conn: &Connection, player_id: &str) -> Result<String, String> {
+    conn.query_row(
+        "SELECT categoria FROM contracts WHERE piloto_id = ?1 ORDER BY temporada_fim DESC LIMIT 1",
+        params![player_id],
+        |row| row.get::<_, String>(0),
+    )
+    .optional()
+    .map(|opt| opt.unwrap_or_default())
+    .map_err(|e| format!("Falha ao buscar última categoria do jogador: {e}"))
+}
+
+/// Encontra a vaga da equipe anterior do jogador (contrato mais recente expirado).
+fn find_previous_team_vacancy<'a>(
+    conn: &Connection,
+    player_id: &str,
+    category_vacancies: &[&'a Vacancy],
+) -> Result<Option<&'a Vacancy>, String> {
+    let prev_team_id: Option<String> = conn
+        .query_row(
+            "SELECT equipe_id FROM contracts WHERE piloto_id = ?1 ORDER BY temporada_fim DESC LIMIT 1",
+            params![player_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|e| format!("Falha ao buscar equipe anterior do jogador: {e}"))?;
+
+    let Some(team_id) = prev_team_id else {
+        return Ok(None);
+    };
+    Ok(category_vacancies
+        .iter()
+        .find(|v| v.team_id == team_id)
+        .copied())
+}
+
+/// Retorna a vaga da pior equipe (menor car_performance) da lista.
+fn worst_vacancy<'a>(category_vacancies: &[&'a Vacancy]) -> Option<&'a Vacancy> {
+    category_vacancies
+        .iter()
+        .min_by(|a, b| a.car_performance.total_cmp(&b.car_performance))
+        .copied()
 }
 
 fn persist_player_proposal(
@@ -1058,12 +1162,7 @@ mod tests {
             .collect();
         let expiring_by_driver: HashMap<String, Contract> = HashMap::new();
 
-        let result = load_market_contexts(
-            &conn,
-            Some("S001"),
-            &drivers_by_id,
-            &expiring_by_driver,
-        );
+        let result = load_market_contexts(&conn, Some("S001"), &drivers_by_id, &expiring_by_driver);
 
         let err = result.expect_err("corrupted standings should fail");
         assert!(err.contains("Falha ao ler categoria do standings"));

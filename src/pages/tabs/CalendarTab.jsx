@@ -56,7 +56,7 @@ function CalendarTab() {
   }, [careerId, playerTeam?.categoria, season?.rodada_atual]);
 
   return (
-    <GlassCard hover={false} className="rounded-[30px]">
+    <GlassCard hover={false} className="rounded-[28px]">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <p className="text-[11px] uppercase tracking-[0.22em] text-accent-primary">Calendario</p>

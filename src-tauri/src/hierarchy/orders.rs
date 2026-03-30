@@ -11,7 +11,7 @@ use crate::db::connection::DbError;
 use crate::db::queries::drivers as driver_queries;
 use crate::db::queries::teams as team_queries;
 use crate::models::driver::Driver;
-use crate::models::team::{TeamHierarchyClimate, Team};
+use crate::models::team::{Team, TeamHierarchyClimate};
 use crate::simulation::race::RaceDriverResult;
 
 // ── Tipos do confronto (Passo 4) ──────────────────────────────────────────────
@@ -51,10 +51,7 @@ pub fn is_duel_valid(n1_result: Option<i32>, n2_result: Option<i32>) -> bool {
 ///
 /// `race_results`: mapa de `driver_id → posição de chegada`.
 /// Retorna `None` se a equipe não tem N1 e N2 definidos.
-pub fn read_team_duel(
-    team: &Team,
-    race_results: &HashMap<String, i32>,
-) -> Option<DuelResult> {
+pub fn read_team_duel(team: &Team, race_results: &HashMap<String, i32>) -> Option<DuelResult> {
     let n1_id = team.hierarquia_n1_id.as_deref()?;
     let n2_id = team.hierarquia_n2_id.as_deref()?;
 
@@ -182,11 +179,16 @@ pub fn update_status(team: &mut Team) {
 /// - N2 venceu ≥ 60% dos duelos totais
 /// - Status atual é reavaliação, inversão ou crise
 pub fn is_em_reavaliacao(team: &Team) -> bool {
-    let win_rate = n2_win_rate(team.hierarquia_duelos_total, team.hierarquia_duelos_n2_vencidos);
+    let win_rate = n2_win_rate(
+        team.hierarquia_duelos_total,
+        team.hierarquia_duelos_n2_vencidos,
+    );
     let status = TeamHierarchyClimate::from_str(&team.hierarquia_status);
     let status_critico = matches!(
         status,
-        TeamHierarchyClimate::Reavaliacao | TeamHierarchyClimate::Inversao | TeamHierarchyClimate::Crise
+        TeamHierarchyClimate::Reavaliacao
+            | TeamHierarchyClimate::Inversao
+            | TeamHierarchyClimate::Crise
     );
 
     team.hierarquia_duelos_total >= 5
@@ -208,7 +210,10 @@ pub fn is_em_reavaliacao(team: &Team) -> bool {
 /// - N2 venceu ≥ 65% dos duelos totais
 /// - Status atual é crise
 pub fn has_inversao_trigger(team: &Team, rodada_atual: i32, total_rounds: i32) -> bool {
-    let win_rate = n2_win_rate(team.hierarquia_duelos_total, team.hierarquia_duelos_n2_vencidos);
+    let win_rate = n2_win_rate(
+        team.hierarquia_duelos_total,
+        team.hierarquia_duelos_n2_vencidos,
+    );
     let status = TeamHierarchyClimate::from_str(&team.hierarquia_status);
     let past_halfway = rodada_atual * 2 > total_rounds;
 
@@ -316,19 +321,13 @@ pub fn process_hierarchy_for_category(
                         &promoted.id,
                         promoted.motivacao,
                     )?;
-                    driver_queries::update_driver_motivation(
-                        conn,
-                        &demoted.id,
-                        demoted.motivacao,
-                    )?;
+                    driver_queries::update_driver_motivation(conn, &demoted.id, demoted.motivacao)?;
                 }
             }
         }
 
         // Passo 6 — rivalidade por hierarquia
-        if let (Some(n1_id), Some(n2_id)) =
-            (&team.hierarquia_n1_id, &team.hierarquia_n2_id)
-        {
+        if let (Some(n1_id), Some(n2_id)) = (&team.hierarquia_n1_id, &team.hierarquia_n2_id) {
             crate::rivalry::process_hierarchy_rivalry(
                 conn,
                 n1_id,
@@ -337,6 +336,7 @@ pub fn process_hierarchy_for_category(
                 &status_pos_tensao,
                 inversao_ocorreu,
                 category_id,
+                &team.id,
                 rodada_atual,
                 temporada,
             )?;
@@ -361,7 +361,8 @@ mod tests {
     fn sample_team(n1: &str, n2: &str) -> Team {
         let template = get_team_templates("gt3")[0];
         let mut rng = StdRng::seed_from_u64(99);
-        let mut team = Team::from_template_with_rng(template, "gt3", "T001".to_string(), 2026, &mut rng);
+        let mut team =
+            Team::from_template_with_rng(template, "gt3", "T001".to_string(), 2026, &mut rng);
         team.hierarquia_n1_id = Some(n1.to_string());
         team.hierarquia_n2_id = Some(n2.to_string());
         team
@@ -432,7 +433,8 @@ mod tests {
     fn test_read_team_duel_no_hierarchy_returns_none() {
         let template = get_team_templates("gt3")[0];
         let mut rng = StdRng::seed_from_u64(99);
-        let team = Team::from_template_with_rng(template, "gt3", "T001".to_string(), 2026, &mut rng);
+        let team =
+            Team::from_template_with_rng(template, "gt3", "T001".to_string(), 2026, &mut rng);
         // n1_id e n2_id são None por padrão
         let results = HashMap::new();
         assert!(read_team_duel(&team, &results).is_none());

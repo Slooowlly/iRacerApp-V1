@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use chrono::Local;
 use rusqlite::OptionalExtension;
@@ -9,8 +9,10 @@ use tauri::{AppHandle, Manager};
 use crate::calendar::{generate_all_calendars_with_year, CalendarEntry};
 use crate::commands::career_detail::build_driver_detail_payload;
 use crate::commands::career_types::{
-    CareerData, CreateCareerResult, DriverDetail, DriverSummary, RaceSummary, SaveInfo,
-    SeasonSummary, TeamStanding, TeamSummary, VerifyDatabaseResponse,
+    BriefingPhraseEntry, BriefingPhraseEntryInput, BriefingPhraseHistory, BriefingStorySummary,
+    CareerData, CreateCareerResult, DriverDetail, DriverSummary, NextRaceBriefingSummary,
+    PrimaryRivalSummary, RaceSummary, SaveInfo, SeasonSummary, TeamStanding, TeamSummary,
+    TrackHistorySummary, VerifyDatabaseResponse,
 };
 use crate::commands::race_history::{
     build_driver_histories, empty_previous_champions, ConstructorChampion, DriverRaceHistory,
@@ -23,14 +25,15 @@ use crate::db::queries::calendar as calendar_queries;
 use crate::db::queries::contracts as contract_queries;
 use crate::db::queries::drivers as driver_queries;
 use crate::db::queries::market_proposals as market_proposal_queries;
+use crate::db::queries::meta as meta_queries;
 use crate::db::queries::news as news_queries;
 use crate::db::queries::seasons as season_queries;
 use crate::db::queries::standings as standings_queries;
+use crate::db::queries::standings::ChampionshipContext;
 use crate::db::queries::teams as team_queries;
 use crate::event_interest::{
     calculate_expected_event_interest, to_summary, EventInterestContext, EventInterestSummary,
 };
-use crate::db::queries::standings::ChampionshipContext;
 use crate::evolution::pipeline::{run_end_of_season, EndOfSeasonResult};
 use crate::generators::ids::{next_id, next_ids, IdType};
 use crate::generators::nationality::{format_nationality, get_nationality};
@@ -41,17 +44,16 @@ use crate::market::preseason::{
     PlannedEvent, PreSeasonPlan, PreSeasonState, WeekResult,
 };
 use crate::market::proposals::{MarketProposal, ProposalStatus};
-use crate::db::queries::meta as meta_queries;
 use crate::models::driver::Driver;
 use crate::models::enums::{ContractStatus, SeasonPhase, TeamRole};
 use crate::models::season::Season;
-use crate::models::team::{TeamHierarchyClimate, Team};
+use crate::models::team::{Team, TeamHierarchyClimate};
 use crate::news::generator::{
     generate_news_from_end_of_season, generate_news_from_market_events,
     generate_player_rejection_news, generate_player_signing_news,
 };
-use crate::public_presence::team::{derive_team_public_presence, TeamPublicPresenceTier};
 use crate::news::{NewsImportance, NewsItem, NewsType};
+use crate::public_presence::team::{derive_team_public_presence, TeamPublicPresenceTier};
 
 pub use crate::commands::career_types::CreateCareerInput;
 
@@ -127,7 +129,8 @@ pub(crate) fn create_career_in_base_dir(
         let season_id = next_id(&db.conn, IdType::Season)
             .map_err(|e| format!("Falha ao gerar ID da temporada: {e}"))?;
         let season = Season::new(season_id.clone(), 1, 2024);
-        let calendars = generate_all_calendars_with_year(&season_id, season.ano, &mut rand::thread_rng())?;
+        let calendars =
+            generate_all_calendars_with_year(&season_id, season.ano, &mut rand::thread_rng())?;
         let total_races = count_total_races(&calendars);
         let all_calendar_entries: Vec<CalendarEntry> = calendars
             .values()
@@ -239,11 +242,13 @@ pub(crate) fn load_career_in_base_dir(
     // Usa race.categoria como fonte semântica do campeonato do evento.
     let event_interest_summary: Option<EventInterestSummary> = next_race.as_ref().map(|race| {
         let champ = standings_queries::get_championship_context(&db.conn, &race.categoria)
-            .unwrap_or(ChampionshipContext { player_position: 0, gap_to_leader: 0 });
+            .unwrap_or(ChampionshipContext {
+                player_position: 0,
+                gap_to_leader: 0,
+            });
         let remaining = total_rodadas - race.rodada;
-        let is_title_decider = remaining <= 2
-            && champ.gap_to_leader <= 50
-            && champ.player_position > 0;
+        let is_title_decider =
+            remaining <= 2 && champ.gap_to_leader <= 50 && champ.player_position > 0;
         let ctx = EventInterestContext {
             categoria: race.categoria.clone(),
             season_phase: race.season_phase,
@@ -281,6 +286,24 @@ pub(crate) fn load_career_in_base_dir(
 
     let team_summary = build_team_summary(&db.conn, &player_team)
         .map_err(|e| format!("Falha ao montar resumo da equipe: {e}"))?;
+    let next_race_summary = next_race.as_ref().map(|race| RaceSummary {
+        id: race.id.clone(),
+        rodada: race.rodada,
+        track_name: race.track_name.clone(),
+        clima: race.clima.as_str().to_string(),
+        duracao_corrida_min: race.duracao_corrida_min,
+        status: race.status.as_str().to_string(),
+        temperatura: race.temperatura,
+        horario: race.horario.clone(),
+        week_of_year: race.week_of_year,
+        season_phase: race.season_phase.as_str().to_string(),
+        display_date: race.display_date.clone(),
+        event_interest: event_interest_summary.clone(),
+    });
+    let next_race_briefing_summary = next_race.as_ref().map(|race| {
+        build_next_race_briefing_summary(&db.conn, &player.id, active_season.numero, race)
+            .unwrap_or_else(|_error| empty_next_race_briefing_summary())
+    });
 
     Ok(CareerData {
         career_id: career_id.to_string(),
@@ -312,20 +335,8 @@ pub(crate) fn load_career_in_base_dir(
             total_rodadas,
             status: active_season.status.as_str().to_string(),
         },
-        next_race: next_race.map(|race| RaceSummary {
-            id: race.id,
-            rodada: race.rodada,
-            track_name: race.track_name,
-            clima: race.clima.as_str().to_string(),
-            duracao_corrida_min: race.duracao_corrida_min,
-            status: race.status.as_str().to_string(),
-            temperatura: race.temperatura,
-            horario: race.horario.clone(),
-            week_of_year: race.week_of_year,
-            season_phase: race.season_phase.as_str().to_string(),
-            display_date: race.display_date.clone(),
-            event_interest: event_interest_summary,
-        }),
+        next_race: next_race_summary,
+        next_race_briefing: next_race_briefing_summary,
         total_drivers,
         total_teams,
     })
@@ -434,12 +445,24 @@ fn sync_meta_counters(
     total_seasons: usize,
     total_races: usize,
 ) -> Result<(), crate::db::connection::DbError> {
-    meta_queries::set_meta_value(conn, "next_driver_id",   &(total_drivers   as u32 + 1).to_string())?;
-    meta_queries::set_meta_value(conn, "next_team_id",     &(total_teams     as u32 + 1).to_string())?;
-    meta_queries::set_meta_value(conn, "next_contract_id", &(total_contracts as u32 + 1).to_string())?;
-    meta_queries::set_meta_value(conn, "next_season_id",   &(total_seasons   as u32 + 1).to_string())?;
-    meta_queries::set_meta_value(conn, "next_race_id",     &(total_races     as u32 + 1).to_string())?;
-    meta_queries::set_meta_value(conn, "current_season",   &total_seasons.to_string())?;
+    meta_queries::set_meta_value(
+        conn,
+        "next_driver_id",
+        &(total_drivers as u32 + 1).to_string(),
+    )?;
+    meta_queries::set_meta_value(conn, "next_team_id", &(total_teams as u32 + 1).to_string())?;
+    meta_queries::set_meta_value(
+        conn,
+        "next_contract_id",
+        &(total_contracts as u32 + 1).to_string(),
+    )?;
+    meta_queries::set_meta_value(
+        conn,
+        "next_season_id",
+        &(total_seasons as u32 + 1).to_string(),
+    )?;
+    meta_queries::set_meta_value(conn, "next_race_id", &(total_races as u32 + 1).to_string())?;
+    meta_queries::set_meta_value(conn, "current_season", &total_seasons.to_string())?;
     Ok(())
 }
 
@@ -719,7 +742,9 @@ pub(crate) fn respond_to_proposal_in_base_dir(
         reconcile_plan_after_player_accept(&career_dir, &db.conn, &proposal)?;
         news_items.push(generate_player_signing_news(
             &player.nome,
+            &player.id,
             &proposal.equipe_nome,
+            &proposal.equipe_id,
             &proposal.categoria,
             proposal.papel.as_str(),
             season.numero,
@@ -741,7 +766,9 @@ pub(crate) fn respond_to_proposal_in_base_dir(
             .map_err(|e| format!("Falha ao confirmar recusa da proposta: {e}"))?;
         news_items.push(generate_player_rejection_news(
             &player.nome,
+            &player.id,
             &proposal.equipe_nome,
+            &proposal.equipe_id,
             season.numero,
         ));
     }
@@ -891,7 +918,7 @@ pub(crate) fn finalize_preseason_in_base_dir(
     delete_preseason_plan(&career_dir)?;
     meta.last_played = Local::now().format("%Y-%m-%dT%H:%M:%S").to_string();
     write_save_meta(&meta_path, &meta)?;
-    
+
     let mut news = vec![NewsItem {
         id: String::new(),
         tipo: NewsType::PreTemporada,
@@ -906,6 +933,7 @@ pub(crate) fn finalize_preseason_in_base_dir(
         importancia: NewsImportance::Alta,
         timestamp: Local::now().timestamp(),
         driver_id: None,
+        driver_id_secondary: None,
         team_id: None,
     }];
     persist_generated_news(&db.conn, &mut news)?;
@@ -946,6 +974,102 @@ fn read_save_meta(path: &Path) -> Result<SaveMeta, String> {
         .map_err(|e| format!("Falha ao parsear meta.json: {e}"))
 }
 
+pub(crate) fn get_briefing_phrase_history_in_base_dir(
+    base_dir: &Path,
+    career_id: &str,
+) -> Result<BriefingPhraseHistory, String> {
+    let (_db, career_dir, _meta) = open_career_resources(base_dir, career_id)?;
+    read_briefing_phrase_history(&briefing_phrase_history_path(&career_dir))
+}
+
+pub(crate) fn save_briefing_phrase_history_in_base_dir(
+    base_dir: &Path,
+    career_id: &str,
+    season_number: i32,
+    entries: Vec<BriefingPhraseEntryInput>,
+) -> Result<BriefingPhraseHistory, String> {
+    let (_db, career_dir, _meta) = open_career_resources(base_dir, career_id)?;
+    let history_path = briefing_phrase_history_path(&career_dir);
+    let current = read_briefing_phrase_history(&history_path)?;
+    let updated = merge_briefing_phrase_history(current, season_number, entries);
+    write_briefing_phrase_history(&history_path, &updated)?;
+    Ok(updated)
+}
+
+fn briefing_phrase_history_path(career_dir: &Path) -> PathBuf {
+    career_dir.join("briefing_phrase_history.json")
+}
+
+fn read_briefing_phrase_history(path: &Path) -> Result<BriefingPhraseHistory, String> {
+    if !path.exists() {
+        return Ok(BriefingPhraseHistory::default());
+    }
+
+    let content = std::fs::read_to_string(path)
+        .map_err(|e| format!("Falha ao ler briefing_phrase_history.json: {e}"))?;
+    serde_json::from_str::<BriefingPhraseHistory>(&content)
+        .map_err(|e| format!("Falha ao parsear briefing_phrase_history.json: {e}"))
+}
+
+fn write_briefing_phrase_history(path: &Path, history: &BriefingPhraseHistory) -> Result<(), String> {
+    let payload = serde_json::to_string_pretty(history)
+        .map_err(|e| format!("Falha ao serializar briefing_phrase_history.json: {e}"))?;
+    std::fs::write(path, payload)
+        .map_err(|e| format!("Falha ao gravar briefing_phrase_history.json: {e}"))
+}
+
+fn merge_briefing_phrase_history(
+    current: BriefingPhraseHistory,
+    season_number: i32,
+    entries: Vec<BriefingPhraseEntryInput>,
+) -> BriefingPhraseHistory {
+    let mut merged_entries = if current.season_number == season_number {
+        current.entries
+    } else {
+        Vec::new()
+    };
+
+    for entry in entries {
+        merged_entries.retain(|existing| {
+            !(existing.round_number == entry.round_number
+                && existing.driver_id == entry.driver_id
+                && existing.bucket_key == entry.bucket_key)
+        });
+
+        merged_entries.push(BriefingPhraseEntry {
+            season_number,
+            round_number: entry.round_number,
+            driver_id: entry.driver_id,
+            bucket_key: entry.bucket_key,
+            phrase_id: entry.phrase_id,
+        });
+    }
+
+    merged_entries.sort_by(|left, right| {
+        right
+            .round_number
+            .cmp(&left.round_number)
+            .then_with(|| left.driver_id.cmp(&right.driver_id))
+            .then_with(|| left.bucket_key.cmp(&right.bucket_key))
+    });
+
+    let mut per_bucket_counts: HashMap<(String, String), usize> = HashMap::new();
+    merged_entries.retain(|entry| {
+        let key = (entry.driver_id.clone(), entry.bucket_key.clone());
+        let count = per_bucket_counts.entry(key).or_insert(0);
+        if *count >= 5 {
+            return false;
+        }
+        *count += 1;
+        true
+    });
+
+    BriefingPhraseHistory {
+        season_number,
+        entries: merged_entries,
+    }
+}
+
 fn persist_end_of_season_news(
     conn: &rusqlite::Connection,
     result: &EndOfSeasonResult,
@@ -972,12 +1096,16 @@ fn persist_end_of_season_news(
             })
             .collect()
     };
+    let player_id = driver_queries::get_player_driver(conn)
+        .ok()
+        .map(|driver| driver.id);
     let mut items = generate_news_from_end_of_season(
         result,
         season_number,
         &mut temp_id,
         &mut timestamp,
         &driver_midia,
+        player_id.as_deref(),
     );
     persist_generated_news(conn, &mut items)
 }
@@ -1362,7 +1490,9 @@ fn force_place_player(
         .map_err(|e| format!("Falha ao atualizar jogador apos alocacao forcada: {e}"))?;
     news_items.push(generate_player_signing_news(
         &player.nome,
+        &player.id,
         &vacancy.team.nome,
+        &vacancy.team.id,
         &vacancy.team.categoria,
         vacancy.role.as_str(),
         season.numero,
@@ -1672,7 +1802,12 @@ pub(crate) fn get_drivers_by_category_in_base_dir(
                 vitorias: driver.stats_temporada.vitorias as i32,
                 podios: driver.stats_temporada.podios as i32,
                 posicao_campeonato: 0,
-                results: history_map.get(&driver_id).cloned().unwrap_or_default(),
+                results: merge_recent_results_fallback(
+                    history_map.get(&driver_id).cloned().unwrap_or_default(),
+                    &driver.ultimos_resultados,
+                    total_rounds,
+                    driver.stats_temporada.corridas as usize,
+                ),
             }
         })
         .collect();
@@ -1690,6 +1825,75 @@ pub(crate) fn get_drivers_by_category_in_base_dir(
     }
 
     Ok(standings)
+}
+
+fn merge_recent_results_fallback(
+    history: Vec<Option<RoundResult>>,
+    recent_results: &serde_json::Value,
+    total_rounds: usize,
+    raced_rounds: usize,
+) -> Vec<Option<RoundResult>> {
+    if history.iter().any(Option::is_some) {
+        return history;
+    }
+
+    let fallback_results = parse_recent_results_json(recent_results);
+    if fallback_results.is_empty() {
+        return history;
+    }
+
+    let normalized_len = total_rounds.max(fallback_results.len());
+    let mut merged = vec![None; normalized_len];
+    let end_index = raced_rounds.min(normalized_len).max(fallback_results.len());
+    let start_index = end_index.saturating_sub(fallback_results.len());
+
+    for (offset, result) in fallback_results.into_iter().enumerate() {
+        merged[start_index + offset] = Some(result);
+    }
+
+    merged
+}
+
+fn parse_recent_results_json(value: &serde_json::Value) -> Vec<RoundResult> {
+    value
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(parse_recent_result_entry)
+        .collect()
+}
+
+fn parse_recent_result_entry(value: &serde_json::Value) -> Option<RoundResult> {
+    let object = value.as_object()?;
+    let position = object
+        .get("position")
+        .and_then(|entry| entry.as_i64())
+        .unwrap_or_default() as i32;
+    let is_dnf = object
+        .get("is_dnf")
+        .and_then(|entry| entry.as_bool())
+        .unwrap_or(false);
+
+    if position <= 0 && !is_dnf {
+        return None;
+    }
+
+    Some(RoundResult {
+        position,
+        is_dnf,
+        has_fastest_lap: object
+            .get("has_fastest_lap")
+            .and_then(|entry| entry.as_bool())
+            .unwrap_or(false),
+        grid_position: object
+            .get("grid_position")
+            .and_then(|entry| entry.as_i64())
+            .unwrap_or_default() as i32,
+        positions_gained: object
+            .get("positions_gained")
+            .and_then(|entry| entry.as_i64())
+            .unwrap_or_default() as i32,
+    })
 }
 
 pub(crate) fn get_teams_standings_in_base_dir(
@@ -1943,6 +2147,213 @@ fn build_team_summary(conn: &rusqlite::Connection, team: &Team) -> Result<TeamSu
     })
 }
 
+fn empty_track_history_summary() -> TrackHistorySummary {
+    TrackHistorySummary {
+        has_data: false,
+        starts: 0,
+        best_finish: None,
+        last_finish: None,
+        dnfs: 0,
+        last_visit_season: None,
+        last_visit_round: None,
+    }
+}
+
+fn empty_next_race_briefing_summary() -> NextRaceBriefingSummary {
+    NextRaceBriefingSummary {
+        track_history: Some(empty_track_history_summary()),
+        primary_rival: None,
+        weekend_stories: Vec::new(),
+    }
+}
+
+fn build_next_race_briefing_summary(
+    conn: &rusqlite::Connection,
+    player_id: &str,
+    season_number: i32,
+    race: &CalendarEntry,
+) -> Result<NextRaceBriefingSummary, String> {
+    Ok(NextRaceBriefingSummary {
+        track_history: Some(build_track_history_summary(conn, player_id, &race.track_name)?),
+        primary_rival: build_primary_rival_summary(conn, player_id, &race.categoria)?,
+        weekend_stories: build_weekend_story_summaries(conn, season_number, &race.categoria, race.rodada)?,
+    })
+}
+
+fn build_track_history_summary(
+    conn: &rusqlite::Connection,
+    player_id: &str,
+    track_name: &str,
+) -> Result<TrackHistorySummary, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT s.numero, c.rodada, r.posicao_final, r.dnf
+             FROM race_results r
+             JOIN calendar c ON r.race_id = c.id
+             JOIN seasons s ON COALESCE(c.season_id, c.temporada_id) = s.id
+             WHERE r.piloto_id = ?1
+               AND c.track_name = ?2
+             ORDER BY s.numero DESC, c.rodada DESC",
+        )
+        .map_err(|e| format!("Falha ao preparar historico de pista: {e}"))?;
+
+    let rows = stmt
+        .query_map(rusqlite::params![player_id, track_name], |row| {
+            Ok((
+                row.get::<_, i32>(0)?,
+                row.get::<_, i32>(1)?,
+                row.get::<_, i32>(2)?,
+                row.get::<_, i32>(3)? != 0,
+            ))
+        })
+        .map_err(|e| format!("Falha ao buscar historico de pista: {e}"))?;
+
+    let mut visits = Vec::new();
+    for row in rows {
+        visits.push(row.map_err(|e| format!("Falha ao ler historico de pista: {e}"))?);
+    }
+
+    if visits.is_empty() {
+        return Ok(empty_track_history_summary());
+    }
+
+    let last_visit = visits[0];
+    let best_finish = visits
+        .iter()
+        .filter(|(_, _, position, is_dnf)| !*is_dnf && *position > 0)
+        .map(|(_, _, position, _)| *position)
+        .min();
+    let dnfs = visits.iter().filter(|(_, _, _, is_dnf)| *is_dnf).count() as i32;
+
+    Ok(TrackHistorySummary {
+        has_data: true,
+        starts: visits.len() as i32,
+        best_finish,
+        last_finish: Some(last_visit.2),
+        dnfs,
+        last_visit_season: Some(last_visit.0),
+        last_visit_round: Some(last_visit.1),
+    })
+}
+
+fn build_primary_rival_summary(
+    conn: &rusqlite::Connection,
+    player_id: &str,
+    categoria: &str,
+) -> Result<Option<PrimaryRivalSummary>, String> {
+    let mut drivers = driver_queries::get_drivers_by_category(conn, categoria)
+        .map_err(|e| format!("Falha ao buscar pilotos da categoria para rival principal: {e}"))?;
+
+    drivers.sort_by(|a, b| {
+        b.stats_temporada
+            .pontos
+            .partial_cmp(&a.stats_temporada.pontos)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| b.stats_temporada.vitorias.cmp(&a.stats_temporada.vitorias))
+            .then_with(|| b.stats_temporada.podios.cmp(&a.stats_temporada.podios))
+            .then_with(|| a.nome.cmp(&b.nome))
+    });
+
+    let Some(player_index) = drivers.iter().position(|driver| driver.id == player_id) else {
+        return Ok(None);
+    };
+
+    let player = &drivers[player_index];
+    let rival_index = if player_index == 0 {
+        if drivers.len() > 1 { 1 } else { return Ok(None) }
+    } else {
+        player_index - 1
+    };
+    let rival = &drivers[rival_index];
+    let is_ahead = rival_index < player_index;
+    let gap_points = if is_ahead {
+        (rival.stats_temporada.pontos - player.stats_temporada.pontos)
+            .max(0.0)
+            .round() as i32
+    } else {
+        (player.stats_temporada.pontos - rival.stats_temporada.pontos)
+            .max(0.0)
+            .round() as i32
+    };
+
+    Ok(Some(PrimaryRivalSummary {
+        driver_id: rival.id.clone(),
+        driver_name: rival.nome.clone(),
+        championship_position: rival_index as i32 + 1,
+        gap_points,
+        is_ahead,
+        rivalry_label: None,
+    }))
+}
+
+fn build_weekend_story_summaries(
+    conn: &rusqlite::Connection,
+    season_number: i32,
+    categoria: &str,
+    round_number: i32,
+) -> Result<Vec<BriefingStorySummary>, String> {
+    let mut stories = news_queries::get_news_by_season(conn, season_number, 200)
+        .map_err(|e| format!("Falha ao buscar noticias da temporada para a previa: {e}"))?
+        .into_iter()
+        .filter(|item| item.categoria_id.as_deref() == Some(categoria) && item.rodada == Some(round_number))
+        .collect::<Vec<_>>();
+
+    stories.sort_by(|left, right| {
+        briefing_importance_rank(&right.importancia)
+            .cmp(&briefing_importance_rank(&left.importancia))
+            .then_with(|| briefing_type_rank(&right.tipo).cmp(&briefing_type_rank(&left.tipo)))
+            .then_with(|| right.timestamp.cmp(&left.timestamp))
+    });
+
+    Ok(stories
+        .into_iter()
+        .take(3)
+        .map(|item| BriefingStorySummary {
+            id: item.id,
+            icon: item.icone,
+            title: item.titulo,
+            summary: build_briefing_story_summary_text(&item.texto),
+            importance: item.importancia.as_str().to_string(),
+        })
+        .collect())
+}
+
+fn briefing_importance_rank(value: &NewsImportance) -> i32 {
+    match value {
+        NewsImportance::Destaque => 4,
+        NewsImportance::Alta => 3,
+        NewsImportance::Media => 2,
+        NewsImportance::Baixa => 1,
+    }
+}
+
+fn briefing_type_rank(value: &NewsType) -> i32 {
+    match value {
+        NewsType::Rivalidade => 5,
+        NewsType::Hierarquia => 4,
+        NewsType::Corrida => 3,
+        NewsType::Incidente => 2,
+        NewsType::FramingSazonal => 1,
+        _ => 0,
+    }
+}
+
+fn build_briefing_story_summary_text(text: &str) -> String {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return "O paddock segue produzindo contexto para a proxima largada.".to_string();
+    }
+
+    if let Some((first_sentence, _)) = trimmed.split_once('.') {
+        let sentence = first_sentence.trim();
+        if !sentence.is_empty() {
+            return format!("{sentence}.");
+        }
+    }
+
+    trimmed.chars().take(140).collect()
+}
+
 fn count_rows(conn: &rusqlite::Connection, table: &str) -> Result<usize, rusqlite::Error> {
     let sql = format!("SELECT COUNT(*) FROM {table}");
     let count: i64 = conn.query_row(&sql, [], |row| row.get(0))?;
@@ -2162,6 +2573,222 @@ mod tests {
     }
 
     #[test]
+    fn test_load_career_includes_next_race_briefing() {
+        let base_dir = create_test_career_dir("load_briefing_contract");
+        let career = load_career_in_base_dir(&base_dir, "career_001").expect("load career");
+        let career_json = serde_json::to_value(&career).expect("career json");
+
+        assert!(
+            career_json.get("next_race_briefing").is_some(),
+            "expected load_career payload to expose next_race_briefing",
+        );
+
+        let _ = fs::remove_dir_all(base_dir);
+    }
+
+    #[test]
+    fn test_next_race_briefing_summarizes_track_history() {
+        let base_dir = create_test_career_dir("load_briefing_track_history");
+        let career_id = "career_001";
+        let config = AppConfig::load_or_default(&base_dir);
+        let db_path = config.saves_dir().join(career_id).join("career.db");
+        let db = Database::open_existing(&db_path).expect("db");
+        let season = season_queries::get_active_season(&db.conn)
+            .expect("season")
+            .expect("active season");
+        let calendar = calendar_queries::get_calendar(&db.conn, &season.id, "mazda_rookie")
+            .expect("calendar");
+        let race_one = calendar.first().expect("race one");
+        let race_two = calendar.get(1).expect("race two");
+
+        db.conn
+            .execute(
+                "UPDATE calendar SET track_name = ?1 WHERE id IN (?2, ?3)",
+                rusqlite::params!["Pista Espelho", race_one.id, race_two.id],
+            )
+            .expect("update track names");
+
+        let race_result = crate::commands::race::simulate_race_weekend_in_base_dir(
+            &base_dir,
+            career_id,
+            &race_one.id,
+        )
+        .expect("simulate race");
+        let player_finish = race_result
+            .player_race
+            .race_results
+            .iter()
+            .find(|entry| entry.is_jogador)
+            .map(|entry| entry.finish_position)
+            .expect("player finish");
+        let player_dnf = race_result
+            .player_race
+            .race_results
+            .iter()
+            .find(|entry| entry.is_jogador)
+            .map(|entry| entry.is_dnf)
+            .expect("player dnf flag");
+
+        let career = load_career_in_base_dir(&base_dir, career_id).expect("load career");
+        let track_history = career
+            .next_race_briefing
+            .as_ref()
+            .and_then(|briefing| briefing.track_history.as_ref())
+            .expect("track history");
+
+        assert!(track_history.has_data);
+        assert_eq!(track_history.starts, 1);
+        assert_eq!(track_history.best_finish, Some(player_finish));
+        assert_eq!(track_history.last_finish, Some(player_finish));
+        assert_eq!(track_history.dnfs, if player_dnf { 1 } else { 0 });
+        assert_eq!(track_history.last_visit_season, Some(1));
+        assert_eq!(track_history.last_visit_round, Some(1));
+
+        let _ = fs::remove_dir_all(base_dir);
+    }
+
+    #[test]
+    fn test_next_race_briefing_exposes_primary_rival() {
+        let base_dir = create_test_career_dir("load_briefing_primary_rival");
+        let config = AppConfig::load_or_default(&base_dir);
+        let db_path = config.saves_dir().join("career_001").join("career.db");
+        let db = Database::open_existing(&db_path).expect("db");
+        let player = driver_queries::get_player_driver(&db.conn).expect("player");
+        let rival_driver = driver_queries::get_drivers_by_category(&db.conn, "mazda_rookie")
+            .expect("category drivers")
+            .into_iter()
+            .find(|driver| !driver.is_jogador)
+            .expect("ai rival");
+
+        db.conn
+            .execute(
+                "UPDATE drivers SET temp_pontos = 90.0, temp_vitorias = 3, temp_podios = 4 WHERE id = ?1",
+                rusqlite::params![player.id],
+            )
+            .expect("update player");
+        db.conn
+            .execute(
+                "UPDATE drivers SET temp_pontos = 96.0, temp_vitorias = 4, temp_podios = 5 WHERE id = ?1",
+                rusqlite::params![rival_driver.id],
+            )
+            .expect("update rival");
+
+        let career = load_career_in_base_dir(&base_dir, "career_001").expect("load career");
+        let rival = career
+            .next_race_briefing
+            .as_ref()
+            .and_then(|briefing| briefing.primary_rival.as_ref())
+            .expect("primary rival");
+
+        assert_eq!(rival.driver_id, rival_driver.id);
+        assert_eq!(rival.driver_name, rival_driver.nome);
+        assert_eq!(rival.championship_position, 1);
+        assert_eq!(rival.gap_points, 6);
+        assert!(rival.is_ahead);
+
+        let _ = fs::remove_dir_all(base_dir);
+    }
+
+    #[test]
+    fn test_next_race_briefing_filters_weekend_stories() {
+        let base_dir = create_test_career_dir("load_briefing_weekend_stories");
+        let config = AppConfig::load_or_default(&base_dir);
+        let db_path = config.saves_dir().join("career_001").join("career.db");
+        let db = Database::open_existing(&db_path).expect("db");
+        let season = season_queries::get_active_season(&db.conn)
+            .expect("season query")
+            .expect("active season");
+
+        news_queries::insert_news_batch(
+            &db.conn,
+            &vec![
+                NewsItem {
+                    id: "BRF001".to_string(),
+                    tipo: NewsType::Rivalidade,
+                    icone: "R".to_string(),
+                    titulo: "Duelo esquenta a abertura".to_string(),
+                    texto: "A tensao entre os protagonistas cresce antes da etapa de abertura.".to_string(),
+                    rodada: Some(1),
+                    semana_pretemporada: None,
+                    temporada: season.numero,
+                    categoria_id: Some("mazda_rookie".to_string()),
+                    categoria_nome: Some("Mazda MX-5 Rookie Cup".to_string()),
+                    importancia: NewsImportance::Destaque,
+                    timestamp: 300,
+                    driver_id: Some("P001".to_string()),
+                    driver_id_secondary: Some("P002".to_string()),
+                    team_id: None,
+                },
+                NewsItem {
+                    id: "BRF002".to_string(),
+                    tipo: NewsType::Hierarquia,
+                    icone: "H".to_string(),
+                    titulo: "Equipe reavalia ordem interna".to_string(),
+                    texto: "O box chega atento ao equilibrio interno antes da largada.".to_string(),
+                    rodada: Some(1),
+                    semana_pretemporada: None,
+                    temporada: season.numero,
+                    categoria_id: Some("mazda_rookie".to_string()),
+                    categoria_nome: Some("Mazda MX-5 Rookie Cup".to_string()),
+                    importancia: NewsImportance::Alta,
+                    timestamp: 250,
+                    driver_id: Some("P001".to_string()),
+                    driver_id_secondary: None,
+                    team_id: None,
+                },
+                NewsItem {
+                    id: "BRF003".to_string(),
+                    tipo: NewsType::Corrida,
+                    icone: "C".to_string(),
+                    titulo: "Abertura promete grid apertado".to_string(),
+                    texto: "A etapa de abertura deve embaralhar o pelotao logo nas primeiras voltas.".to_string(),
+                    rodada: Some(1),
+                    semana_pretemporada: None,
+                    temporada: season.numero,
+                    categoria_id: Some("mazda_rookie".to_string()),
+                    categoria_nome: Some("Mazda MX-5 Rookie Cup".to_string()),
+                    importancia: NewsImportance::Alta,
+                    timestamp: 200,
+                    driver_id: Some("P001".to_string()),
+                    driver_id_secondary: None,
+                    team_id: None,
+                },
+                NewsItem {
+                    id: "BRF004".to_string(),
+                    tipo: NewsType::Corrida,
+                    icone: "X".to_string(),
+                    titulo: "Outra categoria movimenta a semana".to_string(),
+                    texto: "Essa noticia nao deve entrar na previa da etapa do jogador.".to_string(),
+                    rodada: Some(1),
+                    semana_pretemporada: None,
+                    temporada: season.numero,
+                    categoria_id: Some("gt4".to_string()),
+                    categoria_nome: Some("GT4".to_string()),
+                    importancia: NewsImportance::Destaque,
+                    timestamp: 400,
+                    driver_id: None,
+                    driver_id_secondary: None,
+                    team_id: None,
+                },
+            ],
+        )
+        .expect("seed news");
+
+        let career = load_career_in_base_dir(&base_dir, "career_001").expect("load career");
+        let stories = &career
+            .next_race_briefing
+            .as_ref()
+            .expect("briefing")
+            .weekend_stories;
+
+        assert_eq!(stories.len(), 3);
+        assert_eq!(stories[0].title, "Duelo esquenta a abertura");
+        assert!(stories.iter().all(|story| !story.title.contains("Outra categoria")));
+
+        let _ = fs::remove_dir_all(base_dir);
+    }
+
+    #[test]
     fn test_load_career_invalid_id() {
         let base_dir = unique_test_dir("load_invalid");
         fs::create_dir_all(&base_dir).expect("base dir");
@@ -2199,6 +2826,47 @@ mod tests {
         assert!(standings
             .windows(2)
             .all(|window| window[0].pontos >= window[1].pontos));
+
+        let _ = fs::remove_dir_all(base_dir);
+    }
+
+    #[test]
+    fn test_get_drivers_by_category_uses_recent_results_fallback_from_driver_record() {
+        let base_dir = create_test_career_dir("drivers_recent_fallback");
+        let config = AppConfig::load_or_default(&base_dir);
+        let db_path = config.saves_dir().join("career_001").join("career.db");
+        let db = Database::open_existing(&db_path).expect("db");
+
+        let mut driver = driver_queries::get_player_driver(&db.conn).expect("player");
+        driver.stats_temporada.corridas = 3;
+        driver.ultimos_resultados = serde_json::json!([
+            { "position": 8, "is_dnf": false },
+            { "position": 6, "is_dnf": false },
+            { "position": 4, "is_dnf": false }
+        ]);
+        driver_queries::update_driver(&db.conn, &driver).expect("update driver");
+
+        let results_path = config.saves_dir().join("career_001").join("race_results.json");
+        if results_path.exists() {
+            fs::remove_file(&results_path).expect("remove history file");
+        }
+
+        let standings =
+            get_drivers_by_category_in_base_dir(&base_dir, "career_001", "mazda_rookie")
+                .expect("driver standings");
+        let player = standings
+            .into_iter()
+            .find(|entry| entry.is_jogador)
+            .expect("player standing");
+
+        let fallback_tail: Vec<i32> = player
+            .results
+            .iter()
+            .flatten()
+            .map(|result| result.position)
+            .collect();
+
+        assert_eq!(fallback_tail, vec![8, 6, 4]);
 
         let _ = fs::remove_dir_all(base_dir);
     }
@@ -2773,7 +3441,7 @@ mod tests {
         let recent_news = news_queries::get_recent_news(&refreshed_db.conn, 20).expect("news");
         assert!(recent_news
             .iter()
-            .any(|item| item.titulo.contains("recusou proposta")));
+            .any(|item| item.titulo.contains("recusa proposta")));
 
         let _ = fs::remove_dir_all(base_dir);
     }
@@ -2910,6 +3578,86 @@ mod tests {
 
         assert_eq!(response.action, "rejected");
         assert!(response.remaining_proposals > 0);
+
+        let _ = fs::remove_dir_all(base_dir);
+    }
+
+    #[test]
+    fn test_briefing_phrase_history_persists_and_keeps_only_last_five_rounds_per_driver_bucket() {
+        let base_dir = create_test_career_dir("briefing_phrase_history");
+        let career_id = "career_001";
+
+        for round_number in 1..=7 {
+            save_briefing_phrase_history_in_base_dir(
+                &base_dir,
+                career_id,
+                1,
+                vec![BriefingPhraseEntryInput {
+                    round_number,
+                    driver_id: "drv-player".to_string(),
+                    bucket_key: "p1".to_string(),
+                    phrase_id: format!("p1-baseline-{round_number}"),
+                }],
+            )
+            .expect("save phrase history");
+        }
+
+        let history =
+            get_briefing_phrase_history_in_base_dir(&base_dir, career_id).expect("phrase history");
+
+        assert_eq!(history.season_number, 1);
+        assert_eq!(history.entries.len(), 5);
+        assert_eq!(
+            history
+                .entries
+                .iter()
+                .map(|entry| entry.round_number)
+                .collect::<Vec<_>>(),
+            vec![7, 6, 5, 4, 3]
+        );
+        assert!(history
+            .entries
+            .iter()
+            .all(|entry| entry.driver_id == "drv-player" && entry.bucket_key == "p1"));
+
+        let _ = fs::remove_dir_all(base_dir);
+    }
+
+    #[test]
+    fn test_briefing_phrase_history_resets_when_season_changes() {
+        let base_dir = create_test_career_dir("briefing_phrase_history_reset");
+        let career_id = "career_001";
+
+        save_briefing_phrase_history_in_base_dir(
+            &base_dir,
+            career_id,
+            1,
+            vec![BriefingPhraseEntryInput {
+                round_number: 5,
+                driver_id: "drv-player".to_string(),
+                bucket_key: "p2".to_string(),
+                phrase_id: "p2-stable-1".to_string(),
+            }],
+        )
+        .expect("save season one");
+
+        let history = save_briefing_phrase_history_in_base_dir(
+            &base_dir,
+            career_id,
+            2,
+            vec![BriefingPhraseEntryInput {
+                round_number: 1,
+                driver_id: "drv-player".to_string(),
+                bucket_key: "p2".to_string(),
+                phrase_id: "p2-stable-2".to_string(),
+            }],
+        )
+        .expect("save season two");
+
+        assert_eq!(history.season_number, 2);
+        assert_eq!(history.entries.len(), 1);
+        assert_eq!(history.entries[0].round_number, 1);
+        assert_eq!(history.entries[0].phrase_id, "p2-stable-2");
 
         let _ = fs::remove_dir_all(base_dir);
     }

@@ -1,0 +1,5 @@
+﻿$env:BRAINSTORM_DIR = 'C:\Users\rodri\OneDrive\Área de Trabalho\Jogos\iRacerApp V1\.superpowers\brainstorm\champ-card-26756-1774557168,60812'
+$env:BRAINSTORM_HOST = '127.0.0.1'
+$env:BRAINSTORM_URL_HOST = 'localhost'
+Set-Location 'C:\Users\rodri\.codex\superpowers\lib\brainstorm-server'
+node index.js *>> 'C:\Users\rodri\OneDrive\Área de Trabalho\Jogos\iRacerApp V1\.superpowers\brainstorm\champ-card-26756-1774557168,60812\.server.log'

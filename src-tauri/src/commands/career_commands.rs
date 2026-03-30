@@ -5,16 +5,17 @@ use tauri::{AppHandle, Manager};
 use crate::commands::career::{
     advance_market_week_in_base_dir, advance_season_in_base_dir, create_career_in_base_dir,
     delete_career_in_base_dir, finalize_preseason_in_base_dir,
+    get_briefing_phrase_history_in_base_dir,
     get_calendar_for_category_in_base_dir, get_driver_detail_in_base_dir, get_driver_in_base_dir,
     get_drivers_by_category_in_base_dir, get_news_in_base_dir, get_player_proposals_in_base_dir,
     get_preseason_state_in_base_dir, get_previous_champions_in_base_dir,
     get_race_results_by_category_in_base_dir, get_teams_standings_in_base_dir,
     list_saves_in_base_dir, load_career_in_base_dir, respond_to_proposal_in_base_dir,
-    PlayerProposalView, ProposalResponse,
+    save_briefing_phrase_history_in_base_dir, PlayerProposalView, ProposalResponse,
 };
 use crate::commands::career_types::{
-    CareerData, CreateCareerInput, CreateCareerResult, DriverDetail, DriverSummary, RaceSummary,
-    SaveInfo, TeamStanding,
+    BriefingPhraseEntryInput, BriefingPhraseHistory, CareerData, CreateCareerInput,
+    CreateCareerResult, DriverDetail, DriverSummary, RaceSummary, SaveInfo, TeamStanding,
 };
 use crate::commands::race_history::{DriverRaceHistory, PreviousChampions};
 use crate::evolution::pipeline::EndOfSeasonResult;
@@ -181,4 +182,24 @@ pub async fn get_driver_detail(
 ) -> Result<DriverDetail, String> {
     let base_dir = app_data_dir(&app)?;
     get_driver_detail_in_base_dir(&base_dir, &career_id, &driver_id)
+}
+
+#[tauri::command]
+pub async fn get_briefing_phrase_history(
+    app: AppHandle,
+    career_id: String,
+) -> Result<BriefingPhraseHistory, String> {
+    let base_dir = app_data_dir(&app)?;
+    get_briefing_phrase_history_in_base_dir(&base_dir, &career_id)
+}
+
+#[tauri::command]
+pub async fn save_briefing_phrase_history(
+    app: AppHandle,
+    career_id: String,
+    season_number: i32,
+    entries: Vec<BriefingPhraseEntryInput>,
+) -> Result<BriefingPhraseHistory, String> {
+    let base_dir = app_data_dir(&app)?;
+    save_briefing_phrase_history_in_base_dir(&base_dir, &career_id, season_number, entries)
 }

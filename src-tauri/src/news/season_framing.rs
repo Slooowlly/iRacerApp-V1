@@ -217,13 +217,20 @@ mod tests {
             Some("Piloto Y"),
             Some(95.0),
         );
-        assert!(result.is_none(), "interesse moderado não deve gerar framing");
+        assert!(
+            result.is_none(),
+            "interesse moderado não deve gerar framing"
+        );
     }
 
     #[test]
     fn test_importance_never_destaque() {
         for (slot, tier, media) in [
-            (ThematicSlot::FinalDaTemporada, InterestTier::EventoPrincipal, Some(100.0_f64)),
+            (
+                ThematicSlot::FinalDaTemporada,
+                InterestTier::EventoPrincipal,
+                Some(100.0_f64),
+            ),
             (ThematicSlot::AberturaDaTemporada, InterestTier::Alto, None),
         ] {
             if let Some(signal) = try_generate_seasonal_framing(

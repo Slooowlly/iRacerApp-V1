@@ -1,8 +1,8 @@
 use rand::Rng;
 
 use crate::evolution::growth::{get_attribute, set_attribute, AttributeChange};
-use crate::models::driver_attributes::DriverAttributeKey;
 use crate::models::driver::Driver;
+use crate::models::driver_attributes::DriverAttributeKey;
 
 const DECLINE_RATES: [(DriverAttributeKey, f64); 12] = [
     (DriverAttributeKey::Fitness, 1.5),
@@ -42,7 +42,12 @@ pub fn apply_age_decline(driver: &mut Driver, rng: &mut impl Rng) -> Vec<Attribu
     let exp_gain = rng.gen_range(1..=3) as f64;
     let current_exp = driver.atributos.experiencia;
     let new_exp = (current_exp + exp_gain).min(100.0);
-    if let Some(change) = build_change(driver, DriverAttributeKey::Experiencia, current_exp, new_exp) {
+    if let Some(change) = build_change(
+        driver,
+        DriverAttributeKey::Experiencia,
+        current_exp,
+        new_exp,
+    ) {
         changes.push(change);
     }
 

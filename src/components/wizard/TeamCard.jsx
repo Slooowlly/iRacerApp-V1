@@ -4,6 +4,7 @@ function TeamCard({ team, selected, onSelect }) {
   return (
     <GlassCard
       selected={selected}
+      darkBg
       onClick={() => onSelect(team.index)}
       className="min-h-[210px]"
     >

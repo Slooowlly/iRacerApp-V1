@@ -30,7 +30,15 @@
       "Bash(grep -v \"^warning\\\\|^  -->\\\\|^  =\\\\|^  |\\\\|^$\")",
       "Bash(grep -v \"^warning\\\\|^  -->\\\\|^  =\\\\|^  |\\\\|^$\\\\|^ \\\\|Compiling\\\\|Finished\")",
       "Bash(find '/c/Users/rodri/OneDrive/Área de Trabalho/Jogos/iRacerApp V1/src-tauri/src/export' -type f -name *.rs)",
-      "Bash(npx tauri:*)"
+      "Bash(npx tauri:*)",
+      "Bash(find 'c:\\\\Users\\\\rodri\\\\OneDrive\\\\Área de Trabalho\\\\Jogos\\\\iRacerApp V1' -type f \\\\\\(-name *.json -o -name *.sql -o -name *.rs -o -name *.js -o -name *.jsx -o -name *.ts -o -name *.tsx \\\\\\))",
+      "Bash(grep -E \"^test |FAILED|ok$|PASSED|error\\\\[|Finished|running [0-9]\")",
+      "Bash(cd \"c:/Users/rodri/OneDrive/Área de Trabalho/Jogos/iRacerApp V1/src-tauri/src\" __NEW_LINE_f27a110f558404ab__ echo \"=== 1. Callsites de generate_for_category \\(devem usar Driver::\\) ===\" grep -rn \"generate_for_category\" --include=\"*.rs\" .)",
+      "Read(//c/Users/rodri/OneDrive/Área de Trabalho/Jogos/iRacerApp V1/**)",
+      "Bash(grep -r log::warn 'c:\\\\Users\\\\rodri\\\\OneDrive\\\\Área de Trabalho\\\\Jogos\\\\iRacerApp V1\\\\src-tauri\\\\src' --include=*.rs -l)",
+      "Bash(start \"c:\\\\Users\\\\rodri\\\\OneDrive\\\\Área de Trabalho\\\\Jogos\\\\iRacerApp V1\\\\preview-radar.html\")",
+      "Bash(powershell -ExecutionPolicy Bypass -File \"c:\\\\Users\\\\rodri\\\\OneDrive\\\\Área de Trabalho\\\\Jogos\\\\iRacerApp V1\\\\fix-accents.ps1\")",
+      "Bash(npx vitest:*)"
     ]
   }
 }

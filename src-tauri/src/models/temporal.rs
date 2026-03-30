@@ -11,10 +11,16 @@ pub struct SeasonTemporalSummary {
     /// MAX(week_of_year) das corridas concluídas — a semana efetivamente alcançada.
     /// None se nenhuma corrida foi concluída ainda.
     pub effective_week: Option<i32>,
+    /// Data atual visÃ­vel da carreira para a UI.
+    pub current_display_date: String,
     /// Próxima corrida pendente da categoria do jogador.
     /// NOTA: acoplamento temporário com CalendarEntry. Em iteração futura,
     /// pode virar um DTO temporal mais enxuto sem todos os campos de corrida.
     pub next_player_event: Option<CalendarEntry>,
+    /// Data da prÃ³xima corrida do jogador, pronta para a UI.
+    pub next_event_display_date: Option<String>,
+    /// DistÃ¢ncia em dias atÃ© o prÃ³ximo evento.
+    pub days_until_next_event: Option<i32>,
     /// Corridas pendentes na fase atual da temporada.
     pub pending_in_phase: i32,
 }

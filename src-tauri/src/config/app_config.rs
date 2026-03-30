@@ -33,7 +33,7 @@ pub struct AppConfig {
     pub last_career: Option<u32>,
     pub language: String,
     pub autosave_enabled: bool,
-    
+
     // Window state
     pub window_width: u32,
     pub window_height: u32,

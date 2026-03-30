@@ -4,7 +4,7 @@ use crate::db::connection::DbError;
 
 // ── Versão atual do schema ────────────────────────────────────────────────────
 
-const CURRENT_VERSION: u32 = 12;
+const CURRENT_VERSION: u32 = 14;
 
 // ── API pública ───────────────────────────────────────────────────────────────
 
@@ -22,6 +22,8 @@ pub fn run_all(conn: &Connection) -> Result<(), DbError> {
     migrate_v10(conn)?;
     migrate_v11(conn)?;
     migrate_v12(conn)?;
+    migrate_v13(conn)?;
+    migrate_v14(conn)?;
     set_schema_version(conn, CURRENT_VERSION)?;
     Ok(())
 }
@@ -76,6 +78,14 @@ pub fn run_pending(conn: &Connection) -> Result<(), DbError> {
     if version < 12 {
         migrate_v12(conn)?;
         set_schema_version(conn, 12)?;
+    }
+    if version < 13 {
+        migrate_v13(conn)?;
+        set_schema_version(conn, 13)?;
+    }
+    if version < 14 {
+        migrate_v14(conn)?;
+        set_schema_version(conn, 14)?;
     }
     Ok(())
 }
@@ -508,7 +518,7 @@ fn migrate_v5(conn: &Connection) -> Result<(), DbError> {
         );
         CREATE INDEX IF NOT EXISTS idx_race_results_race ON race_results(race_id);
         CREATE INDEX IF NOT EXISTS idx_race_results_piloto ON race_results(piloto_id);
-        "
+        ",
     )?;
 
     Ok(())
@@ -533,7 +543,7 @@ fn migrate_v6(conn: &Connection) -> Result<(), DbError> {
         );
         CREATE INDEX IF NOT EXISTS idx_injuries_pilot_id ON injuries(pilot_id);
         CREATE INDEX IF NOT EXISTS idx_injuries_active ON injuries(active);
-        "
+        ",
     )?;
 
     Ok(())
@@ -541,11 +551,36 @@ fn migrate_v6(conn: &Connection) -> Result<(), DbError> {
 
 fn migrate_v7(conn: &Connection) -> Result<(), DbError> {
     if table_exists(conn, "teams")? {
-        ensure_column(conn, "teams", "hierarquia_duelos_total", "INTEGER NOT NULL DEFAULT 0")?;
-        ensure_column(conn, "teams", "hierarquia_duelos_n2_vencidos", "INTEGER NOT NULL DEFAULT 0")?;
-        ensure_column(conn, "teams", "hierarquia_sequencia_n2", "INTEGER NOT NULL DEFAULT 0")?;
-        ensure_column(conn, "teams", "hierarquia_sequencia_n1", "INTEGER NOT NULL DEFAULT 0")?;
-        ensure_column(conn, "teams", "hierarquia_inversoes_temporada", "INTEGER NOT NULL DEFAULT 0")?;
+        ensure_column(
+            conn,
+            "teams",
+            "hierarquia_duelos_total",
+            "INTEGER NOT NULL DEFAULT 0",
+        )?;
+        ensure_column(
+            conn,
+            "teams",
+            "hierarquia_duelos_n2_vencidos",
+            "INTEGER NOT NULL DEFAULT 0",
+        )?;
+        ensure_column(
+            conn,
+            "teams",
+            "hierarquia_sequencia_n2",
+            "INTEGER NOT NULL DEFAULT 0",
+        )?;
+        ensure_column(
+            conn,
+            "teams",
+            "hierarquia_sequencia_n1",
+            "INTEGER NOT NULL DEFAULT 0",
+        )?;
+        ensure_column(
+            conn,
+            "teams",
+            "hierarquia_inversoes_temporada",
+            "INTEGER NOT NULL DEFAULT 0",
+        )?;
     }
     Ok(())
 }
@@ -553,17 +588,32 @@ fn migrate_v7(conn: &Connection) -> Result<(), DbError> {
 fn migrate_v8(conn: &Connection) -> Result<(), DbError> {
     if table_exists(conn, "rivalries")? {
         // Adiciona os dois eixos de intensidade ao modelo dual
-        ensure_column(conn, "rivalries", "historical_intensity", "REAL NOT NULL DEFAULT 0.0")?;
-        ensure_column(conn, "rivalries", "recent_activity",      "REAL NOT NULL DEFAULT 0.0")?;
+        ensure_column(
+            conn,
+            "rivalries",
+            "historical_intensity",
+            "REAL NOT NULL DEFAULT 0.0",
+        )?;
+        ensure_column(
+            conn,
+            "rivalries",
+            "recent_activity",
+            "REAL NOT NULL DEFAULT 0.0",
+        )?;
         // Temporada do último reforço — base para decisão de decaimento
-        ensure_column(conn, "rivalries", "temporada_update",     "INTEGER NOT NULL DEFAULT 0")?;
+        ensure_column(
+            conn,
+            "rivalries",
+            "temporada_update",
+            "INTEGER NOT NULL DEFAULT 0",
+        )?;
 
         // Migra dados existentes: histórico recebe intensidade antiga; recente recebe 30% como calor residual
         conn.execute_batch(
             "UPDATE rivalries SET
                  historical_intensity = intensidade,
                  recent_activity      = ROUND(intensidade * 0.3, 2)
-             WHERE historical_intensity = 0.0 AND intensidade > 0.0;"
+             WHERE historical_intensity = 0.0 AND intensidade > 0.0;",
         )?;
     }
 
@@ -582,7 +632,12 @@ fn migrate_v9(conn: &Connection) -> Result<(), DbError> {
     }
     if table_exists(conn, "seasons")? {
         // Fase da temporada: BlocoRegular | JanelaConvocacao | BlocoEspecial
-        ensure_column(conn, "seasons", "fase", "TEXT NOT NULL DEFAULT 'BlocoRegular'")?;
+        ensure_column(
+            conn,
+            "seasons",
+            "fase",
+            "TEXT NOT NULL DEFAULT 'BlocoRegular'",
+        )?;
     }
     Ok(())
 }
@@ -601,11 +656,21 @@ fn migrate_v11(conn: &Connection) -> Result<(), DbError> {
         // Semana do ano (1-52) — unidade temporal interna do sistema.
         // Categorias regulares: semanas 2-40. Especiais: semanas 41-50.
         // Linhas existentes ficam com 0 (semana não atribuída — saves antigos).
-        ensure_column(conn, "calendar", "week_of_year", "INTEGER NOT NULL DEFAULT 0")?;
+        ensure_column(
+            conn,
+            "calendar",
+            "week_of_year",
+            "INTEGER NOT NULL DEFAULT 0",
+        )?;
 
         // Fase da temporada em que o evento ocorre.
         // BlocoRegular para categorias regulares; BlocoEspecial para especiais.
-        ensure_column(conn, "calendar", "season_phase", "TEXT NOT NULL DEFAULT 'BlocoRegular'")?;
+        ensure_column(
+            conn,
+            "calendar",
+            "season_phase",
+            "TEXT NOT NULL DEFAULT 'BlocoRegular'",
+        )?;
     }
     Ok(())
 }
@@ -617,6 +682,44 @@ fn migrate_v12(conn: &Connection) -> Result<(), DbError> {
         // Sem DEFAULT: NULL é o estado semântico correto para saves legados.
         ensure_column(conn, "calendar", "thematic_slot", "TEXT")?;
     }
+    Ok(())
+}
+
+fn migrate_v13(conn: &Connection) -> Result<(), DbError> {
+    // Novas colunas em race_results para contexto narrativo
+    if table_exists(conn, "race_results")? {
+        ensure_column(
+            conn,
+            "race_results",
+            "gap_to_winner_ms",
+            "REAL NOT NULL DEFAULT 0.0",
+        )?;
+        ensure_column(
+            conn,
+            "race_results",
+            "final_tire_wear",
+            "REAL NOT NULL DEFAULT 1.0",
+        )?;
+    }
+
+    // Nova tabela para histórico de DNFs por pista (feature de redenção)
+    conn.execute_batch(
+        "
+        CREATE TABLE IF NOT EXISTS track_dnf_history (
+            id            TEXT PRIMARY KEY,
+            piloto_id     TEXT NOT NULL,
+            track_name    TEXT NOT NULL,
+            season_num    INTEGER NOT NULL,
+            round         INTEGER NOT NULL,
+            dnf_reason    TEXT NOT NULL,
+            collision_with TEXT,
+            created_at    TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_track_dnf_piloto_track
+            ON track_dnf_history(piloto_id, track_name);
+        ",
+    )?;
+
     Ok(())
 }
 
@@ -661,6 +764,792 @@ fn table_exists(conn: &Connection, table_name: &str) -> Result<bool, DbError> {
         |row| row.get::<_, i64>(0),
     )?;
     Ok(exists > 0)
+}
+
+fn migrate_v14(conn: &Connection) -> Result<(), DbError> {
+    // 1. Tabela de catálogo de incidentes
+    conn.execute_batch(
+        "
+        CREATE TABLE IF NOT EXISTS incident_catalog (
+            id                TEXT PRIMARY KEY,
+            vehicle_class     TEXT NOT NULL,
+            race_format       TEXT NOT NULL,
+            incident_source   TEXT NOT NULL,
+            trigger_type      TEXT NOT NULL,
+            severity_context  TEXT NOT NULL,
+            weight_sprint     INTEGER NOT NULL DEFAULT 0,
+            weight_endurance  INTEGER NOT NULL DEFAULT 0,
+            dnf_template      TEXT NOT NULL,
+            non_dnf_template  TEXT,
+            description_short TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_incident_catalog_class_format
+            ON incident_catalog(vehicle_class, race_format);
+        CREATE INDEX IF NOT EXISTS idx_incident_catalog_source
+            ON incident_catalog(incident_source);
+        ",
+    )?;
+
+    // 2. Seed data
+    seed_incident_catalog(conn)?;
+
+    // 3. Novos campos em race_results
+    if table_exists(conn, "race_results")? {
+        ensure_column(conn, "race_results", "dnf_catalog_id", "TEXT")?;
+        ensure_column(conn, "race_results", "damage_origin_segment", "TEXT")?;
+    }
+
+    Ok(())
+}
+
+fn seed_incident_catalog(conn: &Connection) -> Result<(), DbError> {
+    // INSERT OR IGNORE para idempotência
+    // Formato: (id, vehicle_class, race_format, incident_source, trigger_type,
+    //           severity_context, weight_sprint, weight_endurance,
+    //           dnf_template, non_dnf_template, description_short)
+    let entries: &[(
+        &str,
+        &str,
+        &str,
+        &str,
+        &str,
+        &str,
+        i64,
+        i64,
+        &str,
+        Option<&str>,
+        &str,
+    )] = &[
+        // ═══ STREETBASED SPRINT MECHANICAL SPONTANEOUS ═══
+        (
+            "SB_S_MEC_01",
+            "StreetBased",
+            "Sprint",
+            "Mechanical",
+            "Spontaneous",
+            "Both",
+            100,
+            0,
+            "{driver} abandona com problema no câmbio – sincronizador da 3ª marcha falhou",
+            Some("{driver} com dificuldade no câmbio – perdeu ritmo"),
+            "Câmbio – sincronizador",
+        ),
+        (
+            "SB_S_MEC_02",
+            "StreetBased",
+            "Sprint",
+            "Mechanical",
+            "Spontaneous",
+            "Both",
+            70,
+            0,
+            "{driver} abandona por embreagem queimada após largada",
+            Some("{driver} sentindo a embreagem patinar – ritmo comprometido"),
+            "Embreagem queimada",
+        ),
+        (
+            "SB_S_MEC_03",
+            "StreetBased",
+            "Sprint",
+            "Mechanical",
+            "Spontaneous",
+            "Both",
+            40,
+            0,
+            "{driver} abandona por falha nos freios – disco rachado",
+            Some("{driver} com freios comprometidos – perdendo posições"),
+            "Freio – pastilha/disco",
+        ),
+        (
+            "SB_S_MEC_04",
+            "StreetBased",
+            "Sprint",
+            "Mechanical",
+            "Spontaneous",
+            "Both",
+            20,
+            0,
+            "{driver} abandona por superaquecimento do motor",
+            Some("{driver} com temperatura do motor elevada – reduzindo ritmo"),
+            "Superaquecimento",
+        ),
+        (
+            "SB_S_MEC_05",
+            "StreetBased",
+            "Sprint",
+            "Mechanical",
+            "Spontaneous",
+            "Both",
+            10,
+            0,
+            "{driver} abandona por perda de potência – falha no motor",
+            Some("{driver} com perda de potência – ritmo comprometido"),
+            "Motor – perda de potência",
+        ),
+        // ═══ STREETBASED ENDURANCE MECHANICAL SPONTANEOUS ═══
+        (
+            "SB_E_MEC_01",
+            "StreetBased",
+            "Endurance",
+            "Mechanical",
+            "Spontaneous",
+            "Both",
+            0,
+            100,
+            "{driver} abandona com problemas no câmbio",
+            Some("{driver} com câmbio engasgando – perdeu ritmo"),
+            "Câmbio – sincronizador/garfo",
+        ),
+        (
+            "SB_E_MEC_02",
+            "StreetBased",
+            "Endurance",
+            "Mechanical",
+            "Spontaneous",
+            "Both",
+            0,
+            70,
+            "{driver} abandona por falha no motor – dano interno",
+            Some("{driver} com motor perdendo força"),
+            "Motor – biela/bronzina",
+        ),
+        (
+            "SB_E_MEC_03",
+            "StreetBased",
+            "Endurance",
+            "Mechanical",
+            "Spontaneous",
+            "Both",
+            0,
+            70,
+            "{driver} abandona por embreagem gasta – sem tração",
+            Some("{driver} com embreagem desgastada – tração comprometida"),
+            "Embreagem desgastada",
+        ),
+        (
+            "SB_E_MEC_04",
+            "StreetBased",
+            "Endurance",
+            "Mechanical",
+            "Spontaneous",
+            "Both",
+            0,
+            50,
+            "{driver} abandona por superaquecimento – falha no arrefecimento",
+            Some("{driver} monitorando temperatura elevada – ritmo reduzido"),
+            "Superaquecimento – radiador/bomba",
+        ),
+        (
+            "SB_E_MEC_05",
+            "StreetBased",
+            "Endurance",
+            "Mechanical",
+            "Spontaneous",
+            "Both",
+            0,
+            40,
+            "{driver} abandona por falha elétrica – bateria descarregou",
+            Some("{driver} com problemas elétricos intermitentes"),
+            "Alternador/bateria",
+        ),
+        (
+            "SB_E_MEC_06",
+            "StreetBased",
+            "Endurance",
+            "Mechanical",
+            "Spontaneous",
+            "Both",
+            0,
+            40,
+            "{driver} abandona por perda de freios",
+            Some("{driver} com freios degradados – frenando mais cedo"),
+            "Freio – disco/fluido ferveu",
+        ),
+        (
+            "SB_E_MEC_07",
+            "StreetBased",
+            "Endurance",
+            "Mechanical",
+            "Spontaneous",
+            "Both",
+            0,
+            20,
+            "{driver} abandona por quebra do semi-eixo",
+            Some("{driver} sentindo vibração na transmissão"),
+            "Semi-eixo/cubo de roda",
+        ),
+        (
+            "SB_E_MEC_08",
+            "StreetBased",
+            "Endurance",
+            "Mechanical",
+            "Spontaneous",
+            "Both",
+            0,
+            10,
+            "{driver} abandona por falha na alimentação de combustível",
+            Some("{driver} com motor falhando intermitentemente"),
+            "Bomba de combustível",
+        ),
+        // ═══ RACESPEC SPRINT MECHANICAL SPONTANEOUS ═══
+        (
+            "RS_S_MEC_01",
+            "RaceSpec",
+            "Sprint",
+            "Mechanical",
+            "Spontaneous",
+            "Both",
+            100,
+            0,
+            "{driver} abandona por falha no câmbio – ficou preso em uma marcha",
+            Some("{driver} com câmbio travando – perdeu posições"),
+            "Câmbio – garfo/atuador",
+        ),
+        (
+            "RS_S_MEC_02",
+            "RaceSpec",
+            "Sprint",
+            "Mechanical",
+            "Spontaneous",
+            "Both",
+            70,
+            0,
+            "{driver} abandona por embreagem queimada",
+            Some("{driver} com embreagem patinando"),
+            "Embreagem queimada",
+        ),
+        (
+            "RS_S_MEC_03",
+            "RaceSpec",
+            "Sprint",
+            "Mechanical",
+            "Spontaneous",
+            "Both",
+            40,
+            0,
+            "{driver} abandona por falha nos freios – disco rachado",
+            Some("{driver} com freios comprometidos"),
+            "Freio – disco rachado",
+        ),
+        (
+            "RS_S_MEC_04",
+            "RaceSpec",
+            "Sprint",
+            "Mechanical",
+            "Spontaneous",
+            "Both",
+            20,
+            0,
+            "{driver} abandona por falha eletrônica – carro em modo de proteção",
+            Some("{driver} com eletrônica instável – ritmo irregular"),
+            "Eletrônica – sensor/ECU",
+        ),
+        (
+            "RS_S_MEC_05",
+            "RaceSpec",
+            "Sprint",
+            "Mechanical",
+            "Spontaneous",
+            "Both",
+            10,
+            0,
+            "{driver} abandona por superaquecimento do motor",
+            Some("{driver} com temperatura elevada – gerenciando ritmo"),
+            "Superaquecimento",
+        ),
+        // ═══ RACESPEC ENDURANCE MECHANICAL SPONTANEOUS ═══
+        (
+            "RS_E_MEC_01",
+            "RaceSpec",
+            "Endurance",
+            "Mechanical",
+            "Spontaneous",
+            "Both",
+            0,
+            100,
+            "{driver} abandona por problemas no câmbio",
+            Some("{driver} com câmbio apresentando falhas"),
+            "Câmbio – garfo/engrenagem/óleo",
+        ),
+        (
+            "RS_E_MEC_02",
+            "RaceSpec",
+            "Endurance",
+            "Mechanical",
+            "Spontaneous",
+            "Both",
+            0,
+            70,
+            "{driver} abandona por embreagem gasta",
+            Some("{driver} com embreagem desgastada"),
+            "Embreagem desgastada",
+        ),
+        (
+            "RS_E_MEC_03",
+            "RaceSpec",
+            "Endurance",
+            "Mechanical",
+            "Spontaneous",
+            "Both",
+            0,
+            60,
+            "{driver} abandona por falha no motor",
+            Some("{driver} com motor perdendo rendimento"),
+            "Motor – turbo/biela",
+        ),
+        (
+            "RS_E_MEC_04",
+            "RaceSpec",
+            "Endurance",
+            "Mechanical",
+            "Spontaneous",
+            "Both",
+            0,
+            50,
+            "{driver} abandona por falha elétrica – alternador parou de carregar",
+            Some("{driver} com problemas elétricos recorrentes"),
+            "Alternador/bateria",
+        ),
+        (
+            "RS_E_MEC_05",
+            "RaceSpec",
+            "Endurance",
+            "Mechanical",
+            "Spontaneous",
+            "Both",
+            0,
+            40,
+            "{driver} abandona por superaquecimento",
+            Some("{driver} gerenciando temperatura elevada"),
+            "Superaquecimento – radiador/bomba",
+        ),
+        (
+            "RS_E_MEC_06",
+            "RaceSpec",
+            "Endurance",
+            "Mechanical",
+            "Spontaneous",
+            "Both",
+            0,
+            40,
+            "{driver} abandona por perda de freios",
+            Some("{driver} com freios degradados"),
+            "Freio – disco/fluido",
+        ),
+        (
+            "RS_E_MEC_07",
+            "RaceSpec",
+            "Endurance",
+            "Mechanical",
+            "Spontaneous",
+            "Both",
+            0,
+            20,
+            "{driver} abandona por falha no diferencial",
+            Some("{driver} com diferencial apresentando ruídos"),
+            "Diferencial – vazamento/travamento",
+        ),
+        (
+            "RS_E_MEC_08",
+            "RaceSpec",
+            "Endurance",
+            "Mechanical",
+            "Spontaneous",
+            "Both",
+            0,
+            20,
+            "{driver} abandona por falha eletrônica",
+            Some("{driver} com eletrônica intermitente"),
+            "Eletrônica – sensor ABS/TC/ECU",
+        ),
+        (
+            "RS_E_MEC_09",
+            "RaceSpec",
+            "Endurance",
+            "Mechanical",
+            "Spontaneous",
+            "Both",
+            0,
+            10,
+            "{driver} abandona por falha na alimentação de combustível",
+            Some("{driver} com motor falhando"),
+            "Bomba de combustível",
+        ),
+        // ═══ ERRO DE COMBUSTÍVEL ENDURANCE (Mechanical/Spontaneous) ═══
+        // Resolução 1: usa Mechanical para ser selecionado pelo roll_mechanical existente.
+        (
+            "SB_E_PIT_02",
+            "StreetBased",
+            "Endurance",
+            "Mechanical",
+            "Spontaneous",
+            "DnfOnly",
+            0,
+            30,
+            "{driver} ficou sem combustível na pista",
+            None,
+            "Erro de cálculo de combustível",
+        ),
+        (
+            "RS_E_PIT_02",
+            "RaceSpec",
+            "Endurance",
+            "Mechanical",
+            "Spontaneous",
+            "DnfOnly",
+            0,
+            30,
+            "{driver} ficou sem combustível na pista",
+            None,
+            "Erro de cálculo de combustível",
+        ),
+        // ═══ STREETBASED POST-COLLISION (Both formats) ═══
+        (
+            "SB_COL_01",
+            "StreetBased",
+            "Both",
+            "PostCollision",
+            "PostCollision",
+            "Both",
+            100,
+            100,
+            "{driver} abandona por pneu cortado após contato",
+            Some("{driver} com pneu danificado após contato – perdeu posições"),
+            "Pneu cortado",
+        ),
+        (
+            "SB_COL_02",
+            "StreetBased",
+            "Both",
+            "PostCollision",
+            "PostCollision",
+            "Both",
+            70,
+            70,
+            "{driver} abandona por dano na suspensão após contato – convergência comprometida",
+            Some("{driver} com suspensão desalinhada após contato – perdendo ritmo"),
+            "Suspensão desalinhada",
+        ),
+        (
+            "SB_COL_03",
+            "StreetBased",
+            "Both",
+            "PostCollision",
+            "PostCollision",
+            "Both",
+            40,
+            70,
+            "{driver} abandona por superaquecimento – radiador danificado após contato",
+            Some("{driver} com temperatura subindo após contato – gerenciando dano"),
+            "Radiador furado por detrito",
+        ),
+        (
+            "SB_COL_04",
+            "StreetBased",
+            "Both",
+            "PostCollision",
+            "PostCollision",
+            "Both",
+            40,
+            40,
+            "{driver} abandona por roda danificada após contato",
+            Some("{driver} com roda entortada após contato – vibração no carro"),
+            "Roda entortada",
+        ),
+        (
+            "SB_COL_05",
+            "StreetBased",
+            "Both",
+            "PostCollision",
+            "PostCollision",
+            "Both",
+            10,
+            40,
+            "{driver} abandona por vazamento no arrefecimento após contato",
+            Some("{driver} com vazamento detectado após contato"),
+            "Mangueira de arrefecimento solta",
+        ),
+        // ═══ RACESPEC POST-COLLISION (Both formats) ═══
+        (
+            "RS_COL_01",
+            "RaceSpec",
+            "Both",
+            "PostCollision",
+            "PostCollision",
+            "Both",
+            100,
+            100,
+            "{driver} abandona por pneu cortado após contato",
+            Some("{driver} com pneu danificado após contato"),
+            "Pneu cortado",
+        ),
+        (
+            "RS_COL_02",
+            "RaceSpec",
+            "Both",
+            "PostCollision",
+            "PostCollision",
+            "Both",
+            100,
+            100,
+            "{driver} abandona por dano aerodinâmico – perda crítica de downforce",
+            Some("{driver} com dano aerodinâmico após contato – carro instável"),
+            "Splitter/difusor danificado",
+        ),
+        (
+            "RS_COL_03",
+            "RaceSpec",
+            "Both",
+            "PostCollision",
+            "PostCollision",
+            "Both",
+            70,
+            70,
+            "{driver} abandona por dano na suspensão após contato",
+            Some("{driver} com suspensão comprometida após contato"),
+            "Suspensão desalinhada/entortada",
+        ),
+        (
+            "RS_COL_04",
+            "RaceSpec",
+            "Both",
+            "PostCollision",
+            "PostCollision",
+            "Both",
+            70,
+            100,
+            "{driver} abandona por superaquecimento dos freios – duto bloqueado",
+            Some("{driver} com freios superaquecendo – duto de ar bloqueado"),
+            "Duto de freio bloqueado",
+        ),
+        (
+            "RS_COL_05",
+            "RaceSpec",
+            "Both",
+            "PostCollision",
+            "PostCollision",
+            "Both",
+            40,
+            70,
+            "{driver} abandona por superaquecimento – radiador danificado após contato",
+            Some("{driver} com temperatura subindo após contato"),
+            "Radiador/intercooler furado",
+        ),
+        (
+            "RS_COL_06",
+            "RaceSpec",
+            "Both",
+            "PostCollision",
+            "PostCollision",
+            "Both",
+            40,
+            40,
+            "{driver} abandona por roda danificada após contato",
+            Some("{driver} com roda entortada após contato"),
+            "Roda entortada",
+        ),
+        (
+            "RS_COL_07",
+            "RaceSpec",
+            "Both",
+            "PostCollision",
+            "PostCollision",
+            "Both",
+            20,
+            40,
+            "{driver} abandona por perda de ABS/controle de tração após contato",
+            Some("{driver} sem assistências eletrônicas após contato – cuidado redobrado"),
+            "Sensor ABS/TC arrancado",
+        ),
+        (
+            "RS_COL_08",
+            "RaceSpec",
+            "Endurance",
+            "PostCollision",
+            "PostCollision",
+            "Both",
+            0,
+            40,
+            "{driver} recebe penalidade por iluminação danificada",
+            Some("{driver} com faróis danificados – penalidade aplicada"),
+            "Farol/luz traseira quebrada",
+        ),
+        // ═══ STREETBASED DRIVER ERROR SPONTANEOUS ═══
+        (
+            "SB_S_ERR_01",
+            "StreetBased",
+            "Both",
+            "DriverError",
+            "Spontaneous",
+            "NonDnfOnly",
+            80,
+            60,
+            "",
+            Some("{driver} escapou na saída da curva e perdeu posições"),
+            "Saída de pista",
+        ),
+        (
+            "SB_S_ERR_02",
+            "StreetBased",
+            "Both",
+            "DriverError",
+            "Spontaneous",
+            "NonDnfOnly",
+            70,
+            50,
+            "",
+            Some("{driver} rodou na chicane e perdeu posições"),
+            "Rodada na chicane",
+        ),
+        (
+            "SB_S_ERR_03",
+            "StreetBased",
+            "Both",
+            "DriverError",
+            "Spontaneous",
+            "DnfOnly",
+            40,
+            30,
+            "{driver} abandona após erro de pilotagem – saiu da pista",
+            None,
+            "Erro fatal – saída de pista",
+        ),
+        // ═══ RACESPEC DRIVER ERROR SPONTANEOUS ═══
+        (
+            "RS_S_ERR_01",
+            "RaceSpec",
+            "Both",
+            "DriverError",
+            "Spontaneous",
+            "NonDnfOnly",
+            80,
+            60,
+            "",
+            Some("{driver} perdeu a traseira e caiu posições"),
+            "Perda de traseira",
+        ),
+        (
+            "RS_S_ERR_02",
+            "RaceSpec",
+            "Both",
+            "DriverError",
+            "Spontaneous",
+            "NonDnfOnly",
+            70,
+            50,
+            "",
+            Some("{driver} errou o ponto de frenagem e perdeu posições"),
+            "Frenagem tardia",
+        ),
+        (
+            "RS_S_ERR_03",
+            "RaceSpec",
+            "Both",
+            "DriverError",
+            "Spontaneous",
+            "DnfOnly",
+            40,
+            30,
+            "{driver} abandona após erro de pilotagem",
+            None,
+            "Erro fatal – bateu na barreira",
+        ),
+        // ═══ OPERATIONAL POST SPIN STALL ═══
+        (
+            "SB_S_PIT_01",
+            "StreetBased",
+            "Sprint",
+            "Operational",
+            "PostSpinStall",
+            "DnfOnly",
+            40,
+            0,
+            "{driver} rodou e não conseguiu religar o motor",
+            None,
+            "Rodada com stall",
+        ),
+        (
+            "SB_S_PIT_02",
+            "StreetBased",
+            "Sprint",
+            "Operational",
+            "PostSpinStall",
+            "DnfOnly",
+            60,
+            0,
+            "{driver} rodou e cravou na brita – não conseguiu sair",
+            None,
+            "Cravou na brita",
+        ),
+        (
+            "SB_E_PIT_01",
+            "StreetBased",
+            "Endurance",
+            "Operational",
+            "PostSpinStall",
+            "DnfOnly",
+            0,
+            40,
+            "{driver} rodou e não conseguiu religar",
+            None,
+            "Rodada com stall",
+        ),
+        (
+            "RS_S_PIT_01",
+            "RaceSpec",
+            "Sprint",
+            "Operational",
+            "PostSpinStall",
+            "DnfOnly",
+            40,
+            0,
+            "{driver} rodou e não conseguiu religar",
+            None,
+            "Rodada com stall",
+        ),
+        (
+            "RS_S_PIT_02",
+            "RaceSpec",
+            "Sprint",
+            "Operational",
+            "PostSpinStall",
+            "DnfOnly",
+            60,
+            0,
+            "{driver} rodou e perdeu tempo de volta – não conseguiu sair da brita",
+            None,
+            "Cravou na brita",
+        ),
+        (
+            "RS_E_PIT_01",
+            "RaceSpec",
+            "Endurance",
+            "Operational",
+            "PostSpinStall",
+            "DnfOnly",
+            0,
+            40,
+            "{driver} rodou e não conseguiu religar",
+            None,
+            "Rodada com stall",
+        ),
+    ];
+
+    let mut stmt = conn.prepare(
+        "INSERT OR IGNORE INTO incident_catalog
+         (id, vehicle_class, race_format, incident_source, trigger_type,
+          severity_context, weight_sprint, weight_endurance,
+          dnf_template, non_dnf_template, description_short)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
+    )?;
+
+    for e in entries {
+        stmt.execute(rusqlite::params![
+            e.0, e.1, e.2, e.3, e.4, e.5, e.6, e.7, e.8, e.9, e.10
+        ])?;
+    }
+
+    Ok(())
 }
 
 // ── DDL das 19 tabelas ────────────────────────────────────────────────────────
@@ -1062,7 +1951,7 @@ mod tests {
 
         run_pending(&conn).expect("migration should succeed");
 
-        assert_eq!(get_schema_version(&conn).expect("schema version"), 12);
+        assert_eq!(get_schema_version(&conn).expect("schema version"), 14);
         assert!(column_exists(&conn, "teams", "nome_curto"));
         assert!(column_exists(&conn, "teams", "stats_vitorias"));
         assert!(column_exists(&conn, "teams", "stats_pontos"));
@@ -1142,7 +2031,7 @@ mod tests {
 
         run_pending(&conn).expect("migration should succeed");
 
-        assert_eq!(get_schema_version(&conn).expect("schema version"), 12);
+        assert_eq!(get_schema_version(&conn).expect("schema version"), 14);
         assert!(column_exists(&conn, "contracts", "piloto_nome"));
         assert!(column_exists(&conn, "contracts", "equipe_nome"));
         assert!(column_exists(&conn, "contracts", "duracao_anos"));
@@ -1215,7 +2104,7 @@ mod tests {
 
         run_pending(&conn).expect("migration should succeed");
 
-        assert_eq!(get_schema_version(&conn).expect("schema version"), 12);
+        assert_eq!(get_schema_version(&conn).expect("schema version"), 14);
         assert!(column_exists(&conn, "seasons", "rodada_atual"));
         assert!(column_exists(&conn, "seasons", "updated_at"));
         assert!(column_exists(&conn, "calendar", "season_id"));
@@ -1244,6 +2133,86 @@ mod tests {
         assert_eq!(calendar_row.1, "Laguna Seca");
         assert_eq!(calendar_row.2, 15);
         assert_eq!(calendar_row.3, "Dry");
+    }
+
+    #[test]
+    fn test_run_pending_migrates_to_v14_creates_incident_catalog() {
+        let conn = Connection::open_in_memory().expect("in-memory db");
+
+        // Schema mínimo simulando um DB na versão 13
+        conn.execute_batch(
+            "
+            CREATE TABLE meta (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+            INSERT INTO meta (key, value) VALUES ('schema_version', '13');
+
+            CREATE TABLE race_results (
+                id            TEXT PRIMARY KEY,
+                race_id       TEXT NOT NULL,
+                piloto_id     TEXT NOT NULL,
+                equipe_id     TEXT NOT NULL,
+                posicao_final INTEGER NOT NULL DEFAULT 0,
+                pontos        REAL NOT NULL DEFAULT 0.0,
+                gap_to_winner_ms REAL NOT NULL DEFAULT 0.0,
+                final_tire_wear  REAL NOT NULL DEFAULT 1.0
+            );
+            ",
+        )
+        .expect("legacy v13 schema");
+
+        run_pending(&conn).expect("migration to v14 should succeed");
+
+        // schema_version atualizado
+        assert_eq!(get_schema_version(&conn).expect("schema version"), 14);
+
+        // Tabela incident_catalog criada
+        assert!(
+            table_exists(&conn, "incident_catalog").expect("table_exists"),
+            "incident_catalog table must exist after v14"
+        );
+
+        // Mais de 30 entries seed inseridos
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM incident_catalog", [], |row| {
+                row.get(0)
+            })
+            .expect("count incident_catalog");
+        assert!(count > 30, "seed should insert >30 entries, got {count}");
+
+        // Colunas adicionadas em race_results
+        assert!(
+            column_exists(&conn, "race_results", "dnf_catalog_id"),
+            "race_results must have dnf_catalog_id"
+        );
+        assert!(
+            column_exists(&conn, "race_results", "damage_origin_segment"),
+            "race_results must have damage_origin_segment"
+        );
+
+        // Entry SB_S_MEC_01 tem vehicle_class = 'StreetBased'
+        let vc: String = conn
+            .query_row(
+                "SELECT vehicle_class FROM incident_catalog WHERE id = 'SB_S_MEC_01'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("SB_S_MEC_01 must exist");
+        assert_eq!(vc, "StreetBased");
+
+        // SB_E_PIT_02 tem incident_source = 'Mechanical' (não 'Operational')
+        let src: String = conn
+            .query_row(
+                "SELECT incident_source FROM incident_catalog WHERE id = 'SB_E_PIT_02'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("SB_E_PIT_02 must exist");
+        assert_eq!(
+            src, "Mechanical",
+            "SB_E_PIT_02 must use Mechanical source (Resolução 1)"
+        );
     }
 
     fn column_exists(conn: &Connection, table: &str, column: &str) -> bool {

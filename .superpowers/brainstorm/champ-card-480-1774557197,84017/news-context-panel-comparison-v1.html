@@ -1,0 +1,102 @@
+<h2>Painel Contextual Unificado</h2>
+<p class="subtitle">Comparacao entre um bloco unico com faixa superior de navegacao e um bloco unico mais limpo, sem essa divisao visual.</p>
+
+<div class="cards">
+  <div class="card" data-choice="com-faixa" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup">
+        <div class="mockup-header">Opcao A · Com Faixa Superior</div>
+        <div class="mockup-body">
+          <div style="border:1px solid rgba(255,255,255,0.12); border-radius:24px; padding:18px; background:linear-gradient(180deg, rgba(10,17,29,0.96), rgba(11,18,31,0.9)); display:flex; flex-direction:column; gap:16px;">
+            <div style="display:flex; flex-wrap:wrap; gap:10px;">
+              <div style="padding:10px 16px; border-radius:999px; border:1px solid rgba(88,166,255,0.35); background:rgba(88,166,255,0.14); color:#f4f8ff; font-weight:700;">Corridas</div>
+              <div style="padding:10px 16px; border-radius:999px; border:1px solid rgba(255,255,255,0.08); background:rgba(255,255,255,0.04); color:#9fb0c3;">Pilotos</div>
+              <div style="padding:10px 16px; border-radius:999px; border:1px solid rgba(255,255,255,0.08); background:rgba(255,255,255,0.04); color:#9fb0c3;">Equipes</div>
+              <div style="padding:10px 16px; border-radius:999px; border:1px solid rgba(255,255,255,0.08); background:rgba(255,255,255,0.04); color:#9fb0c3;">Mercado</div>
+            </div>
+
+            <div style="border-top:1px solid rgba(255,255,255,0.08); padding-top:16px; display:flex; flex-direction:column; gap:14px;">
+              <div style="display:flex; align-items:center; justify-content:space-between; gap:16px;">
+                <div>
+                  <div class="label">Filtro Ativo</div>
+                  <div style="margin-top:6px; font-size:20px; font-weight:700; color:#f4f8ff;">Corridas</div>
+                  <div style="margin-top:6px; color:#9fb0c3; font-size:13px;">A leitura gira em torno das etapas da temporada.</div>
+                </div>
+                <div style="padding:10px 12px; border-radius:16px; background:rgba(88,166,255,0.08); border:1px solid rgba(88,166,255,0.14); color:#d8e9ff; font-size:12px;">Okayama</div>
+              </div>
+
+              <div style="display:flex; flex-wrap:wrap; gap:10px;">
+                <div style="padding:10px 14px; border-radius:999px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08); color:#d8e0ea;">Okayama</div>
+                <div style="padding:10px 14px; border-radius:999px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08); color:#d8e0ea;">Laguna Seca</div>
+                <div style="padding:10px 14px; border-radius:999px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08); color:#d8e0ea;">Road Atlanta</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>Com Faixa Integrada</h3>
+      <p>Os filtros principais continuam muito claros, mas passam a morar no topo do mesmo painel.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="sem-faixa" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup">
+        <div class="mockup-header">Opcao B · Sem Faixa Superior</div>
+        <div class="mockup-body">
+          <div style="border:1px solid rgba(255,255,255,0.12); border-radius:24px; padding:18px; background:linear-gradient(180deg, rgba(10,17,29,0.96), rgba(11,18,31,0.9)); display:flex; flex-direction:column; gap:16px;">
+            <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:18px;">
+              <div>
+                <div class="label">Exploracao Atual</div>
+                <div style="margin-top:6px; font-size:22px; font-weight:700; color:#f4f8ff;">Corridas</div>
+                <div style="margin-top:6px; color:#9fb0c3; font-size:13px;">O painel inteiro assume o filtro ativo e fica com menos cara de menu.</div>
+              </div>
+              <div style="display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; max-width:280px;">
+                <div style="padding:8px 12px; border-radius:999px; border:1px solid rgba(88,166,255,0.35); background:rgba(88,166,255,0.14); color:#f4f8ff; font-weight:700;">Corridas</div>
+                <div style="padding:8px 12px; border-radius:999px; border:1px solid rgba(255,255,255,0.08); background:rgba(255,255,255,0.04); color:#9fb0c3;">Pilotos</div>
+                <div style="padding:8px 12px; border-radius:999px; border:1px solid rgba(255,255,255,0.08); background:rgba(255,255,255,0.04); color:#9fb0c3;">Equipes</div>
+                <div style="padding:8px 12px; border-radius:999px; border:1px solid rgba(255,255,255,0.08); background:rgba(255,255,255,0.04); color:#9fb0c3;">Mercado</div>
+              </div>
+            </div>
+
+            <div style="display:flex; flex-wrap:wrap; gap:10px;">
+              <div style="padding:11px 14px; border-radius:18px; background:rgba(88,166,255,0.08); border:1px solid rgba(88,166,255,0.14); color:#d8e9ff;">Abertura</div>
+              <div style="padding:11px 14px; border-radius:18px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08); color:#d8e0ea;">Okayama</div>
+              <div style="padding:11px 14px; border-radius:18px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08); color:#d8e0ea;">Rivais</div>
+              <div style="padding:11px 14px; border-radius:18px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08); color:#d8e0ea;">Consequencias</div>
+            </div>
+
+            <div style="border-top:1px solid rgba(255,255,255,0.08); padding-top:14px; color:#9fb0c3; font-size:13px;">
+              O bloco inteiro se comporta como uma unica peca. Os filtros principais existem, mas deixam de parecer uma camada separada.
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>Sem Faixa Separada</h3>
+      <p>Mais elegante e mais editorial. Os filtros continuam presentes, mas ficam dissolvidos dentro do painel.</p>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="pros-cons">
+    <div class="pros">
+      <h4>Minha recomendacao</h4>
+      <ul>
+        <li>Opcao A se voce quer clareza imediata de navegacao.</li>
+        <li>Opcao B se voce quer um visual mais premium e menos fragmentado.</li>
+      </ul>
+    </div>
+    <div class="cons">
+      <h4>O que observar</h4>
+      <ul>
+        <li>Na Opcao A, veja se ainda parece dividido demais.</li>
+        <li>Na Opcao B, veja se o filtro principal ainda fica claro o suficiente.</li>
+      </ul>
+    </div>
+  </div>
+</div>

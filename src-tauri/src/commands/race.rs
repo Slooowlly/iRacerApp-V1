@@ -16,20 +16,26 @@ use crate::db::queries::news as news_queries;
 use crate::db::queries::seasons as season_queries;
 use crate::db::queries::standings as standings_queries;
 use crate::db::queries::standings::ChampionshipContext;
+use crate::db::queries::teams as team_queries;
+use crate::db::queries::track_history::record_race_dnfs;
 use crate::event_interest::{
     calculate_expected_event_interest, calculate_realized_event_interest, EventInterestContext,
     InterestTier, RealizedEventInterest,
 };
-use crate::db::queries::teams as team_queries;
 use crate::generators::ids::{next_ids, IdType};
 use crate::models::injury::Injury;
+use crate::models::season::Season;
 use crate::news::generator::{
     build_incident_news_item, build_injury_news_items, build_seasonal_framing_news_item,
     generate_news_from_race, select_primary_incident,
 };
+use crate::news::race_context::build_race_narrative_context;
 use crate::news::season_framing::try_generate_seasonal_framing;
 use crate::news::{NewsImportance, NewsItem, NewsType};
-use crate::simulation::batch::{BriefRaceResult, CategorySimResult, SimHighlight, SimultaneousResults};
+use crate::simulation::batch::{
+    BriefRaceResult, CategorySimResult, SimHighlight, SimultaneousResults,
+};
+use crate::simulation::catalog::IncidentCatalog;
 use crate::simulation::context::{SimDriver, SimulationContext};
 use crate::simulation::engine::run_full_race;
 use crate::simulation::incidents::IncidentResult;
@@ -50,8 +56,12 @@ fn compute_post_race_impact(
     let category = get_category_config(&race_entry.categoria)?;
     let total_rodadas = category.corridas_por_temporada as i32;
     let player = driver_queries::get_player_driver(conn).ok()?;
-    let champ = standings_queries::get_championship_context(conn, &race_entry.categoria)
-        .unwrap_or(ChampionshipContext { player_position: 0, gap_to_leader: 0 });
+    let champ = standings_queries::get_championship_context(conn, &race_entry.categoria).unwrap_or(
+        ChampionshipContext {
+            player_position: 0,
+            gap_to_leader: 0,
+        },
+    );
     let player_result = player_race.race_results.iter().find(|r| r.is_jogador)?;
 
     let remaining = total_rodadas - race_entry.rodada;
@@ -204,6 +214,7 @@ pub(crate) fn simulate_race_weekend_in_base_dir(
             &all_incidents,
             &player_new_injuries,
             Some(&excluded_driver_id),
+            &player_race.notable_incident_pilot_ids,
         )
         .map(|inc| inc.pilot_id.clone());
 
@@ -235,7 +246,11 @@ pub(crate) fn simulate_race_weekend_in_base_dir(
             &realized,
         );
 
-        (realized.news_importance_bias, impacts, realized.final_tier.clone())
+        (
+            realized.news_importance_bias,
+            impacts,
+            realized.final_tier.clone(),
+        )
     } else {
         (0, vec![], InterestTier::Baixo)
     };
@@ -243,7 +258,10 @@ pub(crate) fn simulate_race_weekend_in_base_dir(
     for impact in &ai_media_impacts {
         driver_queries::update_driver_midia_delta(&db.conn, &impact.driver_id, impact.delta)
             .map_err(|e| {
-                format!("Falha ao aplicar impacto de mídia para '{}': {e}", impact.driver_id)
+                format!(
+                    "Falha ao aplicar impacto de mídia para '{}': {e}",
+                    impact.driver_id
+                )
             })?;
     }
 
@@ -256,13 +274,17 @@ pub(crate) fn simulate_race_weekend_in_base_dir(
     persist_race_news(
         &db.conn,
         &player_race,
-        active_season.numero,
+        &active_season,
         race_entry.rodada,
         &race_entry.categoria,
         post_race_bias,
         race_entry.thematic_slot,
         &interest_tier,
-        &player_race.race_results.iter().flat_map(|r| r.incidents.clone()).collect::<Vec<_>>(),
+        &player_race
+            .race_results
+            .iter()
+            .flat_map(|r| r.incidents.clone())
+            .collect::<Vec<_>>(),
         &player_new_injuries,
     )?;
     let other_categories = simulate_other_categories(
@@ -322,7 +344,14 @@ fn simulate_category_race(
         race_entry.rodada >= category.corridas_por_temporada as i32,
     );
     let mut rng = rand::thread_rng();
-    let result = run_full_race(&sim_drivers, &ctx, category.id == "endurance", &mut rng);
+    let catalog = IncidentCatalog::load(&db.conn).unwrap_or_else(|_| IncidentCatalog::empty());
+    let result = run_full_race(
+        &sim_drivers,
+        &ctx,
+        category.id == "endurance",
+        &catalog,
+        &mut rng,
+    );
     let next_round = if advance_player_round {
         Some((active_season.rodada_atual + 1).min(category.corridas_por_temporada as i32))
     } else {
@@ -338,18 +367,26 @@ fn simulate_category_race(
         apply_race_result_to_database(tx, &result, &teams)?;
 
         // 3. Verifica os incidentes recém-gerados e processa possíveis lesões
-        let flat_incidents: Vec<_> = result.race_results.iter().flat_map(|r| r.incidents.clone()).collect();
+        let flat_incidents: Vec<_> = result
+            .race_results
+            .iter()
+            .flat_map(|r| r.incidents.clone())
+            .collect();
         let new_injuries = crate::evolution::injury::process_new_injuries(
-            tx, 
-            active_season.numero as i32, 
-            &race_entry.id, 
+            tx,
+            active_season.numero as i32,
+            &race_entry.id,
             &flat_incidents,
-            &mut rng
+            &mut rng,
         )?;
         new_injuries_out = new_injuries;
 
         // 4. Salva o resumo da corrida e avança
-        crate::db::queries::races::insert_race_results_batch(tx, &race_entry.id, &result.race_results)?;
+        crate::db::queries::races::insert_race_results_batch(
+            tx,
+            &race_entry.id,
+            &result.race_results,
+        )?;
         calendar_queries::mark_race_completed(tx, &race_entry.id)?;
         if let Some(round) = next_round {
             season_queries::update_season_rodada(tx, &active_season.id, round)?;
@@ -483,7 +520,7 @@ fn apply_race_result_to_database(
     teams: &[Team],
 ) -> Result<(), DbError> {
     for race_driver in &result.race_results {
-        let driver = driver_queries::get_driver(tx, &race_driver.pilot_id)?;
+        let mut driver = driver_queries::get_driver(tx, &race_driver.pilot_id)?;
         let mut season_stats = driver.stats_temporada.clone();
         let mut career_stats = driver.stats_carreira.clone();
 
@@ -512,17 +549,14 @@ fn apply_race_result_to_database(
             .map(|current| current.min(race_driver.finish_position as u32))
             .or(Some(race_driver.finish_position as u32));
 
-        driver_queries::update_driver_stats(
-            tx,
-            &driver.id,
-            &season_stats,
-            &career_stats,
-            driver.motivacao,
-            better_result,
-            driver.temporadas_na_categoria,
-            driver.corridas_na_categoria + 1,
-            driver.temporadas_motivacao_baixa,
-        )?;
+        driver.stats_temporada = season_stats;
+        driver.stats_carreira = career_stats;
+        driver.melhor_resultado_temp = better_result;
+        driver.corridas_na_categoria += 1;
+        driver.ultimos_resultados =
+            append_recent_result(&driver.ultimos_resultados, race_driver.finish_position, race_driver.is_dnf);
+
+        driver_queries::update_driver(tx, &driver)?;
     }
 
     let race_results_by_team = group_results_by_team(result);
@@ -568,6 +602,35 @@ fn apply_race_result_to_database(
     }
 
     Ok(())
+}
+
+fn append_recent_result(
+    existing: &serde_json::Value,
+    finish_position: i32,
+    is_dnf: bool,
+) -> serde_json::Value {
+    let mut results: Vec<serde_json::Value> = existing
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| entry.as_object().cloned())
+        .map(serde_json::Value::Object)
+        .collect();
+
+    results.push(serde_json::json!({
+        "position": finish_position,
+        "is_dnf": is_dnf,
+        "has_fastest_lap": false,
+        "grid_position": 0,
+        "positions_gained": 0
+    }));
+
+    if results.len() > 5 {
+        let keep_from = results.len() - 5;
+        results.drain(0..keep_from);
+    }
+
+    serde_json::Value::Array(results)
 }
 
 fn build_team_lookup<'a>(
@@ -623,7 +686,7 @@ fn update_last_played(meta_path: &Path) -> Result<(), String> {
 fn persist_race_news(
     conn: &rusqlite::Connection,
     race_result: &RaceResult,
-    season_number: i32,
+    active_season: &Season,
     round: i32,
     category_id: &str,
     news_importance_bias: i32,
@@ -632,6 +695,7 @@ fn persist_race_news(
     flat_incidents: &[IncidentResult],
     new_injuries: &[Injury],
 ) -> Result<(), String> {
+    let season_number = active_season.numero;
     let player = driver_queries::get_player_driver(conn).ok();
     let player_id = player.as_ref().map(|p| p.id.as_str());
 
@@ -639,6 +703,46 @@ fn persist_race_news(
     let mut timestamp = news_queries::get_latest_news_timestamp(conn)
         .map_err(|e| format!("Falha ao buscar timestamp de noticias: {e}"))?
         + 1;
+
+    // Registrar DNFs no histórico de pistas (para narrativas de redenção)
+    if let Err(e) = record_race_dnfs(
+        conn,
+        &race_result.race_results,
+        &race_result.track_name,
+        season_number,
+        round,
+    ) {
+        eprintln!(
+            "[race] Falha ao registrar DNFs no histórico de pistas: {:?}",
+            e
+        );
+    }
+
+    // Construir contexto narrativo enriquecido
+    // Degrada silenciosamente para None se falhar — camada narrativa, não factual.
+    let total_rounds = conn
+        .query_row(
+            "SELECT COUNT(*) FROM calendar WHERE temporada_id = ?1 AND categoria = ?2",
+            rusqlite::params![active_season.id, category_id],
+            |row| row.get::<_, i32>(0),
+        )
+        .unwrap_or(0);
+
+    let narrative_ctx = build_race_narrative_context(
+        conn,
+        race_result,
+        active_season,
+        round,
+        total_rounds,
+        category_id,
+        thematic_slot,
+    )
+    .map_err(|e| {
+        eprintln!("[race] Falha ao construir RaceNarrativeContext: {:?}", e);
+        e
+    })
+    .ok();
+
     // Carrega visibilidade dos pilotos da corrida para modulação narrativa leve.
     // Degrada silenciosamente para HashMap vazio se falhar — camada narrativa, não factual.
     let driver_midia: HashMap<String, f64> = race_result
@@ -659,6 +763,7 @@ fn persist_race_news(
         &mut temp_id,
         &mut timestamp,
         &driver_midia,
+        narrative_ctx.as_ref(),
     );
     // Em eventos principais (bias >= 2), elevar a primeira notícia de Corrida de Alta → Destaque
     if news_importance_bias >= 2 {
@@ -679,7 +784,12 @@ fn persist_race_news(
         .collect();
 
     // Select and build the single most relevant incident news item (optional)
-    if let Some(inc) = select_primary_incident(flat_incidents, new_injuries, player_id) {
+    if let Some(inc) = select_primary_incident(
+        flat_incidents,
+        new_injuries,
+        player_id,
+        &race_result.notable_incident_pilot_ids,
+    ) {
         let pilot_name = pilot_names
             .get(&inc.pilot_id)
             .map(|s| s.as_str())
@@ -689,6 +799,12 @@ fn persist_race_news(
             .as_deref()
             .and_then(|lid| pilot_names.get(lid))
             .map(|s| s.as_str());
+        let linked_pilot_is_dnf = inc
+            .linked_pilot_id
+            .as_deref()
+            .and_then(|lid| race_result.race_results.iter().find(|result| result.pilot_id == lid))
+            .map(|result| result.is_dnf)
+            .unwrap_or(false);
         let is_player = player_id.map_or(false, |pid| {
             inc.pilot_id == pid || inc.linked_pilot_id.as_deref() == Some(pid)
         });
@@ -697,12 +813,14 @@ fn persist_race_news(
             &race_result.track_name,
             pilot_name,
             linked_name,
+            linked_pilot_is_dnf,
             is_player,
             category_id,
             round,
             season_number,
             &mut temp_id,
             &mut timestamp,
+            &driver_midia,
         ));
     }
 
@@ -717,11 +835,15 @@ fn persist_race_news(
         season_number,
         &mut temp_id,
         &mut timestamp,
+        &driver_midia,
     );
     items.append(&mut injury_items);
 
     // Framing sazonal — raro, apenas 1 item por corrida quando contexto justifica.
-    let winner = race_result.race_results.iter().find(|r| r.finish_position == 1);
+    let winner = race_result
+        .race_results
+        .iter()
+        .find(|r| r.finish_position == 1);
     let winner_id = winner.map(|w| w.pilot_id.as_str());
     let winner_name = winner.map(|w| w.pilot_name.as_str());
     let winner_media = winner.and_then(|w| driver_midia.get(&w.pilot_id).copied());
@@ -797,6 +919,7 @@ fn persist_other_category_news(
                 importancia: NewsImportance::Media,
                 timestamp,
                 driver_id: None,
+                driver_id_secondary: None,
                 team_id: None,
             };
             timestamp += 1;
@@ -907,7 +1030,11 @@ mod tests {
         let error = simulate_race_weekend_in_base_dir(&base_dir, "career_001", &next_race.id)
             .expect_err("second simulation should fail");
 
-        assert!(error.contains("ja foi concluida ou simulada"), "Erro inesperado: {}", error);
+        assert!(
+            error.contains("ja foi concluida ou simulada"),
+            "Erro inesperado: {}",
+            error
+        );
 
         let _ = fs::remove_dir_all(base_dir);
     }

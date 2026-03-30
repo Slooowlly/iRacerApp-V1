@@ -195,10 +195,7 @@ pub fn get_free_pilots(conn: &Connection) -> Result<Vec<String>, DbError> {
 }
 
 /// Retorna true se o piloto já possui um contrato Especial ativo.
-pub fn has_active_especial_contract(
-    conn: &Connection,
-    piloto_id: &str,
-) -> Result<bool, DbError> {
+pub fn has_active_especial_contract(conn: &Connection, piloto_id: &str) -> Result<bool, DbError> {
     let count: i64 = conn.query_row(
         "SELECT COUNT(*) FROM contracts
          WHERE piloto_id = ?1 AND status = 'Ativo' AND tipo = 'Especial'",
@@ -209,10 +206,7 @@ pub fn has_active_especial_contract(
 }
 
 /// Retorna true se o piloto já possui um contrato Regular ativo.
-pub fn has_active_regular_contract(
-    conn: &Connection,
-    piloto_id: &str,
-) -> Result<bool, DbError> {
+pub fn has_active_regular_contract(conn: &Connection, piloto_id: &str) -> Result<bool, DbError> {
     let count: i64 = conn.query_row(
         "SELECT COUNT(*) FROM contracts
          WHERE piloto_id = ?1 AND status = 'Ativo' AND tipo = 'Regular'",
@@ -332,9 +326,7 @@ pub fn generate_especial_contract(
     classe: &str,
     temporada: i32,
 ) -> Contract {
-    let tier = get_category_config(categoria)
-        .map(|c| c.tier)
-        .unwrap_or(2);
+    let tier = get_category_config(categoria).map(|c| c.tier).unwrap_or(2);
     let salario_anual = salary_midpoint_for_tier(tier) * 0.5;
     let mut contract = Contract::new(
         id,

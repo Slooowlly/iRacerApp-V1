@@ -1,6 +1,6 @@
 const tabs = [
-  { id: "standings", label: "Pilotos" },
-  { id: "next-race", label: "Proxima Corrida" },
+  { id: "standings", label: "Piloto" },
+  { id: "news", label: "Noticias" },
   { id: "my-team", label: "Minha Equipe" },
   { id: "calendar", label: "Calendario" },
 ];

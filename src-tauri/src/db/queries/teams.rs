@@ -1,7 +1,7 @@
 use rusqlite::{params, types::FromSql, Connection, OptionalExtension};
 
 use crate::db::connection::DbError;
-use crate::models::team::{placeholder_team_from_db, TeamHierarchyClimate, Team};
+use crate::models::team::{placeholder_team_from_db, Team, TeamHierarchyClimate};
 
 pub fn insert_team(conn: &Connection, team: &Team) -> Result<(), DbError> {
     conn.execute(
@@ -361,7 +361,14 @@ pub fn update_team_duel_counters(
              hierarquia_sequencia_n1 = ?4,
              hierarquia_inversoes_temporada = ?5
          WHERE id = ?6",
-        params![duelos_total, duelos_n2_vencidos, sequencia_n2, sequencia_n1, inversoes_temporada, team_id],
+        params![
+            duelos_total,
+            duelos_n2_vencidos,
+            sequencia_n2,
+            sequencia_n1,
+            inversoes_temporada,
+            team_id
+        ],
     )?;
     Ok(())
 }
@@ -527,11 +534,16 @@ fn team_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Team> {
     team.hierarquia_n1_id = optional_column(row, "hierarquia_n1_id")?;
     team.hierarquia_n2_id = optional_column(row, "hierarquia_n2_id")?;
     team.hierarquia_tensao = optional_column::<f64>(row, "hierarquia_tensao")?.unwrap_or(0.0);
-    team.hierarquia_duelos_total = optional_column::<i64>(row, "hierarquia_duelos_total")?.unwrap_or(0) as i32;
-    team.hierarquia_duelos_n2_vencidos = optional_column::<i64>(row, "hierarquia_duelos_n2_vencidos")?.unwrap_or(0) as i32;
-    team.hierarquia_sequencia_n2 = optional_column::<i64>(row, "hierarquia_sequencia_n2")?.unwrap_or(0) as i32;
-    team.hierarquia_sequencia_n1 = optional_column::<i64>(row, "hierarquia_sequencia_n1")?.unwrap_or(0) as i32;
-    team.hierarquia_inversoes_temporada = optional_column::<i64>(row, "hierarquia_inversoes_temporada")?.unwrap_or(0) as i32;
+    team.hierarquia_duelos_total =
+        optional_column::<i64>(row, "hierarquia_duelos_total")?.unwrap_or(0) as i32;
+    team.hierarquia_duelos_n2_vencidos =
+        optional_column::<i64>(row, "hierarquia_duelos_n2_vencidos")?.unwrap_or(0) as i32;
+    team.hierarquia_sequencia_n2 =
+        optional_column::<i64>(row, "hierarquia_sequencia_n2")?.unwrap_or(0) as i32;
+    team.hierarquia_sequencia_n1 =
+        optional_column::<i64>(row, "hierarquia_sequencia_n1")?.unwrap_or(0) as i32;
+    team.hierarquia_inversoes_temporada =
+        optional_column::<i64>(row, "hierarquia_inversoes_temporada")?.unwrap_or(0) as i32;
     team.stats_podios = optional_column::<i64>(row, "stats_podios")?.unwrap_or(0) as i32;
     team.stats_poles = optional_column::<i64>(row, "stats_poles")?.unwrap_or(0) as i32;
     team.stats_melhor_resultado =

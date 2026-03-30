@@ -1,0 +1,890 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Preview - News Filter Cards</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    :root {
+      --bg: #0e0e10;
+      --panel: rgba(255, 255, 255, 0.055);
+      --panel-soft: rgba(255, 255, 255, 0.032);
+      --line: rgba(255, 255, 255, 0.09);
+      --line-strong: rgba(255, 255, 255, 0.16);
+      --text-1: #e6edf3;
+      --text-2: #9ba3ae;
+      --text-3: #6f7782;
+      --accent: #58a6ff;
+      --accent-soft: rgba(88, 166, 255, 0.14);
+      --gold: #ffd47a;
+      --gold-soft: rgba(255, 212, 122, 0.14);
+      --green: #6fd4ff;
+    }
+
+    body {
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at top, rgba(111, 212, 255, 0.14), transparent 28%),
+        radial-gradient(circle at 82% 18%, rgba(73, 154, 255, 0.11), transparent 20%),
+        radial-gradient(circle at bottom left, rgba(255, 212, 122, 0.08), transparent 24%),
+        linear-gradient(180deg, #040812 0%, #08111d 46%, #050910 100%);
+      color: var(--text-1);
+      font-family: "Space Grotesk", "Segoe UI", system-ui, sans-serif;
+      padding: 40px 28px 64px;
+    }
+
+    .page {
+      max-width: 1460px;
+      margin: 0 auto;
+    }
+
+    .hero {
+      position: relative;
+      overflow: hidden;
+      border-radius: 30px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: linear-gradient(135deg, rgba(8, 17, 31, 0.96) 0%, rgba(9, 22, 39, 0.93) 52%, rgba(16, 25, 39, 0.9) 100%);
+      padding: 28px 28px 24px;
+      box-shadow: 0 24px 80px rgba(0, 0, 0, 0.34);
+    }
+
+    .hero::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background:
+        radial-gradient(circle at 85% 0%, rgba(88, 166, 255, 0.15), transparent 36%),
+        radial-gradient(circle at 0% 100%, rgba(255, 212, 122, 0.06), transparent 28%);
+      pointer-events: none;
+    }
+
+    .top-line {
+      position: absolute;
+      inset: 0 0 auto;
+      height: 2px;
+      background: linear-gradient(90deg, var(--accent) 0%, rgba(142, 208, 255, 0.44) 54%, transparent 100%);
+    }
+
+    .hero-inner {
+      position: relative;
+    }
+
+    .hero-label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.28em;
+      color: var(--accent);
+    }
+
+    .hero-title {
+      margin-top: 14px;
+      font-size: clamp(2.6rem, 5vw, 4.1rem);
+      line-height: 0.96;
+      letter-spacing: -0.07em;
+      font-weight: 700;
+      max-width: 780px;
+    }
+
+    .hero-sub {
+      margin-top: 16px;
+      max-width: 760px;
+      font-size: 15px;
+      line-height: 1.8;
+      color: var(--text-2);
+    }
+
+    .hero-note {
+      margin-top: 18px;
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      border-radius: 14px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(255, 255, 255, 0.035);
+      padding: 10px 14px;
+      color: var(--text-2);
+      font-size: 13px;
+    }
+
+    .hero-note strong {
+      color: var(--text-1);
+      font-weight: 600;
+    }
+
+    .concept-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 18px;
+      margin-top: 24px;
+    }
+
+    .concept {
+      position: relative;
+      overflow: hidden;
+      border-radius: 28px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0.028) 100%);
+      padding: 22px;
+      box-shadow: 0 18px 48px rgba(0, 0, 0, 0.2);
+    }
+
+    .concept::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(circle at top right, rgba(88, 166, 255, 0.08), transparent 28%);
+      pointer-events: none;
+    }
+
+    .concept-head {
+      position: relative;
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 14px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .eyebrow {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.22em;
+      color: var(--accent);
+    }
+
+    .concept-title {
+      margin-top: 8px;
+      font-size: 29px;
+      line-height: 1;
+      letter-spacing: -0.05em;
+      font-weight: 700;
+      color: var(--text-1);
+    }
+
+    .concept-copy {
+      margin-top: 8px;
+      font-size: 13px;
+      line-height: 1.75;
+      color: var(--text-2);
+      max-width: 360px;
+    }
+
+    .concept-tag {
+      flex-shrink: 0;
+      border-radius: 999px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(255, 255, 255, 0.035);
+      padding: 8px 10px;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.18em;
+      color: var(--text-3);
+    }
+
+    .cards {
+      position: relative;
+      display: grid;
+      gap: 12px;
+      margin-top: 18px;
+    }
+
+    .filter-card {
+      position: relative;
+      overflow: hidden;
+      border-radius: 22px;
+      border: 1px solid var(--line);
+      background: var(--panel-soft);
+      padding: 16px 16px 15px;
+    }
+
+    .filter-card .mini {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.18em;
+      color: var(--text-3);
+    }
+
+    .filter-card .name {
+      margin-top: 8px;
+      font-size: 20px;
+      line-height: 1;
+      letter-spacing: -0.04em;
+      font-weight: 700;
+      color: var(--text-1);
+    }
+
+    .filter-card .desc {
+      margin-top: 10px;
+      font-size: 12px;
+      line-height: 1.7;
+      color: var(--text-2);
+    }
+
+    .filter-card .meta {
+      margin-top: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .filter-card .meta span {
+      font-size: 11px;
+      color: var(--text-3);
+    }
+
+    .filter-card .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border-radius: 999px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(255, 255, 255, 0.04);
+      padding: 5px 9px;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.14em;
+      color: var(--text-2);
+    }
+
+    .dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 999px;
+      background: var(--accent);
+    }
+
+    .editorial-card {
+      background:
+        linear-gradient(135deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.015)),
+        linear-gradient(180deg, rgba(7, 15, 28, 0.84), rgba(10, 18, 31, 0.66));
+    }
+
+    .editorial-card::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(circle at top right, rgba(88, 166, 255, 0.1), transparent 30%);
+      pointer-events: none;
+    }
+
+    .editorial-card.active {
+      border-color: rgba(88, 166, 255, 0.34);
+      box-shadow: 0 0 28px rgba(88, 166, 255, 0.1);
+    }
+
+    .editorial-card.market {
+      border-color: rgba(255, 212, 122, 0.22);
+      background:
+        linear-gradient(135deg, rgba(255, 212, 122, 0.06), rgba(255, 255, 255, 0.02)),
+        linear-gradient(180deg, rgba(13, 14, 21, 0.92), rgba(18, 18, 27, 0.82));
+    }
+
+    .editorial-rail {
+      position: absolute;
+      inset: 0 0 auto;
+      height: 2px;
+      background: linear-gradient(90deg, var(--accent), transparent);
+    }
+
+    .editorial-card.market .editorial-rail {
+      background: linear-gradient(90deg, var(--gold), transparent);
+    }
+
+    .stat-line {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .stat-line strong {
+      font-size: 28px;
+      line-height: 1;
+      letter-spacing: -0.05em;
+      color: var(--text-1);
+    }
+
+    .stat-line span {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.16em;
+      color: var(--text-3);
+    }
+
+    .telemetry-card {
+      padding-top: 14px;
+      background:
+        linear-gradient(180deg, rgba(4, 10, 20, 0.92) 0%, rgba(9, 15, 29, 0.88) 100%);
+      border-color: rgba(111, 212, 255, 0.12);
+    }
+
+    .telemetry-card::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background:
+        linear-gradient(90deg, transparent 0%, rgba(88, 166, 255, 0.035) 50%, transparent 100%),
+        radial-gradient(circle at top left, rgba(88, 166, 255, 0.09), transparent 24%);
+      pointer-events: none;
+    }
+
+    .telemetry-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      position: relative;
+    }
+
+    .telemetry-code {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.22em;
+      color: var(--green);
+    }
+
+    .telemetry-status {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.18em;
+      color: var(--text-3);
+    }
+
+    .telemetry-number {
+      margin-top: 14px;
+      font-size: 34px;
+      line-height: 1;
+      letter-spacing: -0.06em;
+      font-weight: 700;
+      color: var(--text-1);
+      position: relative;
+    }
+
+    .telemetry-number small {
+      font-size: 12px;
+      letter-spacing: 0.14em;
+      color: var(--text-3);
+      margin-left: 8px;
+      font-weight: 500;
+    }
+
+    .telemetry-label {
+      margin-top: 10px;
+      font-size: 17px;
+      font-weight: 600;
+      letter-spacing: -0.03em;
+      color: var(--text-1);
+      position: relative;
+    }
+
+    .telemetry-copy {
+      margin-top: 10px;
+      position: relative;
+      font-size: 12px;
+      line-height: 1.7;
+      color: var(--text-2);
+    }
+
+    .bars {
+      position: relative;
+      display: grid;
+      gap: 8px;
+      margin-top: 14px;
+    }
+
+    .bar-row {
+      display: grid;
+      grid-template-columns: 62px 1fr 34px;
+      align-items: center;
+      gap: 10px;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.14em;
+      color: var(--text-3);
+    }
+
+    .bar-track {
+      height: 6px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.06);
+      overflow: hidden;
+    }
+
+    .bar-fill {
+      height: 100%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, rgba(88, 166, 255, 0.34), rgba(111, 212, 255, 0.95));
+    }
+
+    .telemetry-card.market .bar-fill,
+    .telemetry-card.market .telemetry-code {
+      background: linear-gradient(90deg, rgba(255, 212, 122, 0.34), rgba(255, 212, 122, 0.95));
+      color: var(--gold);
+    }
+
+    .telemetry-card.market {
+      border-color: rgba(255, 212, 122, 0.18);
+    }
+
+    .minimal-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .minimal-card {
+      display: grid;
+      grid-template-columns: 5px 1fr auto;
+      align-items: center;
+      gap: 14px;
+      border-radius: 20px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(255, 255, 255, 0.03);
+      padding: 14px 14px 14px 0;
+    }
+
+    .minimal-rail {
+      width: 5px;
+      align-self: stretch;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.12);
+    }
+
+    .minimal-card.active .minimal-rail {
+      background: linear-gradient(180deg, var(--accent), rgba(142, 208, 255, 0.4));
+    }
+
+    .minimal-card.market .minimal-rail {
+      background: linear-gradient(180deg, var(--gold), rgba(255, 212, 122, 0.4));
+    }
+
+    .minimal-main {
+      min-width: 0;
+      padding-left: 2px;
+    }
+
+    .minimal-line {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .minimal-name {
+      font-size: 18px;
+      line-height: 1;
+      letter-spacing: -0.04em;
+      font-weight: 600;
+      color: var(--text-1);
+    }
+
+    .minimal-chip {
+      border-radius: 999px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(255, 255, 255, 0.035);
+      padding: 4px 8px;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.14em;
+      color: var(--text-3);
+    }
+
+    .minimal-copy {
+      margin-top: 7px;
+      font-size: 12px;
+      line-height: 1.65;
+      color: var(--text-2);
+    }
+
+    .minimal-count {
+      min-width: 70px;
+      text-align: right;
+    }
+
+    .minimal-count strong {
+      display: block;
+      font-size: 26px;
+      line-height: 1;
+      letter-spacing: -0.05em;
+      color: var(--text-1);
+    }
+
+    .minimal-count span {
+      display: block;
+      margin-top: 4px;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.14em;
+      color: var(--text-3);
+    }
+
+    .footer-note {
+      margin-top: 18px;
+      padding-top: 16px;
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+      font-size: 12px;
+      line-height: 1.75;
+      color: var(--text-2);
+    }
+
+    @media (max-width: 1180px) {
+      .concept-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 720px) {
+      body {
+        padding: 24px 16px 40px;
+      }
+
+      .hero,
+      .concept {
+        border-radius: 24px;
+        padding: 18px;
+      }
+
+      .concept-head {
+        flex-direction: column;
+      }
+
+      .minimal-card {
+        grid-template-columns: 5px 1fr;
+      }
+
+      .minimal-count {
+        min-width: 0;
+        text-align: left;
+        padding-left: 10px;
+      }
+
+      .bar-row {
+        grid-template-columns: 56px 1fr 30px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <section class="hero">
+      <div class="top-line"></div>
+      <div class="hero-inner">
+        <p class="hero-label">Central de Noticias - filtros principais</p>
+        <h1 class="hero-title">Tres direcoes para reformular os cards dos filtros</h1>
+        <p class="hero-sub">
+          Todas as opcoes abaixo usam a mesma base escura, fria e editorial da aba atual.
+          A diferenca esta em como cada card comunica prioridade, contexto e ritmo visual.
+        </p>
+        <div class="hero-note">
+          <span>Comparacao pronta para revisao visual.</span>
+          <strong>Sem alterar o NewsTab ainda.</strong>
+        </div>
+      </div>
+    </section>
+
+    <section class="concept-grid">
+      <article class="concept">
+        <div class="concept-head">
+          <div>
+            <p class="eyebrow">Opcao 01</p>
+            <h2 class="concept-title">Editorial premium</h2>
+            <p class="concept-copy">
+              O filtro vira quase uma mini-capa. Funciona melhor se voce quer que essa linha
+              pareca parte da materia, e nao apenas controle de navegacao.
+            </p>
+          </div>
+          <span class="concept-tag">Mais narrativo</span>
+        </div>
+
+        <div class="cards">
+          <div class="filter-card editorial-card active">
+            <div class="editorial-rail"></div>
+            <p class="mini">Leitura editorial</p>
+            <p class="name">Corridas</p>
+            <div class="stat-line">
+              <strong>12</strong>
+              <span>etapas narradas</span>
+            </div>
+            <p class="desc">
+              Reune resultados, viradas e etapas que redefiniram o campeonato.
+            </p>
+            <div class="meta">
+              <span>Ultima leitura: Laguna Seca</span>
+              <span class="pill"><span class="dot"></span> ativo</span>
+            </div>
+          </div>
+
+          <div class="filter-card editorial-card">
+            <div class="editorial-rail"></div>
+            <p class="mini">Foco humano</p>
+            <p class="name">Pilotos</p>
+            <div class="stat-line">
+              <strong>8</strong>
+              <span>nomes em pauta</span>
+            </div>
+            <p class="desc">
+              Abre protagonismo, forma recente e rivalidades em volta do grid.
+            </p>
+            <div class="meta">
+              <span>Mais citados nesta edicao</span>
+              <span class="pill"><span class="dot"></span> perfil</span>
+            </div>
+          </div>
+
+          <div class="filter-card editorial-card">
+            <div class="editorial-rail"></div>
+            <p class="mini">Leitura de box</p>
+            <p class="name">Equipes</p>
+            <div class="stat-line">
+              <strong>6</strong>
+              <span>garagens em destaque</span>
+            </div>
+            <p class="desc">
+              Destaca narrativas coletivas, pressao interna e consistencia tecnica.
+            </p>
+            <div class="meta">
+              <span>Clima competitivo por equipe</span>
+              <span class="pill"><span class="dot"></span> box</span>
+            </div>
+          </div>
+
+          <div class="filter-card editorial-card market">
+            <div class="editorial-rail"></div>
+            <p class="mini">Movimento de paddock</p>
+            <p class="name">Mercado</p>
+            <div class="stat-line">
+              <strong>4</strong>
+              <span>rumores quentes</span>
+            </div>
+            <p class="desc">
+              Trocas, negociacoes e pressao silenciosa antes da proxima etapa.
+            </p>
+            <div class="meta">
+              <span>Tom mais quente para diferenciar</span>
+              <span class="pill"><span class="dot" style="background: var(--gold);"></span> mercado</span>
+            </div>
+          </div>
+        </div>
+
+        <p class="footer-note">
+          Melhor quando o objetivo e dar mais personalidade e peso editorial para os filtros.
+        </p>
+      </article>
+
+      <article class="concept">
+        <div class="concept-head">
+          <div>
+            <p class="eyebrow">Opcao 02</p>
+            <h2 class="concept-title">Telemetry / paddock</h2>
+            <p class="concept-copy">
+              Aqui o filtro parece um modulo tecnico. Fica forte se voce quiser aproximar a aba
+              de um painel de acompanhamento de campeonato.
+            </p>
+          </div>
+          <span class="concept-tag">Mais tecnico</span>
+        </div>
+
+        <div class="cards">
+          <div class="filter-card telemetry-card">
+            <div class="telemetry-top">
+              <span class="telemetry-code">RUN 01</span>
+              <span class="telemetry-status">briefing ativo</span>
+            </div>
+            <p class="telemetry-number">84<small>score</small></p>
+            <p class="telemetry-label">Corridas</p>
+            <p class="telemetry-copy">
+              Linha ideal para resultados, etapas-chave e ganho de contexto por rodada.
+            </p>
+            <div class="bars">
+              <div class="bar-row">
+                <span>ritmo</span>
+                <div class="bar-track"><div class="bar-fill" style="width: 86%;"></div></div>
+                <span>86</span>
+              </div>
+              <div class="bar-row">
+                <span>drama</span>
+                <div class="bar-track"><div class="bar-fill" style="width: 78%;"></div></div>
+                <span>78</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="filter-card telemetry-card">
+            <div class="telemetry-top">
+              <span class="telemetry-code">DRV 02</span>
+              <span class="telemetry-status">rastreamento</span>
+            </div>
+            <p class="telemetry-number">91<small>focus</small></p>
+            <p class="telemetry-label">Pilotos</p>
+            <p class="telemetry-copy">
+              Faz o usuario sentir que esta abrindo leitura de forma, rivalidade e presenca no grid.
+            </p>
+            <div class="bars">
+              <div class="bar-row">
+                <span>forma</span>
+                <div class="bar-track"><div class="bar-fill" style="width: 91%;"></div></div>
+                <span>91</span>
+              </div>
+              <div class="bar-row">
+                <span>ruido</span>
+                <div class="bar-track"><div class="bar-fill" style="width: 68%;"></div></div>
+                <span>68</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="filter-card telemetry-card">
+            <div class="telemetry-top">
+              <span class="telemetry-code">TM 03</span>
+              <span class="telemetry-status">estado de box</span>
+            </div>
+            <p class="telemetry-number">73<small>sync</small></p>
+            <p class="telemetry-label">Equipes</p>
+            <p class="telemetry-copy">
+              Boa leitura para performance coletiva, estabilidade e clima competitivo interno.
+            </p>
+            <div class="bars">
+              <div class="bar-row">
+                <span>coesao</span>
+                <div class="bar-track"><div class="bar-fill" style="width: 73%;"></div></div>
+                <span>73</span>
+              </div>
+              <div class="bar-row">
+                <span>pressao</span>
+                <div class="bar-track"><div class="bar-fill" style="width: 64%;"></div></div>
+                <span>64</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="filter-card telemetry-card market">
+            <div class="telemetry-top">
+              <span class="telemetry-code">MKT 04</span>
+              <span class="telemetry-status">oscilacao</span>
+            </div>
+            <p class="telemetry-number">88<small>heat</small></p>
+            <p class="telemetry-label">Mercado</p>
+            <p class="telemetry-copy">
+              O tom quente entra aqui como alerta de rumor, negocicao e movimentacao de bastidor.
+            </p>
+            <div class="bars">
+              <div class="bar-row">
+                <span>rumor</span>
+                <div class="bar-track"><div class="bar-fill" style="width: 88%;"></div></div>
+                <span>88</span>
+              </div>
+              <div class="bar-row">
+                <span>impacto</span>
+                <div class="bar-track"><div class="bar-fill" style="width: 79%;"></div></div>
+                <span>79</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <p class="footer-note">
+          Melhor quando o filtro precisa parecer uma ferramenta de leitura tecnica, nao apenas um card bonito.
+        </p>
+      </article>
+
+      <article class="concept">
+        <div class="concept-head">
+          <div>
+            <p class="eyebrow">Opcao 03</p>
+            <h2 class="concept-title">Minimal clean</h2>
+            <p class="concept-copy">
+              Mais leve, limpa e silenciosa. A ideia aqui e valorizar a central principal e
+              deixar os filtros elegantes sem roubar tanta atencao.
+            </p>
+          </div>
+          <span class="concept-tag">Mais discreto</span>
+        </div>
+
+        <div class="cards minimal-list">
+          <div class="minimal-card active">
+            <div class="minimal-rail"></div>
+            <div class="minimal-main">
+              <div class="minimal-line">
+                <p class="minimal-name">Corridas</p>
+                <span class="minimal-chip">edicao aberta</span>
+              </div>
+              <p class="minimal-copy">
+                Etapas, pontos de virada e leitura rodada por rodada.
+              </p>
+            </div>
+            <div class="minimal-count">
+              <strong>12</strong>
+              <span>leituras</span>
+            </div>
+          </div>
+
+          <div class="minimal-card">
+            <div class="minimal-rail"></div>
+            <div class="minimal-main">
+              <div class="minimal-line">
+                <p class="minimal-name">Pilotos</p>
+                <span class="minimal-chip">foco individual</span>
+              </div>
+              <p class="minimal-copy">
+                Forma, nomes mais quentes e rivalidades.
+              </p>
+            </div>
+            <div class="minimal-count">
+              <strong>8</strong>
+              <span>perfis</span>
+            </div>
+          </div>
+
+          <div class="minimal-card">
+            <div class="minimal-rail"></div>
+            <div class="minimal-main">
+              <div class="minimal-line">
+                <p class="minimal-name">Equipes</p>
+                <span class="minimal-chip">leitura coletiva</span>
+              </div>
+              <p class="minimal-copy">
+                Pressao interna, garagens e narrativa de box.
+              </p>
+            </div>
+            <div class="minimal-count">
+              <strong>6</strong>
+              <span>equipes</span>
+            </div>
+          </div>
+
+          <div class="minimal-card market">
+            <div class="minimal-rail"></div>
+            <div class="minimal-main">
+              <div class="minimal-line">
+                <p class="minimal-name">Mercado</p>
+                <span class="minimal-chip">movimento</span>
+              </div>
+              <p class="minimal-copy">
+                Trocas, rumores e negociacoes entre etapas.
+              </p>
+            </div>
+            <div class="minimal-count">
+              <strong>4</strong>
+              <span>alertas</span>
+            </div>
+          </div>
+        </div>
+
+        <p class="footer-note">
+          Melhor quando voce quer sofisticao com menos densidade visual e menos concorrencia com o hero.
+        </p>
+      </article>
+    </section>
+  </main>
+</body>
+</html>

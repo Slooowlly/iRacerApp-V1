@@ -7,20 +7,19 @@ use crate::models::rivalry::{perceived_intensity, Rivalry, RivalryType};
 
 fn row_to_rivalry(row: &rusqlite::Row) -> rusqlite::Result<Rivalry> {
     Ok(Rivalry {
-        id:                   row.get(0)?,
-        piloto1_id:           row.get(1)?,
-        piloto2_id:           row.get(2)?,
+        id: row.get(0)?,
+        piloto1_id: row.get(1)?,
+        piloto2_id: row.get(2)?,
         historical_intensity: row.get(3)?,
-        recent_activity:      row.get(4)?,
-        tipo:                 RivalryType::from_str(&row.get::<_, String>(5)?),
-        criado_em:            row.get(6)?,
-        ultima_atualizacao:   row.get(7)?,
-        temporada_update:     row.get(8)?,
+        recent_activity: row.get(4)?,
+        tipo: RivalryType::from_str(&row.get::<_, String>(5)?),
+        criado_em: row.get(6)?,
+        ultima_atualizacao: row.get(7)?,
+        temporada_update: row.get(8)?,
     })
 }
 
-const SELECT_COLS: &str =
-    "id, piloto1_id, piloto2_id, historical_intensity, recent_activity, \
+const SELECT_COLS: &str = "id, piloto1_id, piloto2_id, historical_intensity, recent_activity, \
      tipo, criado_em, ultima_atualizacao, temporada_update";
 
 // ── Leitura ───────────────────────────────────────────────────────────────────
@@ -31,19 +30,15 @@ pub fn get_rivalry_by_pair(
     piloto1_id: &str,
     piloto2_id: &str,
 ) -> Result<Option<Rivalry>, DbError> {
-    let sql = format!(
-        "SELECT {SELECT_COLS} FROM rivalries WHERE piloto1_id = ?1 AND piloto2_id = ?2"
-    );
+    let sql =
+        format!("SELECT {SELECT_COLS} FROM rivalries WHERE piloto1_id = ?1 AND piloto2_id = ?2");
     conn.query_row(&sql, params![piloto1_id, piloto2_id], row_to_rivalry)
         .optional()
         .map_err(DbError::from)
 }
 
 /// Retorna todas as rivalidades de um piloto, ordenadas por intensidade percebida decrescente.
-pub fn get_rivalries_for_pilot(
-    conn: &Connection,
-    pilot_id: &str,
-) -> Result<Vec<Rivalry>, DbError> {
+pub fn get_rivalries_for_pilot(conn: &Connection, pilot_id: &str) -> Result<Vec<Rivalry>, DbError> {
     let sql = format!(
         "SELECT {SELECT_COLS} FROM rivalries
          WHERE piloto1_id = ?1 OR piloto2_id = ?1

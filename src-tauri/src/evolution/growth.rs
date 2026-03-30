@@ -69,7 +69,12 @@ pub fn calculate_growth(
     }
 
     let exp_gain = rng.gen_range(2..=5) as i8;
-    if let Some(change) = apply_growth(driver, DriverAttributeKey::Experiencia, exp_gain, "Experiencia acumulada") {
+    if let Some(change) = apply_growth(
+        driver,
+        DriverAttributeKey::Experiencia,
+        exp_gain,
+        "Experiencia acumulada",
+    ) {
         changes.push(change);
     }
 
@@ -101,7 +106,12 @@ pub fn calculate_growth(
     } else {
         0
     } as i8;
-    if let Some(change) = apply_growth(driver, DriverAttributeKey::Midia, media_boost, "Exposicao por resultados") {
+    if let Some(change) = apply_growth(
+        driver,
+        DriverAttributeKey::Midia,
+        media_boost,
+        "Exposicao por resultados",
+    ) {
         changes.push(change);
     }
 

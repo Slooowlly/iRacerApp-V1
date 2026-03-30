@@ -1,15 +1,13 @@
-import { useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 
 function SplashScreen() {
   const navigate = useNavigate();
-  const [message, setMessage] = useState("");
 
-  async function testBackend() {
-    const response = await invoke("greet", { name: "Piloto" });
-    setMessage(response);
-  }
+  useEffect(() => {
+    const timer = setTimeout(() => navigate("/menu"), 1800);
+    return () => clearTimeout(timer);
+  }, []);
 
   return (
     <div className="entry-shell px-4">
@@ -25,38 +23,20 @@ function SplashScreen() {
         />
 
         <div className="space-y-2">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.35em] text-sky-200/70">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.35em] text-accent-primary/70">
             Launcher
           </p>
-          <h1 className="text-3xl font-semibold tracking-[0.08em] text-slate-100">
+          <h1 className="text-3xl font-semibold tracking-[0.08em] text-text-primary">
             iRacerApp
           </h1>
-          <p className="text-xs uppercase tracking-[0.28em] text-slate-400">
+          <p className="text-xs uppercase tracking-[0.28em] text-text-secondary">
             v0.1.0
           </p>
         </div>
 
-        <p className="max-w-sm text-[12px] leading-6 text-slate-300/80">
-          A entrada do simulador agora compartilha a mesma identidade da logo:
-          fundo profundo, halos frios e vidro escuro antes de seguir para o menu.
+        <p className="animate-pulse text-[11px] uppercase tracking-[0.22em] text-text-muted">
+          Carregando...
         </p>
-
-        <div className="flex w-full flex-col gap-3 pt-2">
-          <button onClick={testBackend} className="entry-action">
-            TESTAR BACKEND
-          </button>
-
-          <button onClick={() => navigate("/menu")} className="entry-action">
-            ENTRAR
-          </button>
-
-        </div>
-
-        {message && (
-          <p className="text-center text-[12px] font-medium text-sky-200">
-            {message}
-          </p>
-        )}
       </div>
     </div>
   );

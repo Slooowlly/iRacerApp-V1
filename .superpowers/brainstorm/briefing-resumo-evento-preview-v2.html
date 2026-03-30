@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Resumo do Evento - Preview V2</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --text: #ecf3ff;
+        --muted: #97a7c0;
+        --line: rgba(255, 255, 255, 0.08);
+        --accent: #58a6ff;
+        --gold: #f5c76d;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: "Segoe UI", system-ui, sans-serif;
+        background:
+          radial-gradient(circle at top right, rgba(88, 166, 255, 0.2), transparent 24%),
+          radial-gradient(circle at bottom left, rgba(245, 199, 109, 0.12), transparent 28%),
+          linear-gradient(160deg, #07101a 0%, #0b1728 52%, #121c2a 100%);
+        color: var(--text);
+      }
+
+      .page {
+        width: min(1080px, calc(100vw - 40px));
+        margin: 0 auto;
+        padding: 36px 0 48px;
+      }
+
+      .eyebrow {
+        margin: 0 0 10px;
+        font-size: 12px;
+        letter-spacing: 0.22em;
+        text-transform: uppercase;
+        color: var(--accent);
+      }
+
+      h1 {
+        margin: 0;
+        font-size: clamp(34px, 4vw, 50px);
+        line-height: 0.95;
+        letter-spacing: -0.05em;
+      }
+
+      .subtitle {
+        max-width: 760px;
+        margin: 14px 0 28px;
+        color: var(--muted);
+        font-size: 16px;
+        line-height: 1.7;
+      }
+
+      .shell {
+        position: relative;
+        overflow: hidden;
+        border-radius: 30px;
+        border: 1px solid rgba(255, 255, 255, 0.09);
+        background: linear-gradient(145deg, rgba(7, 15, 27, 0.96) 0%, rgba(11, 24, 42, 0.93) 54%, rgba(18, 23, 34, 0.92) 100%);
+        box-shadow: 0 18px 48px rgba(0, 0, 0, 0.28);
+      }
+
+      .shell::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background:
+          radial-gradient(circle at top right, rgba(88, 166, 255, 0.18), transparent 26%),
+          radial-gradient(circle at bottom left, rgba(245, 199, 109, 0.12), transparent 22%);
+        pointer-events: none;
+      }
+
+      .inner {
+        position: relative;
+        padding: 30px;
+      }
+
+      .summary-label {
+        margin: 0 0 16px;
+        font-size: 11px;
+        letter-spacing: 0.22em;
+        text-transform: uppercase;
+        color: var(--accent);
+      }
+
+      .compact-shell {
+        border-radius: 26px;
+        border: 1px solid rgba(88, 166, 255, 0.15);
+        background:
+          linear-gradient(90deg, rgba(88, 166, 255, 0.14), rgba(88, 166, 255, 0)),
+          rgba(255, 255, 255, 0.03);
+        padding: 22px;
+      }
+
+      .compact-top {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 18px;
+        padding-bottom: 18px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .label {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        color: var(--muted);
+        font-size: 12px;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+      }
+
+      .compact-big {
+        margin-top: 8px;
+        font-size: 42px;
+        font-weight: 800;
+        letter-spacing: -0.06em;
+        line-height: 1;
+      }
+
+      .date-sub {
+        margin-top: 8px;
+        color: var(--muted);
+        font-size: 13px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .time-block {
+        text-align: right;
+      }
+
+      .time-value {
+        font-size: 28px;
+        font-weight: 800;
+        letter-spacing: -0.04em;
+      }
+
+      .time-sub {
+        margin-top: 8px;
+        color: var(--muted);
+        font-size: 12px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .time-sub strong {
+        color: var(--text);
+        font-size: 14px;
+        letter-spacing: 0.12em;
+      }
+
+      .compact-grid {
+        display: grid;
+        gap: 14px;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        margin-top: 18px;
+      }
+
+      .compact-box {
+        min-height: 116px;
+        border-radius: 18px;
+        background: rgba(255, 255, 255, 0.08);
+        padding: 16px;
+        text-align: center;
+      }
+
+      .compact-box .label {
+        justify-content: center;
+      }
+
+      .compact-value {
+        display: block;
+        margin-top: 10px;
+        font-size: 24px;
+        font-weight: 800;
+        letter-spacing: -0.04em;
+      }
+
+      .compact-value.featured {
+        font-size: 30px;
+      }
+
+      .compact-sub {
+        display: block;
+        margin-top: 8px;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.5;
+      }
+
+      .tag {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 14px;
+        padding: 9px 12px;
+        border-radius: 999px;
+        background: rgba(245, 199, 109, 0.12);
+        color: var(--gold);
+        font-size: 12px;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        font-weight: 700;
+      }
+
+      .note {
+        margin-top: 22px;
+        color: var(--muted);
+        font-size: 14px;
+        line-height: 1.7;
+      }
+
+      @media (max-width: 860px) {
+        .compact-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .compact-top {
+          align-items: flex-start;
+          flex-direction: column;
+        }
+
+        .time-block {
+          text-align: left;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <p class="eyebrow">Briefing de equipe</p>
+      <h1>Resumo do evento hibrido</h1>
+      <p class="subtitle">
+        Aqui a base continua sendo a faixa compacta expandida, mas com conteudo mais rico e
+        menos redundante. Tirei o clima geral e troquei por informacoes que contam mais sobre o peso da etapa.
+      </p>
+
+      <section class="shell">
+        <div class="inner">
+          <p class="summary-label">Resumo do evento</p>
+
+          <div class="compact-shell">
+            <div class="compact-top">
+              <div>
+                <div class="label">Data do evento</div>
+                <div class="compact-big">12/03</div>
+                <div class="date-sub">Interlagos · etapa 5 de 20</div>
+              </div>
+
+              <div class="time-block">
+                <div class="label">Horario local</div>
+                <div class="time-value">19:30</div>
+                <div class="time-sub">Inicio da <strong>noite</strong></div>
+              </div>
+            </div>
+
+            <div class="compact-grid">
+              <div class="compact-box">
+                <div class="label">Publico</div>
+                <span class="compact-value">62.000</span>
+                <span class="compact-sub">3º Maior publico da temporada</span>
+              </div>
+
+              <div class="compact-box">
+                <div class="label">Cobertura</div>
+                <span class="compact-value featured">Ao vivo</span>
+              </div>
+
+              <div class="compact-box">
+                <div class="label">Historico</div>
+                <span class="compact-value">4 Largadas</span>
+                <span class="compact-sub">Melhor resultado: P3 (2024)</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="tag">Leitura atual recomendada</div>
+          <p class="note">
+            Se essa direcao bater com o que voce imaginou, eu implemento o card real nessa linha
+            e ligo a logica simples de cobertura ao vivo so para etapas importantes, como abertura,
+            decisao de campeonato ou rodadas de maior peso.
+          </p>
+        </div>
+      </section>
+    </div>
+  </body>
+</html>

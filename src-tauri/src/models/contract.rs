@@ -175,7 +175,6 @@ fn salary_range_for_tier(tier: u8) -> (f64, f64) {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use rand::{rngs::StdRng, SeedableRng};

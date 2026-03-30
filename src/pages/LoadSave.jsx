@@ -84,7 +84,7 @@ function LoadSave() {
       <div className="app-backdrop" />
 
       <div className="relative mx-auto flex min-h-[calc(100vh-3rem)] max-w-7xl items-center justify-center">
-        <div className="wizard-panel glass-strong w-full overflow-hidden rounded-[32px] p-5 shadow-[0_30px_80px_rgba(0,0,0,0.42)] sm:p-8 lg:p-10">
+        <div className="wizard-panel glass w-full overflow-hidden rounded-[32px] p-5 shadow-[0_30px_80px_rgba(0,0,0,0.42)] sm:p-8 lg:p-10">
           <div className="relative z-10">
             <div className="flex flex-col gap-6 xl:flex-row xl:items-end xl:justify-between">
               <div>
@@ -102,7 +102,7 @@ function LoadSave() {
 
               <GlassCard
                 hover={false}
-                className="w-full max-w-xs rounded-3xl px-5 py-4 text-sm text-text-secondary"
+                className="glass-light w-full max-w-xs rounded-3xl px-5 py-4 text-sm text-text-secondary"
               >
                 <p className="text-[10px] uppercase tracking-[0.18em] text-text-muted">
                   Biblioteca de saves
@@ -122,7 +122,7 @@ function LoadSave() {
 
             <div className="mt-8 space-y-4">
               {saves.length === 0 && !loading ? (
-                <GlassCard hover={false} className="rounded-[28px] p-12 text-center">
+                <GlassCard hover={false} className="glass-light rounded-[28px] p-12 text-center">
                   <div className="mb-4 text-6xl">🏎️</div>
                   <h3 className="text-2xl font-semibold text-text-primary">
                     Nenhuma carreira encontrada

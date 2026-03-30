@@ -4,6 +4,7 @@ function CategoryCard({ category, selected, onSelect }) {
   return (
     <GlassCard
       selected={selected}
+      darkBg
       onClick={() => onSelect(category.id)}
       className="min-h-[260px]"
     >

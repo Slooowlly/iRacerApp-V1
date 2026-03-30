@@ -1,7 +1,12 @@
 use crate::calendar::CalendarEntry;
+use crate::constants::tracks::get_track;
 use crate::models::driver::Driver;
 use crate::models::enums::WeatherCondition;
 use crate::models::team::Team;
+
+use super::catalog::{vehicle_class_from_category, VehicleClass};
+use super::profile::resolve_simulation_profile;
+use super::track_profile::{pack_density_factor, TrackCharacter};
 
 #[derive(Debug, Clone)]
 pub struct SimulationContext {
@@ -14,10 +19,26 @@ pub struct SimulationContext {
     pub total_laps: i32,
     pub race_duration_minutes: i32,
     pub is_championship_deciding: bool,
+    pub incidents_enabled: bool,
+
+    // --- Campos resolvidos pelo SimulationProfile ---
     pub base_lap_time_ms: f64,
     pub tire_degradation_rate: f64,
     pub physical_degradation_rate: f64,
-    pub incidents_enabled: bool,
+    pub incident_rate_multiplier: f64,
+    pub qualifying_variance_multiplier: f64,
+    pub race_variance_multiplier: f64,
+    pub rain_sensitivity: f64,
+    pub start_chaos_multiplier: f64,
+    pub track_difficulty_multiplier: f64,
+    pub overtaking_difficulty_multiplier: f64,
+    pub race_pace_spread_multiplier: f64,
+    /// Caráter esportivo da pista (determina pesos de atributos).
+    pub track_character: TrackCharacter,
+    /// Densidade do pelotão pela extensão da pista (>1.0 = pack mais compacto).
+    pub pack_density_factor: f64,
+    /// Classe de veículo da categoria — determina flavor text do catálogo de incidentes.
+    pub vehicle_class: VehicleClass,
 }
 
 impl SimulationContext {
@@ -26,6 +47,15 @@ impl SimulationContext {
         category_tier: u8,
         is_championship_deciding: bool,
     ) -> Self {
+        let profile = resolve_simulation_profile(
+            &entry.categoria,
+            entry.track_id,
+            entry.temperatura,
+            entry.clima,
+            entry.duracao_corrida_min,
+            entry.voltas,
+        );
+
         Self {
             category_id: entry.categoria.clone(),
             category_tier,
@@ -36,10 +66,55 @@ impl SimulationContext {
             total_laps: entry.voltas,
             race_duration_minutes: entry.duracao_corrida_min,
             is_championship_deciding,
-            base_lap_time_ms: 90_000.0,
-            tire_degradation_rate: 0.02,
-            physical_degradation_rate: 0.01,
             incidents_enabled: true,
+            base_lap_time_ms: profile.base_lap_time_ms,
+            tire_degradation_rate: profile.tire_degradation_rate,
+            physical_degradation_rate: profile.physical_degradation_rate,
+            incident_rate_multiplier: profile.incident_rate_multiplier,
+            qualifying_variance_multiplier: profile.qualifying_variance_multiplier,
+            race_variance_multiplier: profile.race_variance_multiplier,
+            rain_sensitivity: profile.rain_sensitivity,
+            start_chaos_multiplier: profile.start_chaos_multiplier,
+            track_difficulty_multiplier: profile.track_difficulty_multiplier,
+            overtaking_difficulty_multiplier: profile.overtaking_difficulty_multiplier,
+            race_pace_spread_multiplier: profile.race_pace_spread_multiplier,
+            track_character: profile.track_character,
+            pack_density_factor: get_track(entry.track_id)
+                .map(|t| pack_density_factor(t.comprimento_km))
+                .unwrap_or(1.0),
+            vehicle_class: vehicle_class_from_category(&entry.categoria),
+        }
+    }
+
+    /// Helper para testes — fornece valores padrão neutros para campos adicionados.
+    /// Use `..SimulationContext::test_default()` em struct literals de teste.
+    #[cfg(test)]
+    pub fn test_default() -> Self {
+        Self {
+            category_id: "gt4".to_string(),
+            category_tier: 3,
+            track_id: 47,
+            track_name: "Laguna Seca".to_string(),
+            weather: WeatherCondition::Dry,
+            temperature: 22.0,
+            total_laps: 12,
+            race_duration_minutes: 30,
+            is_championship_deciding: false,
+            incidents_enabled: false,
+            base_lap_time_ms: 77_000.0,
+            tire_degradation_rate: 0.020,
+            physical_degradation_rate: 0.010,
+            incident_rate_multiplier: 1.0,
+            qualifying_variance_multiplier: 1.0,
+            race_variance_multiplier: 1.0,
+            rain_sensitivity: 1.0,
+            start_chaos_multiplier: 1.0,
+            track_difficulty_multiplier: 1.0,
+            overtaking_difficulty_multiplier: 1.0,
+            race_pace_spread_multiplier: 1.0,
+            track_character: TrackCharacter::Technical,
+            pack_density_factor: 1.0,
+            vehicle_class: VehicleClass::StreetBased,
         }
     }
 }
@@ -146,6 +221,44 @@ mod tests {
         assert_eq!(ctx.weather, WeatherCondition::Wet);
         assert!(ctx.is_championship_deciding);
         assert!(ctx.incidents_enabled);
+        // Deve ter profile resolvido (não hardcodes)
+        assert!(ctx.base_lap_time_ms > 0.0);
+        assert!(ctx.tire_degradation_rate > 0.0);
+        // Chuva deve elevar rain_sensitivity
+        assert!(ctx.rain_sensitivity > 1.0);
+    }
+
+    #[test]
+    fn test_context_gt3_has_different_profile_than_rookie() {
+        let make_entry = |cat: &str| CalendarEntry {
+            id: "R001".to_string(),
+            season_id: "S001".to_string(),
+            categoria: cat.to_string(),
+            rodada: 1,
+            nome: "Rodada 1".to_string(),
+            track_id: 47,
+            track_name: "Laguna Seca".to_string(),
+            track_config: "Full".to_string(),
+            clima: WeatherCondition::Dry,
+            temperatura: 22.0,
+            voltas: 12,
+            duracao_corrida_min: 30,
+            duracao_classificacao_min: 15,
+            status: RaceStatus::Pendente,
+            horario: "14:00".to_string(),
+            week_of_year: 5,
+            season_phase: crate::models::enums::SeasonPhase::BlocoRegular,
+            display_date: "2024-02-03".to_string(),
+            thematic_slot: crate::models::enums::ThematicSlot::NaoClassificado,
+        };
+
+        let rookie_ctx =
+            SimulationContext::from_calendar_entry(&make_entry("mazda_rookie"), 0, false);
+        let gt3_ctx = SimulationContext::from_calendar_entry(&make_entry("gt3"), 4, false);
+
+        assert!(rookie_ctx.qualifying_variance_multiplier > gt3_ctx.qualifying_variance_multiplier);
+        assert!(rookie_ctx.incident_rate_multiplier > gt3_ctx.incident_rate_multiplier);
+        assert!(rookie_ctx.start_chaos_multiplier > gt3_ctx.start_chaos_multiplier);
     }
 
     #[test]

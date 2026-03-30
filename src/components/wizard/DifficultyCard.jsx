@@ -4,6 +4,7 @@ function DifficultyCard({ difficulty, selected, onSelect }) {
   return (
     <GlassCard
       selected={selected}
+      darkBg
       onClick={() => onSelect(difficulty.id)}
       className="min-h-[210px] justify-between"
     >

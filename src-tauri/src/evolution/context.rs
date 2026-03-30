@@ -24,6 +24,7 @@ pub struct RetirementInfo {
     pub driver_name: String,
     pub age: i32,
     pub reason: String,
+    pub categoria: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

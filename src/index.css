@@ -73,21 +73,21 @@ body {
 }
 
 .glow-blue {
-  box-shadow: 0 0 20px rgba(88, 166, 255, 0.15);
+  box-shadow: 0 0 30px rgba(88, 166, 255, 0.18), 0 0 60px rgba(88, 166, 255, 0.08);
 }
 
 .glow-green {
-  box-shadow: 0 0 20px rgba(63, 185, 80, 0.15);
+  box-shadow: 0 0 30px rgba(63, 185, 80, 0.18), 0 0 60px rgba(63, 185, 80, 0.08);
 }
 
 .bg-gradient-animated {
   background: linear-gradient(
     135deg,
-    #0e0e10 0%,
-    #1a1a2e 25%,
-    #16213e 50%,
-    #1a1a2e 75%,
-    #0e0e10 100%
+    #030810 0%,
+    #060e1c 25%,
+    #071428 50%,
+    #060e1c 75%,
+    #030810 100%
   );
   background-size: 400% 400%;
   animation: gradient-shift 15s ease infinite;
@@ -115,6 +115,11 @@ body {
 
 .animate-drawer-out {
   animation: drawer-out 0.28s cubic-bezier(0.4, 0, 1, 1) forwards;
+}
+
+.animate-news-scope-drawer-in {
+  animation: news-scope-drawer-in 0.26s cubic-bezier(0.22, 1, 0.36, 1);
+  transform-origin: top left;
 }
 
 .animate-edge-rail-in {
@@ -154,7 +159,7 @@ body {
 
 .card-hover:hover {
   transform: translateY(-2px) scale(1.01);
-  box-shadow: 0 0 30px rgba(88, 166, 255, 0.16);
+  box-shadow: 0 0 40px rgba(88, 166, 255, 0.18), 0 0 80px rgba(88, 166, 255, 0.06);
 }
 
 .wizard-step-enter {
@@ -226,6 +231,18 @@ body {
   to {
     opacity: 0;
     transform: translateX(100%);
+  }
+}
+
+@keyframes news-scope-drawer-in {
+  from {
+    opacity: 0;
+    transform: translateY(-12px) scale(0.98);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
   }
 }
 

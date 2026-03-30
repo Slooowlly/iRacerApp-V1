@@ -1,8 +1,12 @@
 pub mod batch;
+pub mod catalog;
 pub mod context;
 pub mod engine;
 pub mod incidents;
 pub mod injuries;
+pub mod math;
+pub mod profile;
 pub mod qualifying;
 pub mod race;
 pub mod scoring;
+pub mod track_profile;

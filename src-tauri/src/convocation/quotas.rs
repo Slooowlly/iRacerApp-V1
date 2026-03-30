@@ -65,8 +65,13 @@ mod tests {
     fn test_calcular_cotas_total_correct() {
         for total in [6, 8, 10, 12, 14, 20] {
             let cotas = calcular_cotas(total);
-            let soma = cotas.merito_regular + cotas.continuidade + cotas.pool_global + cotas.wildcard;
-            assert_eq!(soma, total, "total errado para {} assentos: {}", total, soma);
+            let soma =
+                cotas.merito_regular + cotas.continuidade + cotas.pool_global + cotas.wildcard;
+            assert_eq!(
+                soma, total,
+                "total errado para {} assentos: {}",
+                total, soma
+            );
         }
     }
 

@@ -1,6 +1,6 @@
-use rusqlite::Transaction;
 use crate::db::connection::DbError;
 use crate::simulation::race::RaceDriverResult;
+use rusqlite::Transaction;
 
 pub fn insert_race_results_batch(
     tx: &Transaction<'_>,
@@ -22,9 +22,13 @@ pub fn insert_race_results_batch(
             fastest_lap,
             dnf_reason,
             dnf_segment,
-            incidents_count
+            incidents_count,
+            gap_to_winner_ms,
+            final_tire_wear,
+            dnf_catalog_id,
+            damage_origin_segment
         ) VALUES (
-            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13
+            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17
         )
         ",
     )?;
@@ -32,7 +36,7 @@ pub fn insert_race_results_batch(
     for result in results {
         let dnf_int = if result.is_dnf { 1 } else { 0 };
         let fastest_lap_int = if result.has_fastest_lap { 1 } else { 0 };
-        
+
         stmt.execute(rusqlite::params![
             race_id,
             result.pilot_id,
@@ -46,7 +50,11 @@ pub fn insert_race_results_batch(
             fastest_lap_int,
             result.dnf_reason,
             result.dnf_segment,
-            result.incidents_count
+            result.incidents_count,
+            result.gap_to_winner_ms,
+            result.final_tire_wear,
+            result.dnf_catalog_id,
+            result.damage_origin_segment
         ])?;
     }
 

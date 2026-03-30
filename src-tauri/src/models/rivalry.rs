@@ -13,19 +13,19 @@ pub enum RivalryType {
 impl RivalryType {
     pub fn as_str(&self) -> &str {
         match self {
-            RivalryType::Colisao      => "Colisao",
+            RivalryType::Colisao => "Colisao",
             RivalryType::Companheiros => "Companheiros",
-            RivalryType::Campeonato   => "Campeonato",
-            RivalryType::Pista        => "Pista",
+            RivalryType::Campeonato => "Campeonato",
+            RivalryType::Pista => "Pista",
         }
     }
 
     pub fn from_str(s: &str) -> Self {
         match s {
-            "Colisao"      => RivalryType::Colisao,
+            "Colisao" => RivalryType::Colisao,
             "Companheiros" => RivalryType::Companheiros,
-            "Campeonato"   => RivalryType::Campeonato,
-            _              => RivalryType::Pista,
+            "Campeonato" => RivalryType::Campeonato,
+            _ => RivalryType::Pista,
         }
     }
 }

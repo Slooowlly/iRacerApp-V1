@@ -412,7 +412,11 @@ pub fn update_driver_status(
 
 // ── DELETE ────────────────────────────────────────────────────────────────────
 
-pub fn update_driver_motivation(conn: &Connection, id: &str, motivacao: f64) -> Result<(), DbError> {
+pub fn update_driver_motivation(
+    conn: &Connection,
+    id: &str,
+    motivacao: f64,
+) -> Result<(), DbError> {
     conn.execute(
         "UPDATE drivers SET motivacao = ?1 WHERE id = ?2",
         rusqlite::params![motivacao.clamp(0.0, 100.0), id],

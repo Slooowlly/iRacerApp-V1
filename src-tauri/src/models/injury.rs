@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use crate::models::enums::InjuryType;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Injury {

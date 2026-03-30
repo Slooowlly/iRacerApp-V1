@@ -8,6 +8,7 @@ import PreSeasonView from "../components/season/PreSeasonView";
 import useCareerStore from "../stores/useCareerStore";
 import CalendarTab from "./tabs/CalendarTab";
 import MyTeamTab from "./tabs/MyTeamTab";
+import NewsTab from "./tabs/NewsTab";
 import NextRaceTab from "./tabs/NextRaceTab";
 import StandingsTab from "./tabs/StandingsTab";
 
@@ -19,7 +20,8 @@ function Dashboard() {
   const showEndOfSeason = useCareerStore((state) => state.showEndOfSeason);
   const endOfSeasonResult = useCareerStore((state) => state.endOfSeasonResult);
   const showPreseason = useCareerStore((state) => state.showPreseason);
-  const [activeTab, setActiveTab] = useState("standings");
+  const showRaceBriefing = useCareerStore((state) => state.showRaceBriefing);
+  const [activeTab, setActiveTab] = useState("news");
 
   if (!isLoaded) {
     return <Navigate to="/menu" replace />;
@@ -27,8 +29,8 @@ function Dashboard() {
 
   function renderTab() {
     switch (activeTab) {
-      case "next-race":
-        return <NextRaceTab />;
+      case "news":
+        return <NewsTab />;
       case "my-team":
         return <MyTeamTab />;
       case "calendar":
@@ -59,6 +61,14 @@ function Dashboard() {
     return (
       <MainLayout activeTab={activeTab} onTabChange={setActiveTab}>
         <PreSeasonView />
+      </MainLayout>
+    );
+  }
+
+  if (showRaceBriefing) {
+    return (
+      <MainLayout activeTab={activeTab} onTabChange={setActiveTab}>
+        <NextRaceTab />
       </MainLayout>
     );
   }

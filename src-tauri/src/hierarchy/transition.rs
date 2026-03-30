@@ -56,10 +56,16 @@ impl ResolvedTeamLineup {
         let n2 = n2_id.unwrap_or("").trim().to_string();
 
         if n1.is_empty() {
-            return Err(format!("Equipe '{}': N1 ausente na configuração final", team_id));
+            return Err(format!(
+                "Equipe '{}': N1 ausente na configuração final",
+                team_id
+            ));
         }
         if n2.is_empty() {
-            return Err(format!("Equipe '{}': N2 ausente na configuração final", team_id));
+            return Err(format!(
+                "Equipe '{}': N2 ausente na configuração final",
+                team_id
+            ));
         }
         if n1 == n2 {
             return Err(format!(
@@ -68,7 +74,11 @@ impl ResolvedTeamLineup {
             ));
         }
 
-        Ok(Self { team_id: team_id.to_string(), n1_id: n1, n2_id: n2 })
+        Ok(Self {
+            team_id: team_id.to_string(),
+            n1_id: n1,
+            n2_id: n2,
+        })
     }
 }
 
@@ -145,7 +155,13 @@ pub fn validate_and_normalize_team_hierarchies(conn: &Connection) -> Result<(), 
         )
         .map_err(|e| format!("Falha ao preparar validacao de hierarquia: {e}"))?;
 
-    let rows: Vec<(String, Option<String>, Option<String>, Option<String>, Option<String>)> = stmt
+    let rows: Vec<(
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    )> = stmt
         .query_map([], |row| {
             Ok((
                 row.get::<_, String>(0)?,
@@ -209,11 +225,21 @@ mod tests {
         status: &'a str,
         cat: &'a str,
     ) -> PrevHierarchyState<'a> {
-        PrevHierarchyState { n1_id: n1, n2_id: n2, tensao, status, categoria: cat }
+        PrevHierarchyState {
+            n1_id: n1,
+            n2_id: n2,
+            tensao,
+            status,
+            categoria: cat,
+        }
     }
 
     fn new_setup<'a>(n1: Option<&'a str>, n2: Option<&'a str>, cat: &'a str) -> NewSeasonSetup<'a> {
-        NewSeasonSetup { n1_id: n1, n2_id: n2, categoria: cat }
+        NewSeasonSetup {
+            n1_id: n1,
+            n2_id: n2,
+            categoria: cat,
+        }
     }
 
     // ── decide_hierarchy_transition ──
@@ -222,14 +248,20 @@ mod tests {
     fn test_partial_preserve_same_pair_same_cat() {
         let p = prev(Some("P001"), Some("P002"), 45.0, "tensao", "gt3");
         let n = new_setup(Some("P001"), Some("P002"), "gt3");
-        assert_eq!(decide_hierarchy_transition(&p, &n), HierarchyTransition::PartialPreserve);
+        assert_eq!(
+            decide_hierarchy_transition(&p, &n),
+            HierarchyTransition::PartialPreserve
+        );
     }
 
     #[test]
     fn test_full_reset_changed_pilot() {
         let p = prev(Some("P001"), Some("P002"), 45.0, "tensao", "gt3");
         let n = new_setup(Some("P001"), Some("P003"), "gt3");
-        assert_eq!(decide_hierarchy_transition(&p, &n), HierarchyTransition::FullReset);
+        assert_eq!(
+            decide_hierarchy_transition(&p, &n),
+            HierarchyTransition::FullReset
+        );
     }
 
     #[test]
@@ -237,7 +269,10 @@ mod tests {
         // Mesma dupla mas N1↔N2 trocados
         let p = prev(Some("P001"), Some("P002"), 45.0, "tensao", "gt3");
         let n = new_setup(Some("P002"), Some("P001"), "gt3");
-        assert_eq!(decide_hierarchy_transition(&p, &n), HierarchyTransition::FullReset);
+        assert_eq!(
+            decide_hierarchy_transition(&p, &n),
+            HierarchyTransition::FullReset
+        );
     }
 
     #[test]
@@ -245,21 +280,30 @@ mod tests {
         // Mesmos pilotos, mesma direção, mas categoria diferente (promoção/rebaixamento)
         let p = prev(Some("P001"), Some("P002"), 45.0, "tensao", "gt4");
         let n = new_setup(Some("P001"), Some("P002"), "gt3");
-        assert_eq!(decide_hierarchy_transition(&p, &n), HierarchyTransition::FullReset);
+        assert_eq!(
+            decide_hierarchy_transition(&p, &n),
+            HierarchyTransition::FullReset
+        );
     }
 
     #[test]
     fn test_full_reset_incomplete_new_lineup() {
         let p = prev(Some("P001"), Some("P002"), 45.0, "tensao", "gt3");
         let n = new_setup(None, Some("P002"), "gt3");
-        assert_eq!(decide_hierarchy_transition(&p, &n), HierarchyTransition::FullReset);
+        assert_eq!(
+            decide_hierarchy_transition(&p, &n),
+            HierarchyTransition::FullReset
+        );
     }
 
     #[test]
     fn test_full_reset_both_new_none() {
         let p = prev(Some("P001"), Some("P002"), 45.0, "tensao", "gt3");
         let n = new_setup(None, None, "gt3");
-        assert_eq!(decide_hierarchy_transition(&p, &n), HierarchyTransition::FullReset);
+        assert_eq!(
+            decide_hierarchy_transition(&p, &n),
+            HierarchyTransition::FullReset
+        );
     }
 
     #[test]
@@ -267,7 +311,10 @@ mod tests {
         // Equipe sem hierarquia anterior (nova dupla, nunca tinha N1/N2)
         let p = prev(None, None, 0.0, "estavel", "gt3");
         let n = new_setup(Some("P001"), Some("P002"), "gt3");
-        assert_eq!(decide_hierarchy_transition(&p, &n), HierarchyTransition::FullReset);
+        assert_eq!(
+            decide_hierarchy_transition(&p, &n),
+            HierarchyTransition::FullReset
+        );
     }
 
     #[test]
@@ -275,7 +322,10 @@ mod tests {
         // prev_categoria vazio (old save sem context) → FullReset (comportamento seguro)
         let p = prev(Some("P001"), Some("P002"), 60.0, "crise", "");
         let n = new_setup(Some("P001"), Some("P002"), "gt3");
-        assert_eq!(decide_hierarchy_transition(&p, &n), HierarchyTransition::FullReset);
+        assert_eq!(
+            decide_hierarchy_transition(&p, &n),
+            HierarchyTransition::FullReset
+        );
     }
 
     // ── resolve_transition_values ──
@@ -383,7 +433,17 @@ mod tests {
     #[test]
     fn test_normalize_skips_aligned_team() {
         let conn = setup_test_db();
-        insert_team(&conn, "T001", "gt3", Some("P001"), Some("P002"), Some("P001"), Some("P002"), 55.0, "tensao");
+        insert_team(
+            &conn,
+            "T001",
+            "gt3",
+            Some("P001"),
+            Some("P002"),
+            Some("P001"),
+            Some("P002"),
+            55.0,
+            "tensao",
+        );
 
         validate_and_normalize_team_hierarchies(&conn).unwrap();
 
@@ -399,7 +459,17 @@ mod tests {
     fn test_normalize_fixes_misaligned_team() {
         // N1/N2 desalinhados com o lineup (equipe preenchida por fallback)
         let conn = setup_test_db();
-        insert_team(&conn, "T001", "gt3", Some("P001"), Some("P002"), None, None, 0.0, "estavel");
+        insert_team(
+            &conn,
+            "T001",
+            "gt3",
+            Some("P001"),
+            Some("P002"),
+            None,
+            None,
+            0.0,
+            "estavel",
+        );
 
         validate_and_normalize_team_hierarchies(&conn).unwrap();
 
@@ -414,7 +484,17 @@ mod tests {
     #[test]
     fn test_normalize_fails_on_incomplete_lineup() {
         let conn = setup_test_db();
-        insert_team(&conn, "T001", "gt3", Some("P001"), None, None, None, 0.0, "estavel");
+        insert_team(
+            &conn,
+            "T001",
+            "gt3",
+            Some("P001"),
+            None,
+            None,
+            None,
+            0.0,
+            "estavel",
+        );
 
         let result = validate_and_normalize_team_hierarchies(&conn);
         assert!(result.is_err());
@@ -425,8 +505,28 @@ mod tests {
     fn test_normalize_skips_special_categories() {
         let conn = setup_test_db();
         // Equipe especial com lineup incompleto — deve ser ignorada (não retorna erro)
-        insert_team(&conn, "T001", "production_challenger", Some("P001"), None, None, None, 0.0, "estavel");
-        insert_team(&conn, "T002", "gt3", Some("P001"), Some("P002"), Some("P001"), Some("P002"), 0.0, "estavel");
+        insert_team(
+            &conn,
+            "T001",
+            "production_challenger",
+            Some("P001"),
+            None,
+            None,
+            None,
+            0.0,
+            "estavel",
+        );
+        insert_team(
+            &conn,
+            "T002",
+            "gt3",
+            Some("P001"),
+            Some("P002"),
+            Some("P001"),
+            Some("P002"),
+            0.0,
+            "estavel",
+        );
 
         validate_and_normalize_team_hierarchies(&conn).unwrap();
     }
@@ -465,7 +565,17 @@ mod tests {
         // Este teste verifica que a função NÃO acessa a tabela rivalries
         // (se tentasse, falharia porque a tabela não existe neste DB de teste).
         let conn = setup_test_db();
-        insert_team(&conn, "T001", "gt3", Some("P001"), Some("P002"), Some("P001"), Some("P002"), 0.0, "estavel");
+        insert_team(
+            &conn,
+            "T001",
+            "gt3",
+            Some("P001"),
+            Some("P002"),
+            Some("P001"),
+            Some("P002"),
+            0.0,
+            "estavel",
+        );
 
         // Se validate_and_normalize_team_hierarchies tentasse acessar rivalries,
         // o DB sem a tabela causaria erro. Deve passar sem erros.

@@ -74,7 +74,9 @@ pub fn adjust_end_of_season_motivation(
     }
 
     match driver.personalidade_primaria {
-        Some(PrimaryPersonality::Ambicioso) if !ctx.was_promoted && ctx.seasons_in_category >= 2 => {
+        Some(PrimaryPersonality::Ambicioso)
+            if !ctx.was_promoted && ctx.seasons_in_category >= 2 =>
+        {
             delta -= 5;
             reasons.push("Ambicioso frustrado por nao subir (-5)".to_string());
         }
@@ -184,7 +186,8 @@ mod tests {
             lost_seat: true,
             seasons_in_category: 4,
         };
-        let low_report = adjust_end_of_season_motivation(&mut low_driver, &stats, &low_ctx, &mut rng_low);
+        let low_report =
+            adjust_end_of_season_motivation(&mut low_driver, &stats, &low_ctx, &mut rng_low);
         assert_eq!(low_report.new_motivation, 0);
 
         let mut high_driver = sample_driver(95.0, Some(PrimaryPersonality::Consolidador));

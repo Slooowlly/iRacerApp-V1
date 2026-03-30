@@ -105,7 +105,11 @@ fn round_importance_bonus(rodada: i32, total_rodadas: i32) -> f32 {
         return 8.0;
     }
     let progress = rodada as f32 / total_rodadas as f32;
-    if progress > 0.5 { 2.0 } else { 0.0 }
+    if progress > 0.5 {
+        2.0
+    } else {
+        0.0
+    }
 }
 
 fn competitive_context_bonus(ctx: &EventInterestContext) -> f32 {
@@ -440,9 +444,14 @@ mod tests {
     ) -> RealizedEventInterest {
         let (expected, ctx) = realized_ctx(categoria);
         calculate_realized_event_interest(
-            &expected, &ctx,
-            Some(finish), Some(grid),
-            won, podium, dnf, final_decider,
+            &expected,
+            &ctx,
+            Some(finish),
+            Some(grid),
+            won,
+            podium,
+            dnf,
+            final_decider,
         )
     }
 
@@ -478,15 +487,27 @@ mod tests {
         ctx_decider.is_title_decider_candidate = true;
         let expected_decider = calculate_expected_event_interest(&ctx_decider);
         let com = calculate_realized_event_interest(
-            &expected_decider, &ctx_decider,
-            Some(1), Some(3), true, true, false, true,
+            &expected_decider,
+            &ctx_decider,
+            Some(1),
+            Some(3),
+            true,
+            true,
+            false,
+            true,
         );
 
         let ctx_normal = base_ctx("gt3");
         let expected_normal = calculate_expected_event_interest(&ctx_normal);
         let sem = calculate_realized_event_interest(
-            &expected_normal, &ctx_normal,
-            Some(1), Some(3), true, true, false, false,
+            &expected_normal,
+            &ctx_normal,
+            Some(1),
+            Some(3),
+            true,
+            true,
+            false,
+            false,
         );
         assert!(com.final_score > sem.final_score);
     }
@@ -527,8 +548,14 @@ mod tests {
         ctx.is_title_decider_candidate = true;
         let expected = calculate_expected_event_interest(&ctx);
         let realized = calculate_realized_event_interest(
-            &expected, &ctx,
-            Some(1), Some(2), true, true, false, true,
+            &expected,
+            &ctx,
+            Some(1),
+            Some(2),
+            true,
+            true,
+            false,
+            true,
         );
         assert_eq!(realized.news_importance_bias, 2);
         assert_eq!(realized.headline_strength, HeadlineStrength::Principal);

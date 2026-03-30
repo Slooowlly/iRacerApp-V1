@@ -78,6 +78,10 @@ mod tests {
             laps_completed: 12,
             final_tire_wear: 0.8,
             final_physical: 0.9,
+            classification_status: crate::simulation::race::ClassificationStatus::Finished,
+            notable_incident: None,
+            dnf_catalog_id: None,
+            damage_origin_segment: None,
         }
     }
 

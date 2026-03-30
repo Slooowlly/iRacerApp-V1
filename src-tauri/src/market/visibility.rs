@@ -114,7 +114,11 @@ pub fn derive_market_visibility_profile(media: f64) -> MarketVisibilityProfile {
         MarketVisibilityTier::Elite
     };
     let marketability_bias = raw_media / 100.0;
-    MarketVisibilityProfile { raw_media, tier, marketability_bias }
+    MarketVisibilityProfile {
+        raw_media,
+        tier,
+        marketability_bias,
+    }
 }
 
 #[cfg(test)]

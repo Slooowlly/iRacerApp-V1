@@ -174,7 +174,7 @@ function NewCareer() {
     if (step === 2) {
       return (
         <div className="grid gap-6 xl:grid-cols-[1.3fr_0.7fr]">
-          <GlassCard hover={false} className="space-y-5">
+          <GlassCard hover={false} className="glass-light space-y-5">
             <div>
               <p className="mb-2 text-[11px] uppercase tracking-[0.22em] text-text-secondary">
                 Nome do piloto
@@ -220,7 +220,7 @@ function NewCareer() {
             </div>
           </GlassCard>
 
-          <GlassCard hover={false} className="glass-strong">
+          <GlassCard hover={false} className="glass-light">
             <p className="text-[11px] uppercase tracking-[0.22em] text-text-secondary">
               Preview do piloto
             </p>
@@ -276,7 +276,7 @@ function NewCareer() {
 
     return (
       <div className="grid gap-6 xl:grid-cols-[1fr_0.42fr]">
-        <GlassCard hover={false} className="glass-strong">
+        <GlassCard hover={false} className="glass-light rounded-[28px]">
           <div className="space-y-6">
             <div>
               <p className="text-[11px] uppercase tracking-[0.22em] text-text-secondary">
@@ -324,7 +324,7 @@ function NewCareer() {
           </div>
         </GlassCard>
 
-        <GlassCard hover={false}>
+        <GlassCard hover={false} className="glass-light rounded-[28px]">
           <p className="text-[11px] uppercase tracking-[0.22em] text-text-secondary">
             Resumo rapido
           </p>
@@ -352,7 +352,7 @@ function NewCareer() {
       <div className="app-backdrop" />
 
       <div className="relative mx-auto flex min-h-[calc(100vh-3rem)] max-w-7xl items-center justify-center">
-        <div className="wizard-panel glass-strong w-full overflow-hidden rounded-[32px] p-5 shadow-[0_30px_80px_rgba(0,0,0,0.42)] sm:p-8 lg:p-10">
+        <div className="wizard-panel glass w-full overflow-hidden rounded-[32px] p-5 shadow-[0_30px_80px_rgba(0,0,0,0.42)] sm:p-8 lg:p-10">
           <div className="relative z-10">
             <StepIndicator currentStep={step} steps={WIZARD_STEPS} />
 
@@ -371,7 +371,7 @@ function NewCareer() {
 
               <GlassCard
                 hover={false}
-                className="w-full max-w-xs rounded-3xl px-5 py-4 text-sm text-text-secondary"
+                className="glass-light w-full max-w-xs rounded-3xl px-5 py-4 text-sm text-text-secondary"
               >
                 <p className="text-[10px] uppercase tracking-[0.18em] text-text-muted">
                   Save preview

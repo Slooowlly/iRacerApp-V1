@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 
+pub mod flavour;
 pub mod generator;
+pub mod race_context;
 pub mod season_framing;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -18,6 +20,7 @@ pub struct NewsItem {
     pub importancia: NewsImportance,
     pub timestamp: i64,
     pub driver_id: Option<String>,
+    pub driver_id_secondary: Option<String>,
     pub team_id: Option<String>,
 }
 

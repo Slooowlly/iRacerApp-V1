@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Condicoes - Preview</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --text: #ecf3ff;
+        --muted: #97a7c0;
+        --line: rgba(255, 255, 255, 0.08);
+        --accent: #58a6ff;
+        --panel: rgba(255, 255, 255, 0.06);
+        --panel-strong: rgba(255, 255, 255, 0.09);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: "Segoe UI", system-ui, sans-serif;
+        background:
+          radial-gradient(circle at top right, rgba(88, 166, 255, 0.18), transparent 24%),
+          radial-gradient(circle at bottom left, rgba(245, 199, 109, 0.1), transparent 24%),
+          linear-gradient(160deg, #07101a 0%, #0b1728 52%, #121c2a 100%);
+        color: var(--text);
+      }
+
+      .page {
+        width: min(1200px, calc(100vw - 40px));
+        margin: 0 auto;
+        padding: 36px 0 52px;
+      }
+
+      .eyebrow {
+        margin: 0 0 10px;
+        font-size: 12px;
+        letter-spacing: 0.22em;
+        text-transform: uppercase;
+        color: var(--accent);
+      }
+
+      h1 {
+        margin: 0;
+        font-size: clamp(34px, 4vw, 50px);
+        line-height: 0.95;
+        letter-spacing: -0.05em;
+      }
+
+      .subtitle {
+        max-width: 760px;
+        margin: 14px 0 28px;
+        color: var(--muted);
+        font-size: 16px;
+        line-height: 1.7;
+      }
+
+      .stack {
+        display: grid;
+        gap: 24px;
+      }
+
+      .shell {
+        position: relative;
+        overflow: hidden;
+        border-radius: 28px;
+        border: 1px solid rgba(255, 255, 255, 0.09);
+        background: linear-gradient(145deg, rgba(7, 15, 27, 0.96) 0%, rgba(11, 24, 42, 0.93) 54%, rgba(18, 23, 34, 0.92) 100%);
+        box-shadow: 0 18px 48px rgba(0, 0, 0, 0.28);
+      }
+
+      .shell::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background:
+          radial-gradient(circle at top right, rgba(88, 166, 255, 0.18), transparent 26%),
+          radial-gradient(circle at bottom left, rgba(245, 199, 109, 0.1), transparent 22%);
+        pointer-events: none;
+      }
+
+      .inner {
+        position: relative;
+        padding: 26px;
+      }
+
+      .row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 18px;
+        padding: 13px 0;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .row:last-child {
+        border-bottom: 0;
+        padding-bottom: 0;
+      }
+
+      .label {
+        color: var(--muted);
+        font-size: 12px;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+      }
+
+      .value {
+        font-size: 18px;
+        font-weight: 700;
+      }
+
+      .option-title {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        margin-bottom: 18px;
+      }
+
+      .badge {
+        width: 36px;
+        height: 36px;
+        border-radius: 999px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(88, 166, 255, 0.14);
+        color: var(--accent);
+        font-weight: 700;
+      }
+
+      .option-name {
+        margin: 0;
+        font-size: 24px;
+        font-weight: 700;
+      }
+
+      .option-desc {
+        margin: 4px 0 0;
+        color: var(--muted);
+        font-size: 14px;
+      }
+
+      .card {
+        border-radius: 22px;
+        border: 1px solid var(--line);
+        background: rgba(0, 0, 0, 0.14);
+        padding: 20px;
+      }
+
+      .hero-grid {
+        display: grid;
+        gap: 14px;
+        grid-template-columns: 1.1fr 0.9fr;
+      }
+
+      .hero-panel {
+        border-radius: 20px;
+        background: linear-gradient(160deg, rgba(88, 166, 255, 0.12), rgba(88, 166, 255, 0.03));
+        border: 1px solid rgba(88, 166, 255, 0.16);
+        padding: 18px;
+      }
+
+      .hero-main {
+        margin-top: 10px;
+        font-size: 30px;
+        font-weight: 800;
+        letter-spacing: -0.05em;
+      }
+
+      .hero-sub {
+        margin-top: 8px;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.5;
+      }
+
+      .mini-stack {
+        display: grid;
+        gap: 12px;
+      }
+
+      .mini-box {
+        min-height: 92px;
+        border-radius: 18px;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        padding: 16px;
+      }
+
+      .mini-value {
+        margin-top: 8px;
+        font-size: 22px;
+        font-weight: 700;
+      }
+
+      .broadcast {
+        display: grid;
+        gap: 12px;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+
+      .broadcast-box {
+        min-height: 120px;
+        border-radius: 18px;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        padding: 16px;
+        text-align: center;
+      }
+
+      .broadcast-box .label {
+        justify-content: center;
+      }
+
+      .broadcast-value {
+        margin-top: 12px;
+        font-size: 26px;
+        font-weight: 800;
+        letter-spacing: -0.04em;
+      }
+
+      .broadcast-sub {
+        margin-top: 8px;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.5;
+      }
+
+      .editorial {
+        display: grid;
+        gap: 14px;
+      }
+
+      .editorial-row {
+        display: grid;
+        gap: 12px;
+        grid-template-columns: 84px 1fr;
+        align-items: center;
+        border-radius: 18px;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        padding: 16px;
+      }
+
+      .editorial-icon {
+        width: 64px;
+        height: 64px;
+        border-radius: 18px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(88, 166, 255, 0.12);
+        font-size: 30px;
+      }
+
+      .editorial-value {
+        margin-top: 6px;
+        font-size: 21px;
+        font-weight: 700;
+      }
+
+      .editorial-sub {
+        margin-top: 6px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .recommend {
+        margin-top: 14px;
+        color: #8ddf9f;
+        font-size: 13px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        font-weight: 700;
+      }
+
+      .note {
+        margin-top: 10px;
+        color: var(--muted);
+        font-size: 14px;
+        line-height: 1.7;
+      }
+
+      @media (max-width: 900px) {
+        .hero-grid,
+        .broadcast {
+          grid-template-columns: 1fr;
+        }
+
+        .row,
+        .editorial-row {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <p class="eyebrow">Briefing de equipe</p>
+      <h1>Alternativas para Condicoes</h1>
+      <p class="subtitle">
+        Montei 3 direcoes para o card `Condicoes`, todas usando o mesmo conteudo base do briefing.
+        A diferenca aqui e a forma de apresentar `Tempo`, `Temperatura` e `Leitura do box`.
+      </p>
+
+      <div class="stack">
+        <section class="shell">
+          <div class="inner">
+            <div class="option-title">
+              <div class="badge">A</div>
+              <div>
+                <p class="option-name">Editorial balanceado</p>
+                <p class="option-desc">Uma condicao principal em destaque e duas informacoes de apoio.</p>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="hero-grid">
+                <div class="hero-panel">
+                  <div class="label">Tempo</div>
+                  <div class="hero-main">Chuva forte</div>
+                  <div class="hero-sub">Paddock esperando corrida reativa, visibilidade curta e erro caro.</div>
+                </div>
+
+                <div class="mini-stack">
+                  <div class="mini-box">
+                    <div class="label">Temperatura</div>
+                    <div class="mini-value">14°C</div>
+                  </div>
+                  <div class="mini-box">
+                    <div class="label">Leitura do box</div>
+                    <div class="mini-value">Trajetoria molhada</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="recommend">Recomendacao forte</div>
+            <p class="note">
+              Essa opcao combina melhor com o briefing atual: ela tem peso visual, mas nao disputa
+              demais com `Resumo do evento` nem com `Voz do box`.
+            </p>
+          </div>
+        </section>
+
+        <section class="shell">
+          <div class="inner">
+            <div class="option-title">
+              <div class="badge">B</div>
+              <div>
+                <p class="option-name">Painel de transmissao</p>
+                <p class="option-desc">Cada condicao vira um bloco curto, limpo e mais “broadcast”.</p>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="broadcast">
+                <div class="broadcast-box">
+                  <div class="label">Tempo</div>
+                  <div class="broadcast-value">Chuva forte</div>
+                  <div class="broadcast-sub">Clima dominante da etapa</div>
+                </div>
+                <div class="broadcast-box">
+                  <div class="label">Temperatura</div>
+                  <div class="broadcast-value">14°C</div>
+                  <div class="broadcast-sub">Ar mais frio no fim de tarde</div>
+                </div>
+                <div class="broadcast-box">
+                  <div class="label">Leitura do box</div>
+                  <div class="broadcast-value">Trajetoria molhada</div>
+                  <div class="broadcast-sub">Janela de pneu mais sensivel</div>
+                </div>
+              </div>
+            </div>
+
+            <p class="note">
+              Fica mais moderno e direto, mas corre um pouco mais o risco de parecer dashboard.
+            </p>
+          </div>
+        </section>
+
+        <section class="shell">
+          <div class="inner">
+            <div class="option-title">
+              <div class="badge">C</div>
+              <div>
+                <p class="option-name">Relatorio do box</p>
+                <p class="option-desc">Mais narrativo, com icone e leitura curta para cada item.</p>
+              </div>
+            </div>
+
+            <div class="card editorial">
+              <div class="editorial-row">
+                <div class="editorial-icon">🌧</div>
+                <div>
+                  <div class="label">Tempo</div>
+                  <div class="editorial-value">Chuva forte</div>
+                  <div class="editorial-sub">A corrida pede conservadorismo no inicio e paciencia no spray.</div>
+                </div>
+              </div>
+
+              <div class="editorial-row">
+                <div class="editorial-icon">🌡</div>
+                <div>
+                  <div class="label">Temperatura</div>
+                  <div class="editorial-value">14°C</div>
+                  <div class="editorial-sub">Temperatura mais baixa ajudando a segurar o desgaste.</div>
+                </div>
+              </div>
+
+              <div class="editorial-row">
+                <div class="editorial-icon">📻</div>
+                <div>
+                  <div class="label">Leitura do box</div>
+                  <div class="editorial-value">Trajetoria molhada</div>
+                  <div class="editorial-sub">Linha ideal ainda muda bastante e o timing do ataque importa mais.</div>
+                </div>
+              </div>
+            </div>
+
+            <p class="note">
+              Essa e a mais imersiva das tres. Funciona bem se voce quiser fazer `Condicoes` parecer
+              uma conversa de equipe, nao so um resumo tecnico.
+            </p>
+          </div>
+        </section>
+      </div>
+    </div>
+  </body>
+</html>

@@ -1,0 +1,718 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sobre o Grid - Variacoes da C</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --text: #ecf3ff;
+        --muted: #97a7c0;
+        --line: rgba(255, 255, 255, 0.08);
+        --accent: #58a6ff;
+        --gold: #f5c76d;
+        --red: #ff7b72;
+        --green: #4fd1a1;
+        --panel: rgba(255, 255, 255, 0.05);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: "Segoe UI", system-ui, sans-serif;
+        background:
+          radial-gradient(circle at top right, rgba(88, 166, 255, 0.18), transparent 24%),
+          radial-gradient(circle at bottom left, rgba(245, 199, 109, 0.11), transparent 24%),
+          linear-gradient(160deg, #07101a 0%, #0b1728 52%, #121c2a 100%);
+        color: var(--text);
+      }
+
+      .page {
+        width: min(1240px, calc(100vw - 40px));
+        margin: 0 auto;
+        padding: 36px 0 54px;
+      }
+
+      .eyebrow {
+        margin: 0 0 10px;
+        font-size: 12px;
+        letter-spacing: 0.22em;
+        text-transform: uppercase;
+        color: var(--accent);
+      }
+
+      h1 {
+        margin: 0;
+        font-size: clamp(34px, 4vw, 50px);
+        line-height: 0.95;
+        letter-spacing: -0.05em;
+      }
+
+      .subtitle {
+        max-width: 790px;
+        margin: 14px 0 28px;
+        color: var(--muted);
+        font-size: 16px;
+        line-height: 1.7;
+      }
+
+      .stack {
+        display: grid;
+        gap: 24px;
+      }
+
+      .shell {
+        position: relative;
+        overflow: hidden;
+        border-radius: 28px;
+        border: 1px solid rgba(255, 255, 255, 0.09);
+        background: linear-gradient(145deg, rgba(7, 15, 27, 0.96) 0%, rgba(11, 24, 42, 0.93) 54%, rgba(18, 23, 34, 0.92) 100%);
+        box-shadow: 0 18px 48px rgba(0, 0, 0, 0.28);
+      }
+
+      .shell::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background:
+          radial-gradient(circle at top right, rgba(88, 166, 255, 0.16), transparent 26%),
+          radial-gradient(circle at bottom left, rgba(245, 199, 109, 0.1), transparent 22%);
+        pointer-events: none;
+      }
+
+      .inner {
+        position: relative;
+        padding: 26px;
+      }
+
+      .option-title {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        margin-bottom: 18px;
+      }
+
+      .badge {
+        width: 38px;
+        height: 38px;
+        border-radius: 999px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(88, 166, 255, 0.14);
+        color: var(--accent);
+        font-weight: 700;
+      }
+
+      .option-name {
+        margin: 0;
+        font-size: 24px;
+        font-weight: 700;
+      }
+
+      .option-desc {
+        margin: 4px 0 0;
+        color: var(--muted);
+        font-size: 14px;
+      }
+
+      .section-label {
+        margin: 0;
+        font-size: 10px;
+        letter-spacing: 0.22em;
+        text-transform: uppercase;
+        color: var(--accent);
+      }
+
+      .section-title {
+        margin: 10px 0 0;
+        font-size: 30px;
+        font-weight: 700;
+        letter-spacing: -0.04em;
+      }
+
+      .section-meta {
+        margin: 6px 0 0;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .chip-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .chip {
+        padding: 7px 11px;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .chip.good {
+        border-color: rgba(79, 209, 161, 0.3);
+        background: rgba(79, 209, 161, 0.1);
+        color: var(--green);
+      }
+
+      .chip.warn {
+        border-color: rgba(245, 199, 109, 0.28);
+        background: rgba(245, 199, 109, 0.1);
+        color: var(--gold);
+      }
+
+      .chip.bad {
+        border-color: rgba(255, 123, 114, 0.28);
+        background: rgba(255, 123, 114, 0.1);
+        color: var(--red);
+      }
+
+      .board {
+        margin-top: 22px;
+        border-radius: 24px;
+        border: 1px solid var(--line);
+        overflow: hidden;
+      }
+
+      .board-header,
+      .board-row {
+        display: grid;
+        gap: 12px;
+        align-items: center;
+      }
+
+      .board-header {
+        padding: 14px 18px;
+        background: rgba(88, 166, 255, 0.08);
+        color: var(--muted);
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.16em;
+      }
+
+      .board-row {
+        padding: 16px 18px;
+        border-top: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.03);
+      }
+
+      .medal-gold {
+        color: var(--gold);
+      }
+
+      .medal-silver {
+        color: #d8dfef;
+      }
+
+      .medal-bronze {
+        color: #cf8d63;
+      }
+
+      .team-blue {
+        color: #58a6ff;
+      }
+
+      .team-red {
+        color: #ff7b72;
+      }
+
+      .team-amber {
+        color: #f5c76d;
+      }
+
+      .expectation {
+        font-size: 14px;
+        line-height: 1.55;
+        color: var(--text);
+      }
+
+      .name {
+        font-size: 16px;
+        font-weight: 700;
+      }
+
+      .sub {
+        margin-top: 5px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .pos {
+        font-size: 28px;
+        font-weight: 800;
+        letter-spacing: -0.05em;
+      }
+
+      .bar {
+        position: relative;
+        height: 8px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.08);
+        overflow: hidden;
+      }
+
+      .bar > span {
+        position: absolute;
+        inset: 0 auto 0 0;
+        border-radius: inherit;
+        background: linear-gradient(90deg, var(--accent), #8fd3ff);
+      }
+
+      .tiny-note {
+        margin-top: 6px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .v1-header,
+      .v1-row {
+        grid-template-columns: 72px 1.05fr 1fr 1.1fr;
+      }
+
+      .v2-list {
+        display: grid;
+        gap: 12px;
+        margin-top: 22px;
+      }
+
+      .v2-card {
+        display: grid;
+        gap: 14px;
+        grid-template-columns: 90px 1fr 140px;
+        align-items: center;
+        border-radius: 22px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.04);
+        padding: 16px;
+      }
+
+      .lane {
+        width: 72px;
+        height: 72px;
+        border-radius: 22px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(88, 166, 255, 0.14);
+        color: var(--accent);
+        font-size: 30px;
+        font-weight: 800;
+      }
+
+      .lane.gold {
+        background: rgba(245, 199, 109, 0.14);
+        color: var(--gold);
+      }
+
+      .dial {
+        width: 108px;
+        height: 108px;
+        margin-left: auto;
+        border-radius: 999px;
+        display: grid;
+        place-items: center;
+        background:
+          radial-gradient(circle at center, rgba(8, 18, 31, 0.95) 56%, transparent 57%),
+          conic-gradient(var(--accent) 0 88%, rgba(255, 255, 255, 0.08) 88% 100%);
+        border: 1px solid rgba(88, 166, 255, 0.18);
+      }
+
+      .dial.gold {
+        background:
+          radial-gradient(circle at center, rgba(8, 18, 31, 0.95) 56%, transparent 57%),
+          conic-gradient(var(--gold) 0 93%, rgba(255, 255, 255, 0.08) 93% 100%);
+      }
+
+      .dial.small79 {
+        background:
+          radial-gradient(circle at center, rgba(8, 18, 31, 0.95) 56%, transparent 57%),
+          conic-gradient(var(--accent) 0 79%, rgba(255, 255, 255, 0.08) 79% 100%);
+      }
+
+      .dial-value {
+        text-align: center;
+      }
+
+      .dial-value strong {
+        display: block;
+        font-size: 28px;
+        letter-spacing: -0.05em;
+      }
+
+      .dial-value span {
+        color: var(--muted);
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.14em;
+      }
+
+      .v3-top {
+        display: grid;
+        gap: 14px;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        margin-top: 22px;
+      }
+
+      .hero {
+        border-radius: 22px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.04);
+        padding: 18px;
+      }
+
+      .hero-rank {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 48px;
+        height: 32px;
+        padding: 0 12px;
+        border-radius: 999px;
+        background: rgba(88, 166, 255, 0.14);
+        color: var(--accent);
+        font-weight: 800;
+      }
+
+      .hero-rank.gold {
+        background: rgba(245, 199, 109, 0.14);
+        color: var(--gold);
+      }
+
+      .hero-rank.red {
+        background: rgba(255, 123, 114, 0.14);
+        color: var(--red);
+      }
+
+      .hero-name {
+        margin-top: 14px;
+        font-size: 22px;
+        font-weight: 800;
+        letter-spacing: -0.04em;
+      }
+
+      .hero-rate {
+        margin-top: 12px;
+        font-size: 32px;
+        font-weight: 800;
+        letter-spacing: -0.05em;
+      }
+
+      .v3-bottom {
+        display: grid;
+        gap: 12px;
+        margin-top: 14px;
+      }
+
+      .compact {
+        display: grid;
+        gap: 12px;
+        grid-template-columns: 68px 1fr 120px;
+        align-items: center;
+        border-radius: 18px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.035);
+        padding: 14px 16px;
+      }
+
+      @media (max-width: 960px) {
+        .v1-header,
+        .v1-row,
+        .v2-card,
+        .v3-top,
+        .compact {
+          grid-template-columns: 1fr;
+        }
+
+        .dial {
+          margin-left: 0;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <p class="eyebrow">Briefing de equipe</p>
+      <h1>Variacoes da opcao C</h1>
+      <p class="subtitle">
+        Todas aqui seguem a mesma ideia do painel tecnico que voce gostou: leitura rapida,
+        forma recente visivel e favoritismo claro. O que muda e o peso visual de cada piloto.
+      </p>
+
+      <div class="stack">
+        <section class="shell">
+          <div class="inner">
+            <div class="option-title">
+              <div class="badge">C1</div>
+              <div>
+                <h2 class="option-name">Tabela premium</h2>
+                <p class="option-desc">
+                  Evolucao direta da C original. Continua limpa, mas com mais respiro e aparencia de transmissao oficial.
+                </p>
+              </div>
+            </div>
+
+            <p class="section-label">Sobre o grid</p>
+            <p class="section-title">Radar do grid</p>
+            <p class="section-meta">Top 5 da etapa com leitura imediata</p>
+
+            <div class="board">
+              <div class="board-header v1-header">
+                <div>Pos.</div>
+                <div>Piloto</div>
+                <div>Forma recente</div>
+                <div>Expectativa</div>
+              </div>
+
+              <div class="board-row v1-row">
+                <div class="pos medal-gold">1</div>
+                <div>
+                  <div class="name">M. Costa</div>
+                  <div class="sub team-red">Scuderia Costa</div>
+                </div>
+                <div class="chip-row">
+                  <span class="chip good">P1</span>
+                  <span class="chip warn">P4</span>
+                  <span class="chip good">P2</span>
+                  <span class="chip good">P2</span>
+                </div>
+                <div class="expectation">Chega como a principal referencia do grid e o nome mais forte para controlar a etapa.</div>
+              </div>
+
+              <div class="board-row v1-row">
+                <div class="pos medal-silver">2</div>
+                <div>
+                  <div class="name">R. Silva</div>
+                  <div class="sub team-blue">Equipe Aurora</div>
+                </div>
+                <div class="chip-row">
+                  <span class="chip good">P3</span>
+                  <span class="chip good">P2</span>
+                  <span class="chip good">P1</span>
+                  <span class="chip warn">P4</span>
+                </div>
+                <div class="expectation">Entra no fim de semana com ritmo para disputar a primeira fila e pressionar pela vitoria.</div>
+              </div>
+
+              <div class="board-row v1-row">
+                <div class="pos medal-bronze">3</div>
+                <div>
+                  <div class="name">A. Lima</div>
+                  <div class="sub team-blue">Equipe Aurora</div>
+                </div>
+                <div class="chip-row">
+                  <span class="chip warn">P6</span>
+                  <span class="chip good">P3</span>
+                  <span class="chip good">P2</span>
+                  <span class="chip warn">P6</span>
+                </div>
+                <div class="expectation">Tem pacote para entrar na briga pelo podio se encaixar uma classificacao limpa.</div>
+              </div>
+
+              <div class="board-row v1-row">
+                <div class="pos">4</div>
+                <div>
+                  <div class="name">E. Prado</div>
+                  <div class="sub team-red">Scuderia Costa</div>
+                </div>
+                <div class="chip-row">
+                  <span class="chip warn">P5</span>
+                  <span class="chip warn">P6</span>
+                  <span class="chip good">P4</span>
+                  <span class="chip warn">P5</span>
+                </div>
+                <div class="expectation">Surge como nome perigoso para capitalizar qualquer caos e roubar pontos da frente.</div>
+              </div>
+
+              <div class="board-row v1-row">
+                <div class="pos">5</div>
+                <div>
+                  <div class="name">C. Duarte</div>
+                  <div class="sub team-amber">Sierra Racing</div>
+                </div>
+                <div class="chip-row">
+                  <span class="chip bad">P9</span>
+                  <span class="chip warn">P6</span>
+                  <span class="chip good">P4</span>
+                  <span class="chip good">P3</span>
+                </div>
+                <div class="expectation">Chega como outsider do top 5 e pode aparecer no radar se a prova abrir oportunidades.</div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="shell">
+          <div class="inner">
+            <div class="option-title">
+              <div class="badge">C2</div>
+              <div>
+                <h2 class="option-name">Fila de largada</h2>
+                <p class="option-desc">
+                  Mantem a leitura tecnica, mas transforma cada linha num bloco forte. O favoritismo vira um mostrador redondo.
+                </p>
+              </div>
+            </div>
+
+            <p class="section-label">Sobre o grid</p>
+            <p class="section-title">Fila da frente</p>
+            <p class="section-meta">Quem larga como referencia e quem chega para incomodar</p>
+
+            <div class="v2-list">
+              <div class="v2-card">
+                <div class="lane gold">P1</div>
+                <div>
+                  <div class="name">M. Costa</div>
+                  <div class="sub">Scuderia Costa · lider do campeonato</div>
+                  <div class="chip-row" style="margin-top:12px;">
+                    <span class="chip good">P1</span>
+                    <span class="chip warn">P4</span>
+                    <span class="chip good">P2</span>
+                    <span class="chip good">P2</span>
+                  </div>
+                </div>
+                <div class="dial gold">
+                  <div class="dial-value">
+                    <strong>93%</strong>
+                    <span>favorito</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="v2-card">
+                <div class="lane">P2</div>
+                <div>
+                  <div class="name">R. Silva</div>
+                  <div class="sub">Equipe Aurora · voce</div>
+                  <div class="chip-row" style="margin-top:12px;">
+                    <span class="chip good">P3</span>
+                    <span class="chip good">P2</span>
+                    <span class="chip good">P1</span>
+                    <span class="chip warn">P4</span>
+                  </div>
+                </div>
+                <div class="dial">
+                  <div class="dial-value">
+                    <strong>88%</strong>
+                    <span>favorito</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="v2-card">
+                <div class="lane">P3</div>
+                <div>
+                  <div class="name">A. Lima</div>
+                  <div class="sub">Equipe Aurora · chance de podio</div>
+                  <div class="chip-row" style="margin-top:12px;">
+                    <span class="chip warn">P6</span>
+                    <span class="chip good">P3</span>
+                    <span class="chip good">P2</span>
+                    <span class="chip warn">P6</span>
+                  </div>
+                </div>
+                <div class="dial small79">
+                  <div class="dial-value">
+                    <strong>79%</strong>
+                    <span>favorito</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="shell">
+          <div class="inner">
+            <div class="option-title">
+              <div class="badge">C3</div>
+              <div>
+                <h2 class="option-name">Top 3 heroico</h2>
+                <p class="option-desc">
+                  Ainda e um painel tecnico, mas valoriza os tres principais nomes em cards grandes e deixa o resto em lista compacta.
+                </p>
+              </div>
+            </div>
+
+            <p class="section-label">Sobre o grid</p>
+            <p class="section-title">Painel de favoritismo</p>
+            <p class="section-meta">Top 3 em destaque, perseguidores abaixo</p>
+
+            <div class="v3-top">
+              <div class="hero">
+                <span class="hero-rank gold">#1</span>
+                <div class="hero-name">M. Costa</div>
+                <div class="sub">Scuderia Costa</div>
+                <div class="hero-rate">93%</div>
+                <div class="chip-row">
+                  <span class="chip good">P1</span>
+                  <span class="chip warn">P4</span>
+                  <span class="chip good">P2</span>
+                  <span class="chip good">P2</span>
+                </div>
+              </div>
+
+              <div class="hero">
+                <span class="hero-rank">#2</span>
+                <div class="hero-name">R. Silva</div>
+                <div class="sub">Equipe Aurora · voce</div>
+                <div class="hero-rate">88%</div>
+                <div class="chip-row">
+                  <span class="chip good">P3</span>
+                  <span class="chip good">P2</span>
+                  <span class="chip good">P1</span>
+                  <span class="chip warn">P4</span>
+                </div>
+              </div>
+
+              <div class="hero">
+                <span class="hero-rank red">#3</span>
+                <div class="hero-name">A. Lima</div>
+                <div class="sub">Equipe Aurora</div>
+                <div class="hero-rate">79%</div>
+                <div class="chip-row">
+                  <span class="chip warn">P6</span>
+                  <span class="chip good">P3</span>
+                  <span class="chip good">P2</span>
+                  <span class="chip warn">P6</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="v3-bottom">
+              <div class="compact">
+                <div class="pos">4</div>
+                <div>
+                  <div class="name">E. Prado</div>
+                  <div class="sub">Scuderia Costa · cresce em corrida longa</div>
+                </div>
+                <div>
+                  <div class="bar"><span style="width: 74%"></span></div>
+                  <div class="tiny-note">74%</div>
+                </div>
+              </div>
+
+              <div class="compact">
+                <div class="pos">5</div>
+                <div>
+                  <div class="name">C. Duarte</div>
+                  <div class="sub">Sierra Racing · outsider perigoso</div>
+                </div>
+                <div>
+                  <div class="bar"><span style="width: 68%"></span></div>
+                  <div class="tiny-note">68%</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+  </body>
+</html>

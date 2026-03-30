@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Preview - Previa da Corrida</title>
+    <style>
+      :root {
+        --bg: #07111d;
+        --panel: rgba(10, 18, 31, 0.9);
+        --panel-soft: rgba(255, 255, 255, 0.05);
+        --line: rgba(255, 255, 255, 0.08);
+        --text: #f3f6fb;
+        --muted: #93a4bc;
+        --accent: #6ec1ff;
+        --gold: #f0c36b;
+        --red: #ff7b72;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: "Segoe UI", "Trebuchet MS", sans-serif;
+        color: var(--text);
+        background:
+          radial-gradient(circle at top left, rgba(110, 193, 255, 0.16), transparent 22%),
+          radial-gradient(circle at bottom right, rgba(240, 195, 107, 0.1), transparent 20%),
+          linear-gradient(145deg, #07111d 0%, #0c1727 45%, #101722 100%);
+        padding: 36px;
+      }
+
+      .page {
+        max-width: 1420px;
+        margin: 0 auto;
+      }
+
+      .intro {
+        margin-bottom: 28px;
+      }
+
+      .intro p {
+        margin: 0;
+        color: var(--muted);
+        line-height: 1.7;
+      }
+
+      .options {
+        display: grid;
+        gap: 24px;
+      }
+
+      .option {
+        border: 1px solid var(--line);
+        border-radius: 30px;
+        background: linear-gradient(180deg, rgba(8, 15, 27, 0.96), rgba(12, 19, 30, 0.92));
+        overflow: hidden;
+        box-shadow: 0 28px 70px rgba(0, 0, 0, 0.28);
+      }
+
+      .option-header {
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+        align-items: center;
+        padding: 18px 22px;
+        border-bottom: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.03);
+      }
+
+      .option-header h2 {
+        margin: 0;
+        font-size: 24px;
+        letter-spacing: -0.03em;
+      }
+
+      .option-header span {
+        color: var(--muted);
+        font-size: 13px;
+        text-transform: uppercase;
+        letter-spacing: 0.16em;
+      }
+
+      .preview {
+        padding: 24px;
+      }
+
+      .card {
+        border: 1px solid var(--line);
+        border-radius: 28px;
+        background:
+          radial-gradient(circle at top right, rgba(110, 193, 255, 0.14), transparent 28%),
+          linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.02));
+        padding: 24px;
+      }
+
+      .eyebrow {
+        margin: 0 0 10px;
+        color: var(--accent);
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.22em;
+      }
+
+      .headline {
+        margin: 0;
+        font-size: 33px;
+        line-height: 1.1;
+        letter-spacing: -0.04em;
+      }
+
+      .subhead {
+        margin: 10px 0 0;
+        color: var(--muted);
+        font-size: 15px;
+        line-height: 1.7;
+      }
+
+      .copy {
+        margin-top: 18px;
+        display: grid;
+        gap: 12px;
+        color: #c6d1e1;
+        font-size: 15px;
+        line-height: 1.75;
+      }
+
+      .meta-row {
+        margin-top: 18px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+
+      .chip {
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        padding: 8px 12px;
+        background: var(--panel-soft);
+        color: var(--muted);
+        font-size: 12px;
+        letter-spacing: 0.05em;
+      }
+
+      .highlight {
+        color: var(--text);
+      }
+
+      .split {
+        display: grid;
+        gap: 18px;
+      }
+
+      .split.two {
+        grid-template-columns: 1.25fr 0.75fr;
+      }
+
+      .aside {
+        border: 1px solid var(--line);
+        border-radius: 22px;
+        background: rgba(255, 255, 255, 0.03);
+        padding: 18px;
+      }
+
+      .aside h3,
+      .mini h3 {
+        margin: 0 0 12px;
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.16em;
+        color: var(--muted);
+      }
+
+      .aside p {
+        margin: 0;
+        line-height: 1.65;
+        color: #d9e3f0;
+        font-size: 14px;
+      }
+
+      .hero-banner {
+        position: relative;
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 26px;
+        padding: 22px 24px;
+        background:
+          linear-gradient(100deg, rgba(255, 123, 114, 0.11), transparent 30%),
+          linear-gradient(135deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.03));
+      }
+
+      .hero-banner::after {
+        content: "";
+        position: absolute;
+        right: -30px;
+        top: -30px;
+        width: 140px;
+        height: 140px;
+        border-radius: 50%;
+        background: radial-gradient(circle, rgba(240, 195, 107, 0.2), transparent 65%);
+      }
+
+      .hero-banner p {
+        position: relative;
+      }
+
+      .hero-label {
+        margin: 0 0 10px;
+        color: var(--gold);
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.24em;
+      }
+
+      .hero-title {
+        margin: 0;
+        font-size: 36px;
+        line-height: 1.04;
+        letter-spacing: -0.05em;
+        max-width: 900px;
+      }
+
+      .hero-support {
+        margin: 14px 0 0;
+        max-width: 760px;
+        color: #d5ddea;
+        line-height: 1.7;
+      }
+
+      .columns {
+        margin-top: 18px;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 14px;
+      }
+
+      .mini {
+        border: 1px solid var(--line);
+        border-radius: 20px;
+        background: rgba(255, 255, 255, 0.03);
+        padding: 16px;
+      }
+
+      .mini p {
+        margin: 0;
+        color: #d2dceb;
+        line-height: 1.65;
+        font-size: 14px;
+      }
+
+      .note {
+        margin-top: 10px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      @media (max-width: 980px) {
+        .split.two,
+        .columns {
+          grid-template-columns: 1fr;
+        }
+
+        .headline,
+        .hero-title {
+          font-size: 28px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <div class="intro">
+        <p>Três leituras para o card <strong>Prévia da corrida</strong>. Todas usam o mesmo conteúdo-base do briefing atual, mudando a hierarquia e o tom.</p>
+      </div>
+
+      <div class="options">
+        <section class="option">
+          <div class="option-header">
+            <h2>A · Editorial Limpo</h2>
+            <span>Mais elegante</span>
+          </div>
+          <div class="preview">
+            <div class="card">
+              <p class="eyebrow">Prévia da corrida</p>
+              <h3 class="headline">Você chega a Laguna Seca tentando encurtar a distância para M. Costa.</h3>
+              <p class="subhead">Duas etapas continuam abertas depois desta corrida, e o box trata esta rodada como o momento mais delicado da reta final.</p>
+
+              <div class="copy">
+                <p>Você ocupa a <span class="highlight">2ª colocação</span> e entra nesta etapa <span class="highlight">12 pontos</span> atrás da liderança. Um resultado limpo aqui mantém o campeonato vivo e evita que a temporada escape antes da decisão.</p>
+                <p>M. Costa chega como referência direta da rodada, enquanto sua sequência recente de <span class="highlight">P3, P2 e P1</span> mantém a equipe em leitura clara de ataque.</p>
+                <p>Do outro lado do box, A. Lima serve de referência interna, mas a meta institucional é simples: <span class="highlight">pressionar a frente e sair daqui ainda na conversa pelo título.</span></p>
+              </div>
+
+              <div class="meta-row">
+                <div class="chip">Meta do fim de semana: <span class="highlight">Pódio</span></div>
+                <div class="chip">Leitura do box: <span class="highlight">Ataque controlado</span></div>
+                <div class="chip">Cenário: <span class="highlight">Pontuação alta obrigatória</span></div>
+              </div>
+            </div>
+            <p class="note">Boa se você quiser um card mais nobre e menos fragmentado.</p>
+          </div>
+        </section>
+
+        <section class="option">
+          <div class="option-header">
+            <h2>B · Reunião do Box</h2>
+            <span>Mais carreira</span>
+          </div>
+          <div class="preview">
+            <div class="split two">
+              <div class="card">
+                <p class="eyebrow">Prévia da corrida</p>
+                <h3 class="headline">O box entra em Laguna Seca tratando esta etapa como ponto de virada da campanha.</h3>
+                <div class="copy">
+                  <p>Você chega <span class="highlight">12 pontos atrás do líder</span> e com margem curta para erro. A equipe entende que qualquer resultado fora do bloco principal muda o peso da decisão final.</p>
+                  <p>Sua forma recente mantém o discurso interno agressivo: <span class="highlight">P3, P2, P1</span>. O ritmo está lá, mas a execução da largada e a consistência nos stints ainda são o centro da conversa.</p>
+                  <p>O objetivo da reunião é alinhar o fim de semana para uma corrida de <span class="highlight">pressão constante na frente</span>, sem entrar em jogo emocional cedo demais.</p>
+                </div>
+              </div>
+              <aside class="aside">
+                <h3>Leitura do chefe</h3>
+                <p>"Temos carro para entrar no top 3 e ritmo para atacar. O que não podemos fazer é entregar a rodada em erro evitável."</p>
+                <div class="meta-row" style="margin-top:16px;">
+                  <div class="chip">Meta: <span class="highlight">Top 3</span></div>
+                  <div class="chip">Pressão: <span class="highlight">Alta</span></div>
+                </div>
+              </aside>
+            </div>
+            <p class="note">Boa se você quiser sentir que a tela é uma conversa real de equipe antes da prova.</p>
+          </div>
+        </section>
+
+        <section class="option">
+          <div class="option-header">
+            <h2>C · Chamada de Transmissão</h2>
+            <span>Mais dramática</span>
+          </div>
+          <div class="preview">
+            <div class="hero-banner">
+              <p class="hero-label">Prévia da corrida</p>
+              <h3 class="hero-title">Laguna Seca pode redefinir a temporada antes da rodada final.</h3>
+              <p class="hero-support">Com M. Costa ainda na frente da tabela, o paddock chega ao fim de semana olhando para um único ponto: se R. Silva sair daqui sem um resultado grande, a reta final pode virar sobrevivência em vez de ataque.</p>
+            </div>
+
+            <div class="columns">
+              <div class="mini">
+                <h3>O que está em jogo</h3>
+                <p>Você abre a etapa na <strong>2ª posição</strong>, a <strong>12 pontos do líder</strong>, carregando uma sequência recente de <strong>P3, P2 e P1</strong>. O campeonato ainda está vivo, mas a margem já não permite um domingo comum.</p>
+              </div>
+              <div class="mini">
+                <h3>Leitura do paddock</h3>
+                <p>A equipe chega em modo ataque, porém sem discurso inflado: o carro tem condição real de pódio, e a grande pergunta da etapa é se esse ritmo vai se traduzir em pressão direta na frente ou só em recuperação de danos.</p>
+              </div>
+            </div>
+            <p class="note">Boa se você quiser um card com mais sensação de evento grande e menos clima de relatório.</p>
+          </div>
+        </section>
+      </div>
+    </div>
+  </body>
+</html>

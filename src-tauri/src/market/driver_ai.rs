@@ -334,7 +334,10 @@ mod tests {
         for media in [0.0_f64, 30.0, 60.0, 90.0] {
             let profile = derive_market_visibility_profile(media);
             let adj = market_visibility_acceptance_adjustment(&profile, false, false);
-            assert!((adj - 0.0).abs() < 1e-9, "lateral deve ser 0.0 para midia={media}");
+            assert!(
+                (adj - 0.0).abs() < 1e-9,
+                "lateral deve ser 0.0 para midia={media}"
+            );
         }
     }
 

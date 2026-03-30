@@ -24,8 +24,8 @@ pub fn generate_team_proposals(
     current_season: i32,
     rng: &mut impl Rng,
 ) -> Vec<MarketProposal> {
-    let required_license = get_category_config(&vacancy.categoria)
-        .and_then(|config| config.licenca_necessaria);
+    let required_license =
+        get_category_config(&vacancy.categoria).and_then(|config| config.licenca_necessaria);
 
     let mut candidates: Vec<&AvailableDriver> = available_drivers
         .iter()
@@ -93,10 +93,10 @@ pub fn generate_team_proposals(
 /// faixa), o que o torna previsível e semanticamente controlado.
 fn market_public_visibility_bonus(profile: &MarketVisibilityProfile) -> f64 {
     match profile.tier {
-        MarketVisibilityTier::Baixa     => 0.0,
+        MarketVisibilityTier::Baixa => 0.0,
         MarketVisibilityTier::Relevante => 0.03,
-        MarketVisibilityTier::Alta      => 0.07,
-        MarketVisibilityTier::Elite     => 0.12,
+        MarketVisibilityTier::Alta => 0.07,
+        MarketVisibilityTier::Elite => 0.12,
     }
 }
 
@@ -111,10 +111,10 @@ fn market_public_visibility_bonus(profile: &MarketVisibilityProfile) -> f64 {
 /// apelo público sobe levemente na shortlist. Não desbloqueio — apenas ordenação.
 fn shortlist_public_priority(profile: &MarketVisibilityProfile) -> f64 {
     match profile.tier {
-        MarketVisibilityTier::Baixa     => 0.0,
+        MarketVisibilityTier::Baixa => 0.0,
         MarketVisibilityTier::Relevante => 0.01,
-        MarketVisibilityTier::Alta      => 0.03,
-        MarketVisibilityTier::Elite     => 0.06,
+        MarketVisibilityTier::Alta => 0.03,
+        MarketVisibilityTier::Elite => 0.06,
     }
 }
 
@@ -325,14 +325,22 @@ mod tests {
 
     #[test]
     fn test_shortlist_priority_monotonic() {
-        let profile_baixa     = derive_market_visibility_profile(10.0);
+        let profile_baixa = derive_market_visibility_profile(10.0);
         let profile_relevante = derive_market_visibility_profile(40.0);
-        let profile_alta      = derive_market_visibility_profile(70.0);
-        let profile_elite     = derive_market_visibility_profile(90.0);
+        let profile_alta = derive_market_visibility_profile(70.0);
+        let profile_elite = derive_market_visibility_profile(90.0);
 
-        assert!(shortlist_public_priority(&profile_baixa)     < shortlist_public_priority(&profile_relevante));
-        assert!(shortlist_public_priority(&profile_relevante) < shortlist_public_priority(&profile_alta));
-        assert!(shortlist_public_priority(&profile_alta)      < shortlist_public_priority(&profile_elite));
+        assert!(
+            shortlist_public_priority(&profile_baixa)
+                < shortlist_public_priority(&profile_relevante)
+        );
+        assert!(
+            shortlist_public_priority(&profile_relevante)
+                < shortlist_public_priority(&profile_alta)
+        );
+        assert!(
+            shortlist_public_priority(&profile_alta) < shortlist_public_priority(&profile_elite)
+        );
     }
 
     // ── Testes de proposal_attention_weight ──────────────────────────────────
@@ -397,12 +405,12 @@ mod tests {
 
     #[test]
     fn test_proposal_attention_weight_monotonic() {
-        let p0  = derive_market_visibility_profile(0.0);
+        let p0 = derive_market_visibility_profile(0.0);
         let p50 = derive_market_visibility_profile(50.0);
         let p85 = derive_market_visibility_profile(85.0);
         let p99 = derive_market_visibility_profile(99.0);
 
-        assert!(proposal_attention_weight(&p0)  < proposal_attention_weight(&p50));
+        assert!(proposal_attention_weight(&p0) < proposal_attention_weight(&p50));
         assert!(proposal_attention_weight(&p50) < proposal_attention_weight(&p85));
         assert!(proposal_attention_weight(&p85) < proposal_attention_weight(&p99));
     }
@@ -433,7 +441,10 @@ mod tests {
         b.driver.atributos.midia = 99.0; // Elite (quase máximo)
 
         let diff = (candidate_score(&a) - candidate_score(&b)).abs();
-        assert!(diff < 1e-9, "pilotos no mesmo tier devem ter bônus idêntico: diff={diff}");
+        assert!(
+            diff < 1e-9,
+            "pilotos no mesmo tier devem ter bônus idêntico: diff={diff}"
+        );
     }
 
     #[test]

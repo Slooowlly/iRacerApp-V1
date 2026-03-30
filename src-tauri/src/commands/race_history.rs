@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::simulation::race::RaceDriverResult;
 use crate::simulation::incidents::{IncidentSeverity, IncidentType};
+use crate::simulation::race::RaceDriverResult;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RoundResult {
@@ -64,6 +64,10 @@ pub struct StoredIncident {
     pub positions_lost: i32,
     pub is_dnf: bool,
     pub description: String,
+    #[serde(default)]
+    pub catalog_id: Option<String>,
+    #[serde(default)]
+    pub damage_origin_segment: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -87,6 +91,8 @@ struct StoredRoundResult {
     pub incidents_count: i32,
     #[serde(default)]
     pub incidents: Vec<StoredIncident>,
+    #[serde(default)]
+    pub dnf_catalog_id: Option<String>,
 }
 
 pub fn append_race_result(
@@ -122,8 +128,11 @@ pub fn append_race_result(
                         positions_lost: inc.positions_lost,
                         is_dnf: inc.is_dnf,
                         description: inc.description.clone(),
+                        catalog_id: inc.catalog_id.clone(),
+                        damage_origin_segment: inc.damage_origin_segment.clone(),
                     })
                     .collect(),
+                dnf_catalog_id: entry.dnf_catalog_id.clone(),
             })
             .collect(),
     );

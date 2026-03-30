@@ -3,8 +3,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::calendar::generate_and_insert_special_calendars;
 use crate::db::connection::DbError;
-use crate::db::queries::{contracts as contract_queries, drivers as driver_queries,
-                          news as news_queries, seasons as season_queries, teams as team_queries};
+use crate::db::queries::{
+    contracts as contract_queries, drivers as driver_queries, news as news_queries,
+    seasons as season_queries, teams as team_queries,
+};
 use crate::generators::ids::{next_id, next_ids, IdType};
 use crate::models::enums::{SeasonPhase, TeamRole};
 use crate::news::generator::generate_news_from_pos_especial;
@@ -47,11 +49,31 @@ struct ClasseConfig {
 }
 
 const CLASSES_CONVOCADAS: &[ClasseConfig] = &[
-    ClasseConfig { special_category: "production_challenger", class_name: "mazda", feeder_category: "mazda_amador" },
-    ClasseConfig { special_category: "production_challenger", class_name: "toyota", feeder_category: "toyota_amador" },
-    ClasseConfig { special_category: "production_challenger", class_name: "bmw", feeder_category: "bmw_m2" },
-    ClasseConfig { special_category: "endurance", class_name: "gt4", feeder_category: "gt4" },
-    ClasseConfig { special_category: "endurance", class_name: "gt3", feeder_category: "gt3" },
+    ClasseConfig {
+        special_category: "production_challenger",
+        class_name: "mazda",
+        feeder_category: "mazda_amador",
+    },
+    ClasseConfig {
+        special_category: "production_challenger",
+        class_name: "toyota",
+        feeder_category: "toyota_amador",
+    },
+    ClasseConfig {
+        special_category: "production_challenger",
+        class_name: "bmw",
+        feeder_category: "bmw_m2",
+    },
+    ClasseConfig {
+        special_category: "endurance",
+        class_name: "gt4",
+        feeder_category: "gt4",
+    },
+    ClasseConfig {
+        special_category: "endurance",
+        class_name: "gt3",
+        feeder_category: "gt3",
+    },
 ];
 
 // ── Transições de fase ────────────────────────────────────────────────────────
@@ -128,7 +150,10 @@ pub fn run_convocation_window(conn: &Connection) -> Result<ConvocationResult, Db
                 }
                 all_grids.push(grid);
             }
-            Err(e) => all_errors.push(format!("[{}/{}] {}", cfg.special_category, cfg.class_name, e)),
+            Err(e) => all_errors.push(format!(
+                "[{}/{}] {}",
+                cfg.special_category, cfg.class_name, e
+            )),
         }
     }
 
@@ -162,7 +187,8 @@ fn montar_grid_classe(
     globally_excluded: &std::collections::HashSet<String>,
 ) -> Result<GridClasse, DbError> {
     // 1. Equipes da classe ordenadas por car_performance desc
-    let teams = team_queries::get_teams_by_category_and_class(conn, cfg.special_category, cfg.class_name)?;
+    let teams =
+        team_queries::get_teams_by_category_and_class(conn, cfg.special_category, cfg.class_name)?;
     if teams.is_empty() {
         return Err(DbError::NotFound(format!(
             "Nenhuma equipe para {}/{}",
@@ -174,7 +200,12 @@ fn montar_grid_classe(
     let cotas = calcular_cotas(total_assentos);
 
     // 2. Candidatos de todas as fontes
-    let candidatos = coletar_candidatos(conn, cfg.special_category, cfg.class_name, cfg.feeder_category)?;
+    let candidatos = coletar_candidatos(
+        conn,
+        cfg.special_category,
+        cfg.class_name,
+        cfg.feeder_category,
+    )?;
 
     // 3. Calcular scores e separar por fonte (excluir já alocados globalmente)
     let mut fonte_a: Vec<(String, f64)> = Vec::new();
@@ -182,10 +213,17 @@ fn montar_grid_classe(
     let mut fonte_c: Vec<(String, f64)> = Vec::new();
     let mut fonte_d: Vec<(String, f64)> = Vec::new();
 
-    for c in candidatos.iter().filter(|c| !globally_excluded.contains(&c.driver_id)) {
+    for c in candidatos
+        .iter()
+        .filter(|c| !globally_excluded.contains(&c.driver_id))
+    {
         let historico = contract_queries::get_especial_contract_count(
-            conn, &c.driver_id, cfg.special_category, cfg.class_name,
-        ).unwrap_or(0);
+            conn,
+            &c.driver_id,
+            cfg.special_category,
+            cfg.class_name,
+        )
+        .unwrap_or(0);
         let score = calcular_score(&c.driver, &c.fonte, historico);
         match c.fonte {
             FonteConvocacao::MeritoRegular => fonte_a.push((c.driver_id.clone(), score)),
@@ -252,7 +290,11 @@ fn montar_grid_classe(
         if team_idx >= teams.len() {
             break; // mais pilotos que assentos (não deve ocorrer, mas defensivo)
         }
-        let papel = if i % 2 == 0 { TeamRole::Numero1 } else { TeamRole::Numero2 };
+        let papel = if i % 2 == 0 {
+            TeamRole::Numero1
+        } else {
+            TeamRole::Numero2
+        };
         assignments.push(DriverAssignment {
             driver_id: driver_id.clone(),
             team_id: teams[team_idx].id.clone(),
@@ -327,7 +369,8 @@ fn persistir_grids(
     // Coletar dados de teams para obter nome
     let mut team_map: std::collections::HashMap<String, String> = std::collections::HashMap::new();
     // Coletar dados de drivers para obter nome
-    let mut driver_map: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut driver_map: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
 
     // Pre-carregar teams e drivers necessários
     for grid in grids {
@@ -508,10 +551,9 @@ pub fn run_pos_especial(conn: &Connection) -> Result<PosEspecialResult, DbError>
         temp_counter += 1;
         format!("TMP{temp_counter:03}")
     };
-    let mut timestamp = news_queries::get_latest_news_timestamp(conn)
-        .unwrap_or(0)
-        + 1;
-    let mut items = generate_news_from_pos_especial(&campeoes, season.numero, &mut temp_id, &mut timestamp);
+    let mut timestamp = news_queries::get_latest_news_timestamp(conn).unwrap_or(0) + 1;
+    let mut items =
+        generate_news_from_pos_especial(&campeoes, season.numero, &mut temp_id, &mut timestamp);
 
     if !items.is_empty() {
         if let Ok(ids) = next_ids(conn, IdType::News, items.len() as u32) {
@@ -536,12 +578,13 @@ pub fn run_pos_especial(conn: &Connection) -> Result<PosEspecialResult, DbError>
 fn query_campeoes_especiais(
     conn: &Connection,
     season_number: i32,
-) -> Result<Vec<(String, String, Option<String>)>, DbError> {
+) -> Result<Vec<(String, String, Option<String>, Option<String>)>, DbError> {
     let mut resultado = Vec::new();
 
     for cfg in CLASSES_CONVOCADAS {
-        let nome: Option<String> = conn.query_row(
-            "SELECT d.nome FROM drivers d
+        let campeao: Option<(String, String)> = conn
+            .query_row(
+                "SELECT d.id, d.nome FROM drivers d
              INNER JOIN contracts c ON c.piloto_id = d.id
              WHERE c.tipo = 'Especial' AND c.status = 'Ativo'
                AND c.temporada_inicio = ?1
@@ -549,14 +592,17 @@ fn query_campeoes_especiais(
                AND c.classe = ?3
              ORDER BY d.temp_pontos DESC
              LIMIT 1",
-            rusqlite::params![season_number, cfg.special_category, cfg.class_name],
-            |row| row.get(0),
-        ).optional().map_err(DbError::Sqlite)?;
+                rusqlite::params![season_number, cfg.special_category, cfg.class_name],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .map_err(DbError::Sqlite)?;
 
         resultado.push((
             cfg.special_category.to_string(),
             cfg.class_name.to_string(),
-            nome,
+            campeao.as_ref().map(|(_, nome)| nome.clone()),
+            campeao.map(|(driver_id, _)| driver_id),
         ));
     }
 
@@ -606,7 +652,8 @@ mod tests {
         conn.execute(
             "UPDATE meta SET value = ?1 WHERE key = 'next_contract_id'",
             rusqlite::params![next_contract.to_string()],
-        ).expect("update meta contract counter");
+        )
+        .expect("update meta contract counter");
 
         (conn, season_id)
     }
@@ -636,7 +683,10 @@ mod tests {
         // Avançar duas vezes deve falhar na segunda
         advance_to_convocation_window(&conn).expect("primeira avançada");
         let result = advance_to_convocation_window(&conn);
-        assert!(result.is_err(), "deveria falhar se não estiver em BlocoRegular");
+        assert!(
+            result.is_err(),
+            "deveria falhar se não estiver em BlocoRegular"
+        );
     }
 
     #[test]
@@ -672,7 +722,11 @@ mod tests {
         let (conn, _) = setup_world_db();
         advance_to_convocation_window(&conn).expect("advance");
         let result = run_convocation_window(&conn).expect("convocação");
-        assert!(result.errors.is_empty(), "erros na convocação: {:?}", result.errors);
+        assert!(
+            result.errors.is_empty(),
+            "erros na convocação: {:?}",
+            result.errors
+        );
 
         // Todos os contratos especiais gerados devem ter tipo=Especial
         let especiais: Vec<_> = conn
@@ -701,7 +755,11 @@ mod tests {
             )
             .unwrap_or(0);
 
-        assert_eq!(null_classe, 0, "contratos especiais com classe=NULL: {}", null_classe);
+        assert_eq!(
+            null_classe, 0,
+            "contratos especiais com classe=NULL: {}",
+            null_classe
+        );
     }
 
     #[test]
@@ -739,7 +797,11 @@ mod tests {
             )
             .unwrap_or(0);
 
-        assert_eq!(lmp2_with_pilots, 0, "equipes lmp2 com pilotos: {}", lmp2_with_pilots);
+        assert_eq!(
+            lmp2_with_pilots, 0,
+            "equipes lmp2 com pilotos: {}",
+            lmp2_with_pilots
+        );
     }
 
     // ── Testes PosEspecial ────────────────────────────────────────────────────
@@ -792,7 +854,11 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap_or(0);
-        assert_eq!(ativos, 0, "contratos Especial ainda ativos após PosEspecial: {}", ativos);
+        assert_eq!(
+            ativos, 0,
+            "contratos Especial ainda ativos após PosEspecial: {}",
+            ativos
+        );
     }
 
     #[test]
@@ -810,7 +876,11 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap_or(0);
-        assert_eq!(com_especial, 0, "pilotos com categoria_especial_ativa após PosEspecial: {}", com_especial);
+        assert_eq!(
+            com_especial, 0,
+            "pilotos com categoria_especial_ativa após PosEspecial: {}",
+            com_especial
+        );
     }
 
     #[test]
@@ -828,7 +898,11 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap_or(0);
-        assert_eq!(com_pilotos, 0, "equipes especiais com piloto após PosEspecial: {}", com_pilotos);
+        assert_eq!(
+            com_pilotos, 0,
+            "equipes especiais com piloto após PosEspecial: {}",
+            com_pilotos
+        );
     }
 
     #[test]
@@ -846,6 +920,10 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap_or(0);
-        assert_eq!(com_hierarquia, 0, "equipes especiais com hierarquia após PosEspecial: {}", com_hierarquia);
+        assert_eq!(
+            com_hierarquia, 0,
+            "equipes especiais com hierarquia após PosEspecial: {}",
+            com_hierarquia
+        );
     }
 }

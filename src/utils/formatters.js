@@ -10,6 +10,36 @@ export function formatDate(isoString) {
   });
 }
 
+export function formatCompactDate(isoString) {
+  if (!isoString) return "-";
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(isoString);
+  if (!match) return "-";
+  return `${match[3]}/${match[2]}/${match[1]}`;
+}
+
+export function formatNextRaceCountdown(daysUntilNextEvent) {
+  if (daysUntilNextEvent == null) return "Sem corrida pendente";
+  if (daysUntilNextEvent <= 0) return "Proxima corrida hoje";
+  if (daysUntilNextEvent === 1) return "Proxima corrida amanha";
+  if (daysUntilNextEvent <= 7) {
+    return `Proxima corrida em ${daysUntilNextEvent} dias`;
+  }
+
+  if (daysUntilNextEvent < 28) {
+    const weeks = Math.max(1, Math.floor(daysUntilNextEvent / 7));
+    return weeks === 1
+      ? "Proxima corrida em 1 semana"
+      : `Proxima corrida em ${weeks} semanas`;
+  }
+
+  if (daysUntilNextEvent < 56) {
+    return "Proxima corrida em 1 mes";
+  }
+
+  const months = Math.max(2, Math.floor(daysUntilNextEvent / 28));
+  return `Proxima corrida em ${months} meses`;
+}
+
 export function formatDateTime(isoString) {
   if (!isoString) return "-";
   const date = new Date(isoString);

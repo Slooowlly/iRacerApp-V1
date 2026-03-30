@@ -17,16 +17,12 @@ function MainMenu() {
         />
 
         <div className="space-y-2">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.35em] text-sky-200/70">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.35em] text-accent-primary/70">
             Menu Principal
           </p>
-          <h1 className="text-2xl font-semibold tracking-[0.05em] text-slate-100">
-            Escolha seu ponto de partida
+          <h1 className="text-2xl font-semibold tracking-[0.05em] text-text-primary">
+            Bem-vindo de volta
           </h1>
-          <p className="mx-auto max-w-sm text-[12px] leading-6 text-slate-300/78">
-            Mantive o mesmo clima do launcher para a transicao ficar natural:
-            vidro escuro, brilhos frios e foco total na identidade da logo.
-          </p>
         </div>
 
         <div className="flex w-full flex-col gap-3 pt-2">

@@ -13,7 +13,9 @@ use crate::evolution::context::StandingEntry;
 use crate::evolution::decline::apply_age_decline;
 use crate::evolution::growth::{calculate_growth, GrowthReport};
 use crate::evolution::licenses::persist_licenses;
-use crate::evolution::motivation::{adjust_end_of_season_motivation, MotivationContext, MotivationReport};
+use crate::evolution::motivation::{
+    adjust_end_of_season_motivation, MotivationContext, MotivationReport,
+};
 use crate::evolution::retirement::{check_retirement, process_retirement};
 use crate::evolution::rookies::{classify_rookie, generate_rookies};
 use crate::evolution::season_transition::{
@@ -57,7 +59,14 @@ pub fn run_end_of_season(
         .map_err(|e| format!("Falha ao finalizar temporada: {e}"))?;
 
     let (growth_reports, motivation_reports, retirements, existing_names) =
-        process_driver_evolution(conn, season, &standings_by_driver, &contracts_by_driver, &teams_by_id, &mut rng)?;
+        process_driver_evolution(
+            conn,
+            season,
+            &standings_by_driver,
+            &contracts_by_driver,
+            &teams_by_id,
+            &mut rng,
+        )?;
 
     let rookies_generated = process_rookie_phase(conn, existing_names, &mut rng)?;
 
@@ -89,8 +98,8 @@ pub fn run_end_of_season(
 fn build_context(
     conn: &Connection,
 ) -> Result<(HashMap<String, Team>, HashMap<String, Contract>), String> {
-    let teams = team_queries::get_all_teams(conn)
-        .map_err(|e| format!("Falha ao buscar equipes: {e}"))?;
+    let teams =
+        team_queries::get_all_teams(conn).map_err(|e| format!("Falha ao buscar equipes: {e}"))?;
     let teams_by_id: HashMap<String, Team> = teams
         .into_iter()
         .map(|team| (team.id.clone(), team))
@@ -111,7 +120,15 @@ fn process_driver_evolution(
     contracts_by_driver: &HashMap<String, Contract>,
     teams_by_id: &HashMap<String, Team>,
     rng: &mut impl Rng,
-) -> Result<(Vec<GrowthReport>, Vec<MotivationReport>, Vec<RetirementInfo>, HashSet<String>), String> {
+) -> Result<
+    (
+        Vec<GrowthReport>,
+        Vec<MotivationReport>,
+        Vec<RetirementInfo>,
+        HashSet<String>,
+    ),
+    String,
+> {
     let mut all_drivers = driver_queries::get_all_drivers(conn)
         .map_err(|e| format!("Falha ao buscar pilotos: {e}"))?;
     let existing_names: HashSet<String> = all_drivers
@@ -159,12 +176,8 @@ fn process_driver_evolution(
                 lost_seat: false,
                 seasons_in_category,
             };
-            let motivation_report = adjust_end_of_season_motivation(
-                driver,
-                &standing.stats,
-                &motivation_ctx,
-                rng,
-            );
+            let motivation_report =
+                adjust_end_of_season_motivation(driver, &standing.stats, &motivation_ctx, rng);
             motivation_reports.push(motivation_report);
 
             driver.temporadas_na_categoria += 1;
@@ -186,12 +199,8 @@ fn process_driver_evolution(
             driver.stats_carreira.titulos += 1;
         }
 
-        let retirement = check_retirement(
-            driver,
-            driver.temporadas_motivacao_baixa as i32,
-            false,
-            rng,
-        );
+        let retirement =
+            check_retirement(driver, driver.temporadas_motivacao_baixa as i32, false, rng);
         if retirement.should_retire {
             let reason = retirement
                 .reason
@@ -206,13 +215,19 @@ fn process_driver_evolution(
                 driver_name: driver.nome.clone(),
                 age: driver.idade as i32,
                 reason,
+                categoria: driver.categoria_atual.clone(),
             });
         }
         driver_queries::update_driver(conn, driver)
             .map_err(|e| format!("Falha ao salvar piloto '{}': {e}", driver.nome))?;
     }
 
-    Ok((growth_reports, motivation_reports, retirements, existing_names))
+    Ok((
+        growth_reports,
+        motivation_reports,
+        retirements,
+        existing_names,
+    ))
 }
 
 fn process_rookie_phase(

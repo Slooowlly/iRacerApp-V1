@@ -6,7 +6,6 @@ use serde::{Deserialize, Serialize};
 use crate::constants::categories::get_category_config;
 use crate::constants::teams::{get_team_templates, TeamTemplate};
 
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TeamHierarchyClimate {
     Estavel,
@@ -245,7 +244,6 @@ pub fn hierarchy_status_from_tensao(tensao: f64) -> TeamHierarchyClimate {
     TeamHierarchyClimate::from_tensao(tensao)
 }
 
-
 pub fn placeholder_team_from_db(
     id: String,
     nome: String,
@@ -389,12 +387,18 @@ mod tests {
 
     #[test]
     fn test_hierarchy_status_from_tensao() {
-        assert_eq!(hierarchy_status_from_tensao(0.0), TeamHierarchyClimate::Estavel);
+        assert_eq!(
+            hierarchy_status_from_tensao(0.0),
+            TeamHierarchyClimate::Estavel
+        );
         assert_eq!(
             hierarchy_status_from_tensao(25.0),
             TeamHierarchyClimate::Competitivo
         );
-        assert_eq!(hierarchy_status_from_tensao(50.0), TeamHierarchyClimate::Tensao);
+        assert_eq!(
+            hierarchy_status_from_tensao(50.0),
+            TeamHierarchyClimate::Tensao
+        );
         assert_eq!(
             hierarchy_status_from_tensao(70.0),
             TeamHierarchyClimate::Reavaliacao
@@ -403,6 +407,9 @@ mod tests {
             hierarchy_status_from_tensao(85.0),
             TeamHierarchyClimate::Inversao
         );
-        assert_eq!(hierarchy_status_from_tensao(95.0), TeamHierarchyClimate::Crise);
+        assert_eq!(
+            hierarchy_status_from_tensao(95.0),
+            TeamHierarchyClimate::Crise
+        );
     }
 }

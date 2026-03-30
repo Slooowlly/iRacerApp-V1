@@ -10,10 +10,7 @@ use crate::db::connection::Database;
 
 /// BlocoRegular → JanelaConvocacao.
 #[tauri::command]
-pub fn advance_to_convocation_window(
-    career_id: String,
-    app: AppHandle,
-) -> Result<(), String> {
+pub fn advance_to_convocation_window(career_id: String, app: AppHandle) -> Result<(), String> {
     let base_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let config = AppConfig::load_or_default(&base_dir);
     let db_path = config.saves_dir().join(&career_id).join("career.db");
@@ -36,10 +33,7 @@ pub fn run_convocation_window(
 
 /// JanelaConvocacao → BlocoEspecial.
 #[tauri::command]
-pub fn iniciar_bloco_especial(
-    career_id: String,
-    app: AppHandle,
-) -> Result<(), String> {
+pub fn iniciar_bloco_especial(career_id: String, app: AppHandle) -> Result<(), String> {
     let base_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let config = AppConfig::load_or_default(&base_dir);
     let db_path = config.saves_dir().join(&career_id).join("career.db");
@@ -49,10 +43,7 @@ pub fn iniciar_bloco_especial(
 
 /// BlocoEspecial → PosEspecial (fim esportivo das corridas especiais).
 #[tauri::command]
-pub fn encerrar_bloco_especial(
-    career_id: String,
-    app: AppHandle,
-) -> Result<(), String> {
+pub fn encerrar_bloco_especial(career_id: String, app: AppHandle) -> Result<(), String> {
     let base_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let config = AppConfig::load_or_default(&base_dir);
     let db_path = config.saves_dir().join(&career_id).join("career.db");
@@ -63,10 +54,7 @@ pub fn encerrar_bloco_especial(
 /// Desmontagem do bloco especial: expira contratos, limpa lineups, gera notícias.
 /// Permanece em PosEspecial após execução.
 #[tauri::command]
-pub fn run_pos_especial(
-    career_id: String,
-    app: AppHandle,
-) -> Result<PosEspecialResult, String> {
+pub fn run_pos_especial(career_id: String, app: AppHandle) -> Result<PosEspecialResult, String> {
     let base_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let config = AppConfig::load_or_default(&base_dir);
     let db_path = config.saves_dir().join(&career_id).join("career.db");

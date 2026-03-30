@@ -50,12 +50,12 @@ pub(crate) fn eligible_regions_for_category(
     category_id: &str,
 ) -> Option<&'static [CalendarRegion]> {
     match category_id {
-        "mazda_rookie" | "toyota_rookie" => {
-            Some(&[CalendarRegion::Usa, CalendarRegion::Europa])
-        }
-        "mazda_amador" | "toyota_amador" | "bmw_m2" => {
-            Some(&[CalendarRegion::Usa, CalendarRegion::Europa, CalendarRegion::JapaoOceania])
-        }
+        "mazda_rookie" | "toyota_rookie" => Some(&[CalendarRegion::Usa, CalendarRegion::Europa]),
+        "mazda_amador" | "toyota_amador" | "bmw_m2" => Some(&[
+            CalendarRegion::Usa,
+            CalendarRegion::Europa,
+            CalendarRegion::JapaoOceania,
+        ]),
         _ => None,
     }
 }
@@ -78,16 +78,16 @@ pub(crate) fn free_tracks_for_region(region: CalendarRegion) -> &'static [u32] {
             261, // Oulton Park – Fosters
             316, // Snetterton Circuit – 300
             300, // Brands Hatch – Grand Prix (free track, added to reach production pool minimum)
-            // TODO: Circuit de Lédenon (not yet in DB)
-            // TODO: Circuito de Navarra (not yet in DB)
-            // TODO: Motorsport Arena Oschersleben (not yet in DB)
-            // TODO: Rudskogen Motorsenter (not yet in DB)
+                 // TODO: Circuit de Lédenon (not yet in DB)
+                 // TODO: Circuito de Navarra (not yet in DB)
+                 // TODO: Motorsport Arena Oschersleben (not yet in DB)
+                 // TODO: Rudskogen Motorsenter (not yet in DB)
         ],
         CalendarRegion::JapaoOceania => &[
             166, // Okayama International Circuit
             325, // Tsukuba Circuit – 2000 Full Course
-            // TODO: Oran Park Raceway (not yet in DB)
-            // TODO: Winton Motor Raceway (not yet in DB)
+                 // TODO: Oran Park Raceway (not yet in DB)
+                 // TODO: Winton Motor Raceway (not yet in DB)
         ],
     }
 }
@@ -97,10 +97,8 @@ pub(crate) fn free_tracks_for_region(region: CalendarRegion) -> &'static [u32] {
 pub(crate) fn production_free_mix_pool() -> &'static [u32] {
     &[
         // USA
-        554, 14, 9, 58, 47,
-        // Europa
-        261, 316, 300,
-        // Japão/Oceania
+        554, 14, 9, 58, 47, // Europa
+        261, 316, 300, // Japão/Oceania
         166, 325,
         // TODO: tracks ausentes das 3 regiões quando entrarem no DB
     ]
@@ -125,8 +123,8 @@ pub(crate) fn gt4_curated_pool() -> &'static [u32] {
         51,  // Mid-Ohio Sports Car Course
         52,  // Road America
         125, // Canadian Tire Motorsport Park (Mosport)
-        // TODO: Circuito de Navarra (not yet in DB)
-        // TODO: Motorsport Arena Oschersleben (not yet in DB)
+             // TODO: Circuito de Navarra (not yet in DB)
+             // TODO: Motorsport Arena Oschersleben (not yet in DB)
     ]
 }
 
@@ -175,15 +173,15 @@ pub(crate) fn endurance_curated_pool() -> &'static [u32] {
 /// Subconjunto forte de uma região free — elegível para slots narrativos (final).
 pub(crate) fn strong_free_tracks_for_region(region: CalendarRegion) -> &'static [u32] {
     match region {
-        CalendarRegion::Usa          => &[58, 47],       // VIR, Laguna Seca
-        CalendarRegion::Europa       => &[261, 316],     // Oulton Park Fosters, Snetterton
-        CalendarRegion::JapaoOceania => &[166, 325],     // Okayama, Tsukuba
+        CalendarRegion::Usa => &[58, 47],            // VIR, Laguna Seca
+        CalendarRegion::Europa => &[261, 316],       // Oulton Park Fosters, Snetterton
+        CalendarRegion::JapaoOceania => &[166, 325], // Okayama, Tsukuba
     }
 }
 
 /// Pistas fortes de Production: final deve sair deste conjunto.
 pub(crate) fn strong_production_tracks() -> &'static [u32] {
-    &[58, 47, 261, 166]  // VIR, Laguna Seca, Oulton Park, Okayama
+    &[58, 47, 261, 166] // VIR, Laguna Seca, Oulton Park, Okayama
 }
 
 /// Pistas fortes GT4: abertura e final devem sair deste conjunto.
@@ -257,36 +255,32 @@ pub(crate) fn resolve_thematic_pool<R: rand::Rng>(
             }
 
             // Tentar encontrar região única com tracks suficientes
-            let single_region = shuffled
-                .iter()
-                .copied()
-                .find(|&r| {
-                    free_tracks_for_region(r)
-                        .iter()
-                        .filter(|&&id| get_track(id).is_some())
-                        .count()
-                        >= needed
-                });
+            let single_region = shuffled.iter().copied().find(|&r| {
+                free_tracks_for_region(r)
+                    .iter()
+                    .filter(|&&id| get_track(id).is_some())
+                    .count()
+                    >= needed
+            });
 
-            let (base_region, candidate_ids, used_multi_region) =
-                if let Some(r) = single_region {
-                    let ids: Vec<u32> = free_tracks_for_region(r)
-                        .iter()
-                        .copied()
-                        .filter(|&id| get_track(id).is_some())
-                        .collect();
-                    (r, ids, false)
-                } else {
-                    // Fallback: pool de todas as regiões elegíveis (DB ainda incompleto)
-                    let primary = shuffled[0];
-                    let mut seen = std::collections::HashSet::new();
-                    let ids: Vec<u32> = regions
-                        .iter()
-                        .flat_map(|&r| free_tracks_for_region(r).iter().copied())
-                        .filter(|&id| get_track(id).is_some() && seen.insert(id))
-                        .collect();
-                    (primary, ids, true)
-                };
+            let (base_region, candidate_ids, used_multi_region) = if let Some(r) = single_region {
+                let ids: Vec<u32> = free_tracks_for_region(r)
+                    .iter()
+                    .copied()
+                    .filter(|&id| get_track(id).is_some())
+                    .collect();
+                (r, ids, false)
+            } else {
+                // Fallback: pool de todas as regiões elegíveis (DB ainda incompleto)
+                let primary = shuffled[0];
+                let mut seen = std::collections::HashSet::new();
+                let ids: Vec<u32> = regions
+                    .iter()
+                    .flat_map(|&r| free_tracks_for_region(r).iter().copied())
+                    .filter(|&id| get_track(id).is_some() && seen.insert(id))
+                    .collect();
+                (primary, ids, true)
+            };
 
             // Visitante: Amador/BMW, season >= 2, 50% chance.
             // Disponível apenas quando usou região única (sem multi-region fallback).
@@ -439,7 +433,9 @@ mod tests {
             3
         );
         assert_eq!(
-            eligible_regions_for_category("bmw_m2").expect("bmw_m2").len(),
+            eligible_regions_for_category("bmw_m2")
+                .expect("bmw_m2")
+                .len(),
             3
         );
     }

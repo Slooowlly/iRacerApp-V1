@@ -47,7 +47,7 @@ function MyTeamTab() {
 
   return (
     <div className="grid gap-5 xl:grid-cols-[1.1fr_0.9fr]">
-      <GlassCard hover={false} className="rounded-[30px]">
+      <GlassCard hover={false} className="rounded-[28px]">
         <div className="flex items-center gap-3">
           <span
             className="h-4 w-4 rounded-full border border-white/15"
@@ -85,7 +85,7 @@ function MyTeamTab() {
         ) : null}
       </GlassCard>
 
-      <GlassCard hover={false} className="rounded-[30px]">
+      <GlassCard hover={false} className="rounded-[28px]">
         <p className="text-[11px] uppercase tracking-[0.22em] text-accent-primary">Infraestrutura</p>
         <h3 className="mt-2 text-2xl font-semibold text-text-primary">Base tecnica da equipe</h3>
 
@@ -150,7 +150,7 @@ function MetricBar({ label, value, rawValue }) {
       </div>
       <div className="h-3 rounded-full bg-white/10">
         <div
-          className="h-3 rounded-full bg-[linear-gradient(90deg,#58a6ff,#79b8ff)] transition-glass"
+          className="h-3 rounded-full bg-gradient-to-r from-accent-primary to-accent-hover transition-glass"
           style={{ width: `${Math.max(6, clamped)}%` }}
         />
       </div>

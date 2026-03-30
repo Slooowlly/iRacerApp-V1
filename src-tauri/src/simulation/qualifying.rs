@@ -1,10 +1,11 @@
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 
-use crate::constants::scoring::{get_weather_penalty, QUALI_SCORE_TO_LAP_MS};
-use crate::models::enums::WeatherCondition;
+use crate::constants::scoring::QUALI_SCORE_TO_LAP_MS;
 
 use super::context::{SimDriver, SimulationContext};
+use super::math::{adjusted_weather_multiplier, normalize_car_performance};
+use super::track_profile::TrackCharacter;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QualifyingResult {
@@ -20,27 +21,45 @@ pub struct QualifyingResult {
     pub is_jogador: bool,
 }
 
+/// Retorna os pesos (skill, ritmo_classificacao, car_performance, adaptabilidade)
+/// adaptados ao caráter da pista. Somam 1.0.
+fn qual_weights(character: TrackCharacter) -> (f64, f64, f64, f64) {
+    match character {
+        TrackCharacter::Flowing => (0.43, 0.27, 0.27, 0.03), // velocidade/carro dominam
+        TrackCharacter::Technical => (0.40, 0.25, 0.25, 0.10), // baseline equilibrado
+        TrackCharacter::Tight => (0.35, 0.22, 0.18, 0.25),   // adaptabilidade dominante
+        TrackCharacter::Roval => (0.45, 0.25, 0.25, 0.05),   // skill/velocidade dominam
+    }
+}
+
 pub fn simulate_qualifying(
     drivers: &[SimDriver],
     ctx: &SimulationContext,
     rng: &mut impl Rng,
 ) -> Vec<QualifyingResult> {
+    let (w_skill, w_ritmo, w_car, w_adapt) = qual_weights(ctx.track_character);
+
     let mut results: Vec<QualifyingResult> = drivers
         .iter()
         .map(|driver| {
-            let mut score = driver.skill as f64 * 0.40
-                + driver.ritmo_classificacao as f64 * 0.25
-                + normalize_car_performance(driver.car_performance) * 0.25
-                + driver.adaptabilidade as f64 * 0.10;
+            let mut score = driver.skill as f64 * w_skill
+                + driver.ritmo_classificacao as f64 * w_ritmo
+                + normalize_car_performance(driver.car_performance) * w_car
+                + driver.adaptabilidade as f64 * w_adapt;
 
-            score *= weather_multiplier(ctx.weather, driver.fator_chuva);
+            // Chuva com sensibilidade do contexto (fórmula canônica)
+            score *=
+                adjusted_weather_multiplier(ctx.weather, driver.fator_chuva, ctx.rain_sensitivity);
 
             if driver.corridas_na_categoria < 10 {
                 let experience_penalty = (10 - driver.corridas_na_categoria) as f64 * 0.005;
                 score *= 1.0 - experience_penalty;
             }
 
-            let variance_range = (100.0 - driver.consistencia as f64) / 100.0 * 8.0;
+            // Variância escalada pelo perfil da categoria
+            let variance_range = (100.0 - driver.consistencia as f64) / 100.0
+                * 8.0
+                * ctx.qualifying_variance_multiplier;
             score += rng.gen_range(-variance_range..=variance_range);
             score = score.max(10.0);
 
@@ -74,27 +93,12 @@ pub fn simulate_qualifying(
     for (index, result) in results.iter_mut().enumerate() {
         result.position = index as i32 + 1;
         result.is_pole = index == 0;
-        result.best_lap_time_ms =
-            ctx.base_lap_time_ms + (pole_score - result.quali_score).max(0.0) * QUALI_SCORE_TO_LAP_MS;
+        result.best_lap_time_ms = ctx.base_lap_time_ms
+            + (pole_score - result.quali_score).max(0.0) * QUALI_SCORE_TO_LAP_MS;
         result.gap_to_pole_ms = (result.best_lap_time_ms - pole_time).max(0.0);
     }
 
     results
-}
-
-fn weather_multiplier(weather: WeatherCondition, fator_chuva: u8) -> f64 {
-    if weather == WeatherCondition::Dry {
-        return 1.0;
-    }
-
-    let (base_penalty, _) = get_weather_penalty(&weather);
-    let absorption = fator_chuva as f64 / 100.0 * 0.90;
-    let rain_penalty = base_penalty * (1.0 - absorption);
-    1.0 - rain_penalty
-}
-
-fn normalize_car_performance(car_performance: f64) -> f64 {
-    ((car_performance + 5.0) / 21.0 * 100.0).clamp(0.0, 100.0)
 }
 
 #[cfg(test)]
@@ -102,25 +106,17 @@ mod tests {
     use rand::{rngs::StdRng, SeedableRng};
 
     use crate::models::driver::Driver;
+    use crate::models::enums::WeatherCondition;
     use crate::models::team::placeholder_team_from_db;
+    use crate::simulation::context::SimulationContext;
+    use crate::simulation::track_profile::TrackCharacter;
 
     use super::*;
 
     fn sample_context(weather: WeatherCondition) -> SimulationContext {
         SimulationContext {
-            category_id: "mazda_rookie".to_string(),
-            category_tier: 0,
-            track_id: 1,
-            track_name: "Laguna Seca".to_string(),
             weather,
-            temperature: 22.0,
-            total_laps: 12,
-            race_duration_minutes: 20,
-            is_championship_deciding: false,
-            base_lap_time_ms: 90_000.0,
-            tire_degradation_rate: 0.02,
-            physical_degradation_rate: 0.01,
-            incidents_enabled: false,
+            ..SimulationContext::test_default()
         }
     }
 
@@ -263,5 +259,94 @@ mod tests {
         assert!(results
             .windows(2)
             .all(|window| window[0].best_lap_time_ms <= window[1].best_lap_time_ms));
+    }
+
+    #[test]
+    fn test_tight_track_favors_adaptability_over_flowing() {
+        use super::qual_weights;
+        let (_, _, _, tight_adapt) = qual_weights(TrackCharacter::Tight);
+        let (_, _, _, flowing_adapt) = qual_weights(TrackCharacter::Flowing);
+        assert!(
+            tight_adapt > flowing_adapt,
+            "Tight adapt weight={} should > Flowing={}",
+            tight_adapt,
+            flowing_adapt
+        );
+    }
+
+    #[test]
+    fn test_roval_favors_skill_over_tight() {
+        use super::qual_weights;
+        let (roval_skill, _, _, _) = qual_weights(TrackCharacter::Roval);
+        let (tight_skill, _, _, _) = qual_weights(TrackCharacter::Tight);
+        assert!(
+            roval_skill > tight_skill,
+            "Roval skill weight={} should > Tight={}",
+            roval_skill,
+            tight_skill
+        );
+    }
+
+    #[test]
+    fn test_gt3_has_less_variance_than_rookie() {
+        use crate::simulation::profile::resolve_simulation_profile;
+
+        let rookie_profile =
+            resolve_simulation_profile("mazda_rookie", 47, 22.0, WeatherCondition::Dry, 15, 12);
+        let gt3_profile =
+            resolve_simulation_profile("gt3", 47, 22.0, WeatherCondition::Dry, 50, 20);
+
+        let rookie_ctx = SimulationContext {
+            category_id: "mazda_rookie".to_string(),
+            category_tier: 0,
+            qualifying_variance_multiplier: rookie_profile.qualifying_variance_multiplier,
+            base_lap_time_ms: rookie_profile.base_lap_time_ms,
+            ..SimulationContext::test_default()
+        };
+        let gt3_ctx = SimulationContext {
+            category_id: "gt3".to_string(),
+            category_tier: 4,
+            qualifying_variance_multiplier: gt3_profile.qualifying_variance_multiplier,
+            base_lap_time_ms: gt3_profile.base_lap_time_ms,
+            ..SimulationContext::test_default()
+        };
+
+        // Grid uniforme para isolar o efeito da variância
+        let grid: Vec<SimDriver> = (0..10)
+            .map(|i| build_driver(&format!("D{i}"), 70.0, 70.0, 50.0, 80.0))
+            .collect();
+
+        let mut rookie_spread_sum = 0.0_f64;
+        let mut gt3_spread_sum = 0.0_f64;
+        let runs = 50;
+
+        for seed in 0..runs {
+            let mut rng = StdRng::seed_from_u64(seed);
+            let rookie_results = simulate_qualifying(&grid, &rookie_ctx, &mut rng);
+            let rookie_scores: Vec<f64> = rookie_results.iter().map(|r| r.quali_score).collect();
+            let rookie_max = rookie_scores
+                .iter()
+                .cloned()
+                .fold(f64::NEG_INFINITY, f64::max);
+            let rookie_min = rookie_scores.iter().cloned().fold(f64::INFINITY, f64::min);
+            rookie_spread_sum += rookie_max - rookie_min;
+
+            let mut rng2 = StdRng::seed_from_u64(seed + 1000);
+            let gt3_results = simulate_qualifying(&grid, &gt3_ctx, &mut rng2);
+            let gt3_scores: Vec<f64> = gt3_results.iter().map(|r| r.quali_score).collect();
+            let gt3_max = gt3_scores.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+            let gt3_min = gt3_scores.iter().cloned().fold(f64::INFINITY, f64::min);
+            gt3_spread_sum += gt3_max - gt3_min;
+        }
+
+        let rookie_avg_spread = rookie_spread_sum / runs as f64;
+        let gt3_avg_spread = gt3_spread_sum / runs as f64;
+
+        assert!(
+            rookie_avg_spread > gt3_avg_spread,
+            "rookie avg spread={:.2} should > gt3 avg spread={:.2}",
+            rookie_avg_spread,
+            gt3_avg_spread
+        );
     }
 }

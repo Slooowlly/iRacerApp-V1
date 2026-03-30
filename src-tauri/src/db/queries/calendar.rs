@@ -1,3 +1,4 @@
+use chrono::NaiveDate;
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::calendar::CalendarEntry;
@@ -153,7 +154,10 @@ pub fn get_pending_races_up_to_week(
            AND week_of_year <= ?3
          ORDER BY week_of_year ASC, rodada ASC",
     )?;
-    let mapped = stmt.query_map(params![season_id, category_id, target_week], calendar_from_row)?;
+    let mapped = stmt.query_map(
+        params![season_id, category_id, target_week],
+        calendar_from_row,
+    )?;
     collect_entries(mapped)
 }
 
@@ -219,10 +223,22 @@ pub fn get_season_temporal_summary(
     let effective_week = get_current_effective_week(conn, season_id)?;
     let next_player_event = get_next_race(conn, season_id, player_category)?;
     let pending_in_phase = count_pending_races_in_phase(conn, season_id, current_phase)?;
+    let current_display_date =
+        resolve_current_display_date(conn, season_id, effective_week, next_player_event.as_ref())?;
+    let next_event_display_date = next_player_event
+        .as_ref()
+        .map(|entry| entry.display_date.clone())
+        .filter(|value| !value.is_empty());
+    let days_until_next_event = next_event_display_date
+        .as_deref()
+        .and_then(|next_date| days_between_display_dates(&current_display_date, next_date));
     Ok(SeasonTemporalSummary {
         fase: *current_phase, // SeasonPhase é Copy
         effective_week,
+        current_display_date,
         next_player_event,
+        next_event_display_date,
+        days_until_next_event,
         pending_in_phase,
     })
 }
@@ -320,6 +336,69 @@ fn optional_f64(row: &rusqlite::Row<'_>, column_name: &str) -> rusqlite::Result<
     }
 }
 
+fn resolve_current_display_date(
+    conn: &Connection,
+    season_id: &str,
+    effective_week: Option<i32>,
+    next_player_event: Option<&CalendarEntry>,
+) -> Result<String, DbError> {
+    if let Some(week) = effective_week {
+        if let Some(date) = latest_completed_display_date_for_week(conn, season_id, week)? {
+            return Ok(date);
+        }
+    }
+
+    if let Some(date) = next_player_event
+        .and_then(|entry| infer_pre_event_display_date(&entry.display_date))
+    {
+        return Ok(date);
+    }
+
+    Ok(next_player_event
+        .map(|entry| entry.display_date.clone())
+        .unwrap_or_default())
+}
+
+fn latest_completed_display_date_for_week(
+    conn: &Connection,
+    season_id: &str,
+    week_of_year: i32,
+) -> Result<Option<String>, DbError> {
+    conn.query_row(
+        "SELECT data
+         FROM calendar
+         WHERE COALESCE(season_id, temporada_id) = ?1
+           AND status = 'Concluida'
+           AND week_of_year = ?2
+         ORDER BY data DESC
+         LIMIT 1",
+        params![season_id, week_of_year],
+        |row| row.get(0),
+    )
+    .optional()
+    .map_err(Into::into)
+}
+
+fn infer_pre_event_display_date(display_date: &str) -> Option<String> {
+    let date = parse_display_date(display_date)?;
+    Some(
+        date.checked_sub_signed(chrono::Duration::days(7))?
+            .format("%Y-%m-%d")
+            .to_string(),
+    )
+}
+
+fn days_between_display_dates(from: &str, to: &str) -> Option<i32> {
+    let from_date = parse_display_date(from)?;
+    let to_date = parse_display_date(to)?;
+    let days = (to_date - from_date).num_days();
+    i32::try_from(days).ok()
+}
+
+fn parse_display_date(value: &str) -> Option<NaiveDate> {
+    NaiveDate::parse_from_str(value, "%Y-%m-%d").ok()
+}
+
 #[cfg(test)]
 mod tests {
     use rand::{rngs::StdRng, SeedableRng};
@@ -394,7 +473,10 @@ mod tests {
         // A primeira corrida tem week_of_year >= 2 (REGULAR_SEASON_START).
         // Com target=1 não deve retornar nada; com target=52 deve retornar todas.
         let none = get_pending_races_up_to_week(&conn, "S001", "gt3", 1).expect("query");
-        assert!(none.is_empty(), "target_week=1 should return nothing for gt3");
+        assert!(
+            none.is_empty(),
+            "target_week=1 should return nothing for gt3"
+        );
 
         let all = get_pending_races_up_to_week(&conn, "S001", "gt3", 52).expect("query");
         assert_eq!(all.len(), entries.len());
@@ -460,15 +542,16 @@ mod tests {
             pc.is_empty(),
             "production_challenger should not appear before week 41"
         );
-        assert!(
-            end.is_empty(),
-            "endurance should not appear before week 41"
-        );
+        assert!(end.is_empty(), "endurance should not appear before week 41");
 
         // Com target_week=50 deve retornar todas
         let pc_all = get_pending_races_up_to_week(&conn, "S001", "production_challenger", 50)
             .expect("query pc all");
-        assert_eq!(pc_all.len(), 10, "production_challenger should have 10 races");
+        assert_eq!(
+            pc_all.len(),
+            10,
+            "production_challenger should have 10 races"
+        );
     }
 
     #[test]
@@ -512,8 +595,7 @@ mod tests {
         migrations::run_all(&conn).expect("schema");
         insert_season(&conn, &Season::new("S001".to_string(), 1, 2024)).expect("season");
         let mut rng = StdRng::seed_from_u64(40);
-        let entries =
-            generate_calendar_for_category("S001", "gt3", &mut rng).expect("calendar");
+        let entries = generate_calendar_for_category("S001", "gt3", &mut rng).expect("calendar");
         insert_calendar_entries(&conn, &entries).expect("insert");
 
         // Mark first and last as completed
@@ -536,8 +618,7 @@ mod tests {
         migrations::run_all(&conn).expect("schema");
         insert_season(&conn, &Season::new("S001".to_string(), 1, 2024)).expect("season");
         let mut rng = StdRng::seed_from_u64(41);
-        let entries =
-            generate_calendar_for_category("S001", "gt3", &mut rng).expect("calendar");
+        let entries = generate_calendar_for_category("S001", "gt3", &mut rng).expect("calendar");
         insert_calendar_entries(&conn, &entries).expect("insert");
 
         let count = count_pending_races_in_phase(
@@ -556,8 +637,7 @@ mod tests {
         migrations::run_all(&conn).expect("schema");
         insert_season(&conn, &Season::new("S001".to_string(), 1, 2024)).expect("season");
         let mut rng = StdRng::seed_from_u64(42);
-        let entries =
-            generate_calendar_for_category("S001", "gt3", &mut rng).expect("calendar");
+        let entries = generate_calendar_for_category("S001", "gt3", &mut rng).expect("calendar");
         insert_calendar_entries(&conn, &entries).expect("insert");
 
         let count = count_pending_races_in_phase(
@@ -576,18 +656,19 @@ mod tests {
         migrations::run_all(&conn).expect("schema");
         insert_season(&conn, &Season::new("S001".to_string(), 1, 2024)).expect("season");
         let mut rng = StdRng::seed_from_u64(43);
-        let entries =
-            generate_calendar_for_category("S001", "gt3", &mut rng).expect("calendar");
+        let entries = generate_calendar_for_category("S001", "gt3", &mut rng).expect("calendar");
         insert_calendar_entries(&conn, &entries).expect("insert");
 
         mark_race_completed(&conn, &entries[0].id).expect("complete 0");
         mark_race_completed(&conn, &entries[1].id).expect("complete 1");
 
         let phase = crate::models::enums::SeasonPhase::BlocoRegular;
-        let summary =
-            get_season_temporal_summary(&conn, "S001", "gt3", &phase).expect("summary");
+        let summary = get_season_temporal_summary(&conn, "S001", "gt3", &phase).expect("summary");
 
-        assert_eq!(summary.fase, crate::models::enums::SeasonPhase::BlocoRegular);
+        assert_eq!(
+            summary.fase,
+            crate::models::enums::SeasonPhase::BlocoRegular
+        );
 
         let expected_week = entries[0].week_of_year.max(entries[1].week_of_year);
         assert_eq!(summary.effective_week, Some(expected_week));
@@ -596,5 +677,11 @@ mod tests {
         assert_eq!(summary.next_player_event.unwrap().id, entries[2].id);
 
         assert_eq!(summary.pending_in_phase, (entries.len() - 2) as i32);
+        assert_eq!(summary.current_display_date, entries[1].display_date);
+        assert_eq!(summary.next_event_display_date.as_deref(), Some(entries[2].display_date.as_str()));
+        let expected_days_until = (parse_display_date(&entries[2].display_date).expect("next date")
+            - parse_display_date(&entries[1].display_date).expect("current date"))
+        .num_days() as i32;
+        assert_eq!(summary.days_until_next_event, Some(expected_days_until));
     }
 }

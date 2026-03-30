@@ -1,5 +1,5 @@
-use crate::models::driver::Driver;
 use super::eligibility::FonteConvocacao;
+use crate::models::driver::Driver;
 
 /// Score composto 0–100 para ordenação de candidatos na convocação.
 /// Os pesos variam por fonte para refletir critérios diferentes por origem.
@@ -100,7 +100,14 @@ mod tests {
     use crate::models::driver::Driver;
     use crate::models::enums::DriverStatus;
 
-    fn make_driver(skill: f64, consistencia: f64, motivacao: f64, pontos: f64, vitorias: u32, idade: u32) -> Driver {
+    fn make_driver(
+        skill: f64,
+        consistencia: f64,
+        motivacao: f64,
+        pontos: f64,
+        vitorias: u32,
+        idade: u32,
+    ) -> Driver {
         let mut d = Driver::new(
             "P999".to_string(),
             "Test Driver".to_string(),
@@ -122,7 +129,11 @@ mod tests {
     fn test_score_merito_regular_in_range() {
         let driver = make_driver(80.0, 70.0, 90.0, 150.0, 2, 25);
         let score = calcular_score(&driver, &FonteConvocacao::MeritoRegular, 0);
-        assert!(score >= 0.0 && score <= 100.0, "score fora do range: {}", score);
+        assert!(
+            score >= 0.0 && score <= 100.0,
+            "score fora do range: {}",
+            score
+        );
     }
 
     #[test]
@@ -137,7 +148,11 @@ mod tests {
     fn test_score_pool_global_in_range() {
         let driver = make_driver(50.0, 50.0, 50.0, 50.0, 0, 35);
         let score = calcular_score(&driver, &FonteConvocacao::PoolGlobal, 0);
-        assert!(score >= 0.0 && score <= 100.0, "score fora do range: {}", score);
+        assert!(
+            score >= 0.0 && score <= 100.0,
+            "score fora do range: {}",
+            score
+        );
     }
 
     #[test]
@@ -146,7 +161,10 @@ mod tests {
         let old = make_driver(80.0, 70.0, 90.0, 100.0, 1, 30);
         let score_young = calcular_score(&young, &FonteConvocacao::Wildcard, 0);
         let score_old = calcular_score(&old, &FonteConvocacao::Wildcard, 0);
-        assert!(score_young > score_old, "piloto jovem deve ter score wildcard maior");
+        assert!(
+            score_young > score_old,
+            "piloto jovem deve ter score wildcard maior"
+        );
     }
 
     #[test]

@@ -69,9 +69,17 @@ pub fn generate_calendar_for_category_with_year(
     rng: &mut impl Rng,
 ) -> Result<Vec<CalendarEntry>, String> {
     let (week_start, week_end, phase) = if is_especial(categoria) {
-        (SPECIAL_SEASON_START, SPECIAL_SEASON_END, SeasonPhase::BlocoEspecial)
+        (
+            SPECIAL_SEASON_START,
+            SPECIAL_SEASON_END,
+            SeasonPhase::BlocoEspecial,
+        )
     } else {
-        (REGULAR_SEASON_START, REGULAR_SEASON_END, SeasonPhase::BlocoRegular)
+        (
+            REGULAR_SEASON_START,
+            REGULAR_SEASON_END,
+            SeasonPhase::BlocoRegular,
+        )
     };
     let mut next_id = 1_u32;
     generate_calendar_for_category_with_constraints(
@@ -248,7 +256,10 @@ pub fn generate_all_calendars(
 /// Retorna 1 como fallback seguro.
 /// Nota v1: usado como proxy de season_number — considerar passar explicitamente no futuro.
 fn parse_season_number(season_id: &str) -> i32 {
-    season_id.trim_start_matches('S').parse::<i32>().unwrap_or(1)
+    season_id
+        .trim_start_matches('S')
+        .parse::<i32>()
+        .unwrap_or(1)
 }
 
 /// Seleciona pistas para uma categoria usando o pool temático resolvido.
@@ -913,8 +924,10 @@ mod tests {
         // Semanas 1-52 devem produzir datas válidas sem fallback
         for week in 1..=52 {
             let d = week_to_display_date(2028, week);
-            assert!(!d.ends_with("01-01") || week == 1 || week == 52,
-                "semana {week} produziu data fallback");
+            assert!(
+                !d.ends_with("01-01") || week == 1 || week == 52,
+                "semana {week} produziu data fallback"
+            );
         }
     }
 
@@ -927,7 +940,8 @@ mod tests {
             .expect("gt3 calendar");
         for entry in &calendar {
             assert!(
-                entry.week_of_year >= REGULAR_SEASON_START && entry.week_of_year <= REGULAR_SEASON_END,
+                entry.week_of_year >= REGULAR_SEASON_START
+                    && entry.week_of_year <= REGULAR_SEASON_END,
                 "week_of_year {} fora do range regular",
                 entry.week_of_year
             );
@@ -948,24 +962,29 @@ mod tests {
     #[test]
     fn test_conflict_pairs_share_week_slots() {
         let mut rng = StdRng::seed_from_u64(12);
-        let mazda = generate_calendar_for_category_with_year("S001", 2028, "mazda_rookie", &mut rng)
-            .expect("mazda");
-        let toyota = generate_calendar_for_category_with_year("S001", 2028, "toyota_rookie", &mut rng)
-            .expect("toyota");
+        let mazda =
+            generate_calendar_for_category_with_year("S001", 2028, "mazda_rookie", &mut rng)
+                .expect("mazda");
+        let toyota =
+            generate_calendar_for_category_with_year("S001", 2028, "toyota_rookie", &mut rng)
+                .expect("toyota");
         // Pares conflito têm mesmo N de rodadas → mesmas semanas
         let mazda_weeks: Vec<i32> = mazda.iter().map(|e| e.week_of_year).collect();
         let toyota_weeks: Vec<i32> = toyota.iter().map(|e| e.week_of_year).collect();
-        assert_eq!(mazda_weeks, toyota_weeks, "pares de conflito devem ter as mesmas semanas");
+        assert_eq!(
+            mazda_weeks, toyota_weeks,
+            "pares de conflito devem ter as mesmas semanas"
+        );
     }
 
     // ── Testes de generate_and_insert_special_calendars ───────────────────────
 
     #[test]
     fn test_special_calendars_week_range() {
-        use rusqlite::Connection;
         use crate::db::migrations;
         use crate::db::queries::seasons::insert_season;
         use crate::models::season::Season;
+        use rusqlite::Connection;
 
         let conn = Connection::open_in_memory().expect("db");
         migrations::run_all(&conn).expect("migrations");
@@ -975,22 +994,24 @@ mod tests {
         generate_and_insert_special_calendars(&conn, "S001", 2028, &mut rng)
             .expect("special calendars");
 
-        let out_of_range: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM calendar
+        let out_of_range: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM calendar
              WHERE season_phase = 'BlocoEspecial'
                AND (week_of_year < 41 OR week_of_year > 50)",
-            [],
-            |row| row.get(0),
-        ).unwrap_or(0);
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
         assert_eq!(out_of_range, 0, "entradas especiais fora do range 41-50");
     }
 
     #[test]
     fn test_special_calendars_counts() {
-        use rusqlite::Connection;
         use crate::db::migrations;
         use crate::db::queries::seasons::insert_season;
         use crate::models::season::Season;
+        use rusqlite::Connection;
 
         let conn = Connection::open_in_memory().expect("db");
         migrations::run_all(&conn).expect("migrations");
@@ -1000,24 +1021,30 @@ mod tests {
         generate_and_insert_special_calendars(&conn, "S001", 2028, &mut rng)
             .expect("special calendars");
 
-        let pc: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM calendar WHERE categoria = 'production_challenger'",
-            [], |row| row.get(0),
-        ).unwrap_or(0);
-        let end: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM calendar WHERE categoria = 'endurance'",
-            [], |row| row.get(0),
-        ).unwrap_or(0);
+        let pc: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM calendar WHERE categoria = 'production_challenger'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+        let end: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM calendar WHERE categoria = 'endurance'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
         assert_eq!(pc, 10, "production_challenger deve ter 10 rodadas");
         assert_eq!(end, 6, "endurance deve ter 6 rodadas");
     }
 
     #[test]
     fn test_special_calendars_season_phase() {
-        use rusqlite::Connection;
         use crate::db::migrations;
         use crate::db::queries::seasons::insert_season;
         use crate::models::season::Season;
+        use rusqlite::Connection;
 
         let conn = Connection::open_in_memory().expect("db");
         migrations::run_all(&conn).expect("migrations");
@@ -1027,21 +1054,24 @@ mod tests {
         generate_and_insert_special_calendars(&conn, "S001", 2028, &mut rng)
             .expect("special calendars");
 
-        let wrong_phase: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM calendar
+        let wrong_phase: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM calendar
              WHERE categoria IN ('production_challenger', 'endurance')
                AND season_phase != 'BlocoEspecial'",
-            [], |row| row.get(0),
-        ).unwrap_or(0);
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
         assert_eq!(wrong_phase, 0, "entradas especiais com season_phase errado");
     }
 
     #[test]
     fn test_special_calendars_rejects_duplicate() {
-        use rusqlite::Connection;
         use crate::db::migrations;
         use crate::db::queries::seasons::insert_season;
         use crate::models::season::Season;
+        use rusqlite::Connection;
 
         let conn = Connection::open_in_memory().expect("db");
         migrations::run_all(&conn).expect("migrations");
@@ -1060,10 +1090,14 @@ mod tests {
 
     fn all_free_regional_ids() -> HashSet<u32> {
         use generator::{free_tracks_for_region, CalendarRegion};
-        [CalendarRegion::Usa, CalendarRegion::Europa, CalendarRegion::JapaoOceania]
-            .iter()
-            .flat_map(|&r| free_tracks_for_region(r).iter().copied())
-            .collect()
+        [
+            CalendarRegion::Usa,
+            CalendarRegion::Europa,
+            CalendarRegion::JapaoOceania,
+        ]
+        .iter()
+        .flat_map(|&r| free_tracks_for_region(r).iter().copied())
+        .collect()
     }
 
     #[test]
@@ -1099,8 +1133,14 @@ mod tests {
             let cal = generate_calendar_for_category("S001", "toyota_rookie", &mut rng)
                 .expect("toyota_rookie");
             // Todos os tracks devem vir de UMA única região
-            let usa: HashSet<u32> = free_tracks_for_region(CalendarRegion::Usa).iter().copied().collect();
-            let eur: HashSet<u32> = free_tracks_for_region(CalendarRegion::Europa).iter().copied().collect();
+            let usa: HashSet<u32> = free_tracks_for_region(CalendarRegion::Usa)
+                .iter()
+                .copied()
+                .collect();
+            let eur: HashSet<u32> = free_tracks_for_region(CalendarRegion::Europa)
+                .iter()
+                .copied()
+                .collect();
             let track_ids: HashSet<u32> = cal.iter().map(|e| e.track_id).collect();
             // Se não é subconjunto de USA nem de Europa, pode ser multi-region fallback (DB incompleto)
             // Nesse caso, tracks devem ser subconjunto de USA ∪ Europa
@@ -1111,7 +1151,9 @@ mod tests {
             );
             // Sem pistas de JapaoOceania
             let jap: HashSet<u32> = free_tracks_for_region(CalendarRegion::JapaoOceania)
-                .iter().copied().collect();
+                .iter()
+                .copied()
+                .collect();
             assert!(
                 track_ids.is_disjoint(&jap),
                 "seed {seed}: toyota_rookie usou pista de JapaoOceania (não permitido em rookie)"
@@ -1126,9 +1168,18 @@ mod tests {
         // S001 → season_number=1 → sempre sem visitor.
         // Verificamos que todos os tracks vêm da mesma região base.
         use generator::{free_tracks_for_region, CalendarRegion};
-        let usa: HashSet<u32> = free_tracks_for_region(CalendarRegion::Usa).iter().copied().collect();
-        let eur: HashSet<u32> = free_tracks_for_region(CalendarRegion::Europa).iter().copied().collect();
-        let jap: HashSet<u32> = free_tracks_for_region(CalendarRegion::JapaoOceania).iter().copied().collect();
+        let usa: HashSet<u32> = free_tracks_for_region(CalendarRegion::Usa)
+            .iter()
+            .copied()
+            .collect();
+        let eur: HashSet<u32> = free_tracks_for_region(CalendarRegion::Europa)
+            .iter()
+            .copied()
+            .collect();
+        let jap: HashSet<u32> = free_tracks_for_region(CalendarRegion::JapaoOceania)
+            .iter()
+            .copied()
+            .collect();
         let regions = [&usa, &eur, &jap];
 
         for seed in 0..30u64 {
@@ -1138,7 +1189,12 @@ mod tests {
             let track_ids: HashSet<u32> = cal.iter().map(|e| e.track_id).collect();
             // Deve caber numa única região (DB atual pode forçar multi-region, mas sem visitor externo)
             // O que garantimos: tracks vêm do pool elegível de amador (USA + Europa + JapaoOceania)
-            let all: HashSet<u32> = usa.iter().chain(eur.iter()).chain(jap.iter()).copied().collect();
+            let all: HashSet<u32> = usa
+                .iter()
+                .chain(eur.iter())
+                .chain(jap.iter())
+                .copied()
+                .collect();
             assert!(
                 track_ids.is_subset(&all),
                 "seed {seed}: mazda_amador S001 usou track fora das regiões elegíveis"
@@ -1161,17 +1217,25 @@ mod tests {
         // A lógica de visitante (visitor para S002) entra em ação quando o DB crescer e
         // uma única região passar a ter >= 8 tracks — testável com mock de get_track.
         use generator::{free_tracks_for_region, CalendarRegion};
-        let all_eligible: HashSet<u32> = [CalendarRegion::Usa, CalendarRegion::Europa, CalendarRegion::JapaoOceania]
-            .iter()
-            .flat_map(|&r| free_tracks_for_region(r).iter().copied())
-            .collect();
+        let all_eligible: HashSet<u32> = [
+            CalendarRegion::Usa,
+            CalendarRegion::Europa,
+            CalendarRegion::JapaoOceania,
+        ]
+        .iter()
+        .flat_map(|&r| free_tracks_for_region(r).iter().copied())
+        .collect();
 
         for seed in 0..30u64 {
             let mut rng = StdRng::seed_from_u64(seed + 400);
             let cal = generate_calendar_for_category("S002", "toyota_amador", &mut rng)
                 .expect("toyota_amador S002");
             let unique_ids: HashSet<u32> = cal.iter().map(|e| e.track_id).collect();
-            assert_eq!(unique_ids.len(), cal.len(), "seed {seed}: toyota_amador S002 tem tracks duplicados");
+            assert_eq!(
+                unique_ids.len(),
+                cal.len(),
+                "seed {seed}: toyota_amador S002 tem tracks duplicados"
+            );
             for id in &unique_ids {
                 assert!(
                     all_eligible.contains(id),
@@ -1185,13 +1249,23 @@ mod tests {
     fn free_regional_final_is_strong() {
         // O último round de qualquer categoria FreeRegional deve ser uma pista forte.
         use generator::{strong_free_tracks_for_region, CalendarRegion};
-        let all_strong: HashSet<u32> = [CalendarRegion::Usa, CalendarRegion::Europa, CalendarRegion::JapaoOceania]
-            .iter()
-            .flat_map(|&r| strong_free_tracks_for_region(r).iter().copied())
-            .filter(|&id| get_track(id).is_some())
-            .collect();
+        let all_strong: HashSet<u32> = [
+            CalendarRegion::Usa,
+            CalendarRegion::Europa,
+            CalendarRegion::JapaoOceania,
+        ]
+        .iter()
+        .flat_map(|&r| strong_free_tracks_for_region(r).iter().copied())
+        .filter(|&id| get_track(id).is_some())
+        .collect();
 
-        for cat in ["mazda_rookie", "toyota_rookie", "mazda_amador", "toyota_amador", "bmw_m2"] {
+        for cat in [
+            "mazda_rookie",
+            "toyota_rookie",
+            "mazda_amador",
+            "toyota_amador",
+            "bmw_m2",
+        ] {
             for seed in 0..20u64 {
                 let mut rng = StdRng::seed_from_u64(seed + 500);
                 let cal = generate_calendar_for_category("S001", cat, &mut rng)
@@ -1200,7 +1274,8 @@ mod tests {
                 assert!(
                     all_strong.contains(&last.track_id),
                     "{cat} seed {seed}: final track {} não é strong (esperado de {:?})",
-                    last.track_id, all_strong
+                    last.track_id,
+                    all_strong
                 );
             }
         }
@@ -1208,7 +1283,10 @@ mod tests {
 
     #[test]
     fn production_all_tracks_from_mix_pool() {
-        let pool: HashSet<u32> = generator::production_free_mix_pool().iter().copied().collect();
+        let pool: HashSet<u32> = generator::production_free_mix_pool()
+            .iter()
+            .copied()
+            .collect();
         for seed in 0..20u64 {
             let mut rng = StdRng::seed_from_u64(seed + 600);
             let cal = generate_calendar_for_category("S001", "production_challenger", &mut rng)
@@ -1255,8 +1333,16 @@ mod tests {
             let cal = generate_calendar_for_category("S001", "gt4", &mut rng).expect("gt4");
             let first = cal.first().expect("vazio");
             let last = cal.last().expect("vazio");
-            assert!(strong.contains(&first.track_id), "seed {seed}: gt4 abertura {} não é strong", first.track_id);
-            assert!(strong.contains(&last.track_id), "seed {seed}: gt4 final {} não é strong", last.track_id);
+            assert!(
+                strong.contains(&first.track_id),
+                "seed {seed}: gt4 abertura {} não é strong",
+                first.track_id
+            );
+            assert!(
+                strong.contains(&last.track_id),
+                "seed {seed}: gt4 final {} não é strong",
+                last.track_id
+            );
         }
     }
 
@@ -1272,18 +1358,29 @@ mod tests {
             let cal = generate_calendar_for_category("S001", "gt3", &mut rng).expect("gt3");
             let first = cal.first().expect("vazio");
             let last = cal.last().expect("vazio");
-            assert!(strong.contains(&first.track_id), "seed {seed}: gt3 abertura {} não é strong", first.track_id);
-            assert!(strong.contains(&last.track_id), "seed {seed}: gt3 final {} não é strong", last.track_id);
+            assert!(
+                strong.contains(&first.track_id),
+                "seed {seed}: gt3 abertura {} não é strong",
+                first.track_id
+            );
+            assert!(
+                strong.contains(&last.track_id),
+                "seed {seed}: gt3 final {} não é strong",
+                last.track_id
+            );
         }
     }
 
     #[test]
     fn endurance_all_tracks_from_curated_pool() {
-        let pool: HashSet<u32> = generator::endurance_curated_pool().iter().copied().collect();
+        let pool: HashSet<u32> = generator::endurance_curated_pool()
+            .iter()
+            .copied()
+            .collect();
         for seed in 0..20u64 {
             let mut rng = StdRng::seed_from_u64(seed + 1000);
-            let cal = generate_calendar_for_category("S001", "endurance", &mut rng)
-                .expect("endurance");
+            let cal =
+                generate_calendar_for_category("S001", "endurance", &mut rng).expect("endurance");
             for entry in &cal {
                 assert!(
                     pool.contains(&entry.track_id),
@@ -1304,8 +1401,8 @@ mod tests {
             .collect();
         for seed in 0..20u64 {
             let mut rng = StdRng::seed_from_u64(seed + 1100);
-            let cal = generate_calendar_for_category("S001", "endurance", &mut rng)
-                .expect("endurance");
+            let cal =
+                generate_calendar_for_category("S001", "endurance", &mut rng).expect("endurance");
             let strong_count = cal.iter().filter(|e| strong.contains(&e.track_id)).count();
             assert!(
                 strong_count >= 2,
@@ -1323,8 +1420,8 @@ mod tests {
             .collect();
         for seed in 0..20u64 {
             let mut rng = StdRng::seed_from_u64(seed + 1200);
-            let cal = generate_calendar_for_category("S001", "endurance", &mut rng)
-                .expect("endurance");
+            let cal =
+                generate_calendar_for_category("S001", "endurance", &mut rng).expect("endurance");
             let last = cal.last().expect("calendário vazio");
             assert!(
                 strong.contains(&last.track_id),

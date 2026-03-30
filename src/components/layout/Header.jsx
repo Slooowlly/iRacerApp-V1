@@ -1,38 +1,108 @@
 import useCareerStore from "../../stores/useCareerStore";
-import { categoryLabel, formatDate } from "../../utils/formatters";
+import {
+  categoryLabel,
+  formatCompactDate,
+  formatDate,
+  formatNextRaceCountdown,
+} from "../../utils/formatters";
+import GlassButton from "../ui/GlassButton";
 import TabNavigation from "./TabNavigation";
 
 function Header({ activeTab, onTabChange }) {
   const playerTeam = useCareerStore((state) => state.playerTeam);
   const season = useCareerStore((state) => state.season);
   const nextRace = useCareerStore((state) => state.nextRace);
+  const temporalSummary = useCareerStore((state) => state.temporalSummary);
+  const calendarDisplayDate = useCareerStore((state) => state.calendarDisplayDate);
+  const displayDaysUntilNextEvent = useCareerStore((state) => state.displayDaysUntilNextEvent);
+  const isCalendarAdvancing = useCareerStore((state) => state.isCalendarAdvancing);
+  const showRaceBriefing = useCareerStore((state) => state.showRaceBriefing);
+  const startCalendarAdvance = useCareerStore((state) => state.startCalendarAdvance);
+  const closeRaceBriefing = useCareerStore((state) => state.closeRaceBriefing);
+  const visibleDate = calendarDisplayDate ?? temporalSummary?.current_display_date;
+  const visibleCountdown = displayDaysUntilNextEvent ?? temporalSummary?.days_until_next_event;
+
+  function handleNextRace() {
+    void Promise.resolve(startCalendarAdvance?.()).catch((error) => {
+      console.error("Erro ao avancar calendario pelo header:", error);
+    });
+  }
+
+  function handleBackToBriefingOrigin() {
+    closeRaceBriefing?.();
+  }
 
   return (
-    <header className="relative z-20 flex h-[20vh] min-h-[160px] flex-col bg-black/40 backdrop-blur-xl">
+    <header className="relative z-20 flex flex-col">
       {/* Top bar: team name LEFT · tabs CENTERED · (space) RIGHT */}
-      <div className="shrink-0 border-b border-white/10 px-3 py-2 sm:px-4 lg:px-5 xl:px-6">
+      <div className="shrink-0 px-3 py-2 sm:px-4 lg:px-5 xl:px-6">
         <div className="mx-auto flex w-full max-w-[1680px] items-center">
-          {/* Left — team name */}
+          {/* Left — team name (hidden when in race briefing, center takes over) */}
           <div className="flex min-w-0 flex-1 items-center gap-2">
-            <span
-              className="h-3 w-3 shrink-0 rounded-full"
-              style={{ backgroundColor: playerTeam?.cor_primaria ?? "#58a6ff" }}
-            />
-            <span className="truncate text-xs font-bold uppercase tracking-[0.14em] text-text-primary">
-              {playerTeam?.nome ?? "—"}
-            </span>
+            {!showRaceBriefing && (
+              <>
+                <span
+                  className="h-3 w-3 shrink-0 rounded-full"
+                  style={{ backgroundColor: playerTeam?.cor_primaria ?? "#58a6ff" }}
+                />
+                <span className="truncate text-xs font-bold uppercase tracking-[0.14em] text-text-primary">
+                  {playerTeam?.nome ?? "—"}
+                </span>
+              </>
+            )}
           </div>
 
-          {/* Center — tabs */}
-          <TabNavigation activeTab={activeTab} onTabChange={onTabChange} />
+          {/* Center — tabs or team name when in race briefing */}
+          {showRaceBriefing ? (
+            <div className="flex items-center gap-3">
+              <span
+                className="h-4 w-4 shrink-0 rounded-full"
+                style={{ backgroundColor: playerTeam?.cor_primaria ?? "#58a6ff" }}
+              />
+              <span className="text-3xl font-bold tracking-[-0.035em] text-text-primary">
+                {playerTeam?.nome ?? "—"}
+              </span>
+            </div>
+          ) : (
+            <TabNavigation activeTab={activeTab} onTabChange={onTabChange} />
+          )}
 
-          {/* Right — spacer to balance left */}
-          <div className="flex-1" />
+          {/* Right — date info + action button */}
+          <div className="flex flex-1 justify-end">
+            <div className="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.05] px-4 py-2 backdrop-blur-md">
+              <div className="text-right">
+                <p className="text-[10px] uppercase tracking-[0.18em] text-text-secondary">
+                  Data {formatCompactDate(visibleDate)}
+                </p>
+                <p className="mt-1 text-xs font-semibold text-text-primary">
+                  {formatNextRaceCountdown(visibleCountdown)}
+                </p>
+              </div>
+              {showRaceBriefing ? (
+                <GlassButton
+                  variant="primary"
+                  className="rounded-full px-5 py-2.5"
+                  onClick={handleBackToBriefingOrigin}
+                >
+                  Voltar
+                </GlassButton>
+              ) : (
+                <GlassButton
+                  variant="primary"
+                  disabled={!nextRace || isCalendarAdvancing}
+                  className="rounded-full px-5 py-2.5"
+                  onClick={handleNextRace}
+                >
+                  {isCalendarAdvancing ? "Avancando..." : "Avancar calendario"}
+                </GlassButton>
+              )}
+            </div>
+          </div>
         </div>
       </div>
 
-      {/* Event banner — fills remaining header height */}
-      <div className="flex flex-1 items-stretch border-b border-white/8">
+      {/* Event banner — only on Pilotos tab */}
+      {activeTab === "standings" && !showRaceBriefing && <div className="flex items-stretch h-[14vh] min-h-[110px]">
         <div className="mx-auto flex w-full max-w-[1680px] items-stretch px-3 sm:px-4 lg:px-5 xl:px-6">
           {nextRace ? (
             <div className="flex w-full items-center gap-6">
@@ -67,7 +137,7 @@ function Header({ activeTab, onTabChange }) {
               </div>
 
               {/* Right — clima */}
-              <div className="flex shrink-0 items-center gap-6">
+              <div className="shrink-0">
                 <StatBlock
                   label="Clima"
                   value={weatherWithTemp(nextRace.clima, nextRace.temperatura)}
@@ -83,7 +153,7 @@ function Header({ activeTab, onTabChange }) {
             </p>
           )}
         </div>
-      </div>
+      </div>}
     </header>
   );
 }
@@ -100,7 +170,7 @@ function TrackImage({ trackName, rodada, totalRodadas }) {
         onError={(e) => { e.currentTarget.style.display = "none"; }}
       />
       {/* Race badge — top-left corner */}
-      <div className="absolute left-2 top-2 rounded border border-accent-primary/50 bg-black/70 px-2 py-0.5 backdrop-blur-sm">
+      <div className="absolute left-2 top-2 rounded border border-accent-primary/40 bg-[rgba(10,15,28,0.55)] px-2 py-0.5 backdrop-blur-[8px]">
         <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-accent-primary">
           Corrida {rodada}/{totalRodadas}
         </span>

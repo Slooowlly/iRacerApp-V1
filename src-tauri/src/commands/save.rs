@@ -50,8 +50,7 @@ pub async fn flush_save(app: AppHandle, career_id: String) -> Result<FlushResult
     }
 
     let db_path = config.career_db_path(career_number);
-    let db =
-        Database::open_existing(&db_path).map_err(|e| format!("Falha ao abrir banco: {e}"))?;
+    let db = Database::open_existing(&db_path).map_err(|e| format!("Falha ao abrir banco: {e}"))?;
     checkpoint_wal(&db)?;
 
     let meta_path = config.career_meta_path(career_number);
@@ -101,10 +100,7 @@ pub async fn create_season_backup(
 // Lê career_NNN/backups/ e retorna metadados de cada snapshot.
 //
 #[tauri::command]
-pub async fn list_backups(
-    app: AppHandle,
-    career_id: String,
-) -> Result<Vec<BackupInfo>, String> {
+pub async fn list_backups(app: AppHandle, career_id: String) -> Result<Vec<BackupInfo>, String> {
     let base_dir = app
         .path()
         .app_data_dir()
@@ -183,8 +179,7 @@ pub async fn restore_backup(
     }
 
     // 4. Copiar o backup escolhido para career.db
-    std::fs::copy(&backup_path, &db_path)
-        .map_err(|e| format!("Falha ao restaurar backup: {e}"))?;
+    std::fs::copy(&backup_path, &db_path).map_err(|e| format!("Falha ao restaurar backup: {e}"))?;
 
     Ok(())
 }
@@ -207,8 +202,7 @@ pub(crate) fn backup_season_internal(
     meta_path: &Path,
 ) -> Result<BackupInfo, String> {
     // 1. Abrir banco
-    let db =
-        Database::open_existing(db_path).map_err(|e| format!("Falha ao abrir banco: {e}"))?;
+    let db = Database::open_existing(db_path).map_err(|e| format!("Falha ao abrir banco: {e}"))?;
 
     // 2. Garantir pasta backups/
     let backups_dir = career_dir.join("backups");
@@ -253,15 +247,14 @@ fn update_meta_timestamps<F>(meta_path: &Path, mutate: F) -> Result<(), String>
 where
     F: FnOnce(&mut SaveMeta),
 {
-    let content = std::fs::read_to_string(meta_path)
-        .map_err(|e| format!("Falha ao ler meta.json: {e}"))?;
-    let mut meta: SaveMeta = serde_json::from_str(&content)
-        .map_err(|e| format!("Falha ao parsear meta.json: {e}"))?;
+    let content =
+        std::fs::read_to_string(meta_path).map_err(|e| format!("Falha ao ler meta.json: {e}"))?;
+    let mut meta: SaveMeta =
+        serde_json::from_str(&content).map_err(|e| format!("Falha ao parsear meta.json: {e}"))?;
     mutate(&mut meta);
     let updated = serde_json::to_string_pretty(&meta)
         .map_err(|e| format!("Falha ao serializar meta.json: {e}"))?;
-    std::fs::write(meta_path, updated)
-        .map_err(|e| format!("Falha ao gravar meta.json: {e}"))
+    std::fs::write(meta_path, updated).map_err(|e| format!("Falha ao gravar meta.json: {e}"))
 }
 
 /// Parseia número da carreira de "career_001" ou "001" ou "1".
@@ -301,10 +294,7 @@ fn parse_backup_filename(name: &str) -> Option<u32> {
 /// Constrói um BackupInfo a partir do caminho do arquivo.
 fn file_backup_info(path: &PathBuf, season_number: u32, file_name: &str) -> BackupInfo {
     let metadata = std::fs::metadata(path);
-    let size_kb = metadata
-        .as_ref()
-        .map(|m| m.len() / 1024)
-        .unwrap_or(0);
+    let size_kb = metadata.as_ref().map(|m| m.len() / 1024).unwrap_or(0);
     let modified_at = metadata
         .and_then(|m| m.modified())
         .ok()

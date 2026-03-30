@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Radar — 3 Variações</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #0E0E10;
+      color: #e6edf3;
+      font-family: 'Space Grotesk', 'Segoe UI', system-ui, sans-serif;
+      font-size: 14px;
+      min-height: 100vh;
+      padding: 40px 28px 60px;
+    }
+
+    /* ── page header ── */
+    .page-label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.22em;
+      color: #484f58;
+      text-align: center;
+      margin-bottom: 32px;
+    }
+
+    .grid-3 {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 28px;
+      align-items: start;
+      max-width: 1380px;
+      margin: 0 auto;
+    }
+
+    .variant-label {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.22em;
+      color: #484f58;
+      margin-bottom: 10px;
+    }
+
+    /* ═══════════════════════════════════════════════════════
+       GLASS CARD OUTER — igual ao GlassCard do app
+       (glass class = bg rgba(10,15,28,0.25) blur-12px border rgba(255,255,255,0.11))
+       shadow-[0_18px_50px_rgba(0,0,0,0.24)]
+       ═══════════════════════════════════════════════════════ */
+    .glass-card {
+      background: rgba(10, 15, 28, 0.25);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.11);
+      border-radius: 28px;
+      padding: 20px;
+      box-shadow: 0 18px 50px rgba(0,0,0,0.24);
+    }
+
+    /* ── SectionTitle — igual ao componente ── */
+    .sec-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 20px;
+    }
+    .sec-eye   { font-size: 10px; text-transform: uppercase; letter-spacing: 0.22em; color: #58a6ff; }
+    .sec-title { font-size: 22px; font-weight: 600; color: #e6edf3; margin-top: 8px; }
+    .sec-meta  { font-size: 11px; color: #7d8590; text-align: right; margin-top: 4px; }
+
+    /* ── inner sub-panel — igual ao BriefingPreviewPanel ── */
+    /* rounded-[20px] border border-white/8 bg-white/[0.03] p-4 */
+    .inner-panel {
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 20px;
+      padding: 16px;
+    }
+    .panel-eye   { font-size: 11px; text-transform: uppercase; letter-spacing: 0.16em; color: #484f58; }
+    .panel-body  { font-size: 14px; line-height: 1.75; color: #e6edf3; margin-top: 10px; }
+    .panel-supp  { font-size: 14px; line-height: 1.75; color: #7d8590; margin-top: 10px; }
+
+    /* ── WeekendStoryRow — base idêntica ── */
+    /* rounded-[20px] border border-white/8 bg-white/[0.03] p-4 */
+    .story-row {
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 20px;
+      padding: 16px;
+    }
+    .story-header { display: flex; align-items: center; gap: 12px; }
+    /* icon: h-10 w-10 rounded-[14px] bg-accent-primary/12 text-xl text-accent-primary */
+    .story-icon {
+      flex-shrink: 0;
+      width: 40px; height: 40px;
+      border-radius: 14px;
+      background: rgba(88,166,255,0.12);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 20px;
+      color: #58a6ff;
+      line-height: 1;
+    }
+    .story-name  { font-size: 14px; font-weight: 600; color: #e6edf3; }
+    /* importanceLabel: text-[11px] uppercase tracking-[0.16em] text-text-muted */
+    .story-imp   { font-size: 11px; text-transform: uppercase; letter-spacing: 0.16em; color: #484f58; margin-top: 2px; }
+    /* summary: text-sm leading-6 text-text-secondary */
+    .story-body  { font-size: 13px; line-height: 1.6; color: #7d8590; margin-top: 10px; }
+
+    .stack { display: flex; flex-direction: column; gap: 10px; }
+
+    /* ════════════════════════════════════════════════
+       A — padrão atual + importance como chip colorido
+       ════════════════════════════════════════════════ */
+    .chip {
+      display: inline-block;
+      font-size: 10px; font-weight: 600;
+      text-transform: uppercase; letter-spacing: 0.12em;
+      padding: 2px 9px; border-radius: 999px;
+      margin-top: 5px;
+    }
+    .chip-red    { background: rgba(248,81,73,0.14);  color: #f85149; }
+    .chip-yellow { background: rgba(210,153,34,0.14); color: #d29922; }
+    .chip-blue   { background: rgba(88,166,255,0.12); color: #58a6ff; }
+
+    /* ════════════════════════════════════════════════
+       B — rival com headline à la "Prévia da corrida"
+       (o inner block da prévia usa radial-gradient + gold eyebrow)
+       ════════════════════════════════════════════════ */
+    .rival-preview {
+      position: relative;
+      overflow: hidden;
+      border-radius: 26px;
+      border: 1px solid rgba(255,255,255,0.08);
+      background: linear-gradient(115deg, rgba(248,81,73,0.07), transparent 30%),
+                  linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02));
+      padding: 20px;
+      margin-bottom: 12px;
+    }
+    .rival-preview::before {
+      content: '';
+      pointer-events: none;
+      position: absolute;
+      right: -32px; top: -32px;
+      width: 144px; height: 144px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(248,81,73,0.14), transparent 65%);
+    }
+    .rival-preview-eye {
+      font-size: 11px; text-transform: uppercase; letter-spacing: 0.24em;
+      color: #f85149; position: relative;
+    }
+    .rival-preview-title {
+      font-size: 20px; font-weight: 600; line-height: 1.1;
+      letter-spacing: -0.03em; color: #e6edf3;
+      margin-top: 10px; position: relative;
+    }
+    .rival-preview-body {
+      font-size: 14px; line-height: 1.75; color: #7d8590;
+      margin-top: 12px; position: relative;
+    }
+    .rival-preview-supp {
+      font-size: 13px; line-height: 1.6; color: rgba(125,133,144,0.65);
+      margin-top: 8px; position: relative;
+    }
+
+    /* ════════════════════════════════════════════════
+       C — stories no padrão ConditionReportRow
+       (grid [72px_1fr] bg-white/[0.05] rounded-[18px] border border-white/8)
+       ════════════════════════════════════════════════ */
+    .condition-row {
+      display: grid;
+      grid-template-columns: 72px 1fr;
+      gap: 12px;
+      align-items: center;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 18px;
+      padding: 16px;
+    }
+    /* icon: h-14 w-14 rounded-[16px] bg-accent-primary/12 text-[28px] text-accent-primary */
+    .cond-icon {
+      width: 56px; height: 56px;
+      border-radius: 16px;
+      background: rgba(88,166,255,0.12);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 28px; color: #58a6ff; line-height: 1;
+    }
+    .cond-icon.red    { background: rgba(248,81,73,0.12);  color: #f85149; }
+    .cond-icon.yellow { background: rgba(210,153,34,0.12); color: #d29922; }
+    /* label: text-[11px] uppercase tracking-[0.18em] text-text-muted */
+    .cond-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.18em; color: #484f58; }
+    /* value: text-[21px] font-semibold tracking-[-0.03em] text-text-primary */
+    .cond-value { font-size: 18px; font-weight: 600; letter-spacing: -0.03em; color: #e6edf3; margin-top: 4px; }
+    /* meta: text-sm leading-6 text-text-secondary */
+    .cond-meta  { font-size: 13px; line-height: 1.6; color: #7d8590; margin-top: 2px; }
+
+    .rival-cond {
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 20px;
+      padding: 16px;
+      margin-bottom: 12px;
+    }
+    .rival-cond-eye   { font-size: 11px; text-transform: uppercase; letter-spacing: 0.16em; color: #484f58; }
+    .rival-cond-name  { font-size: 18px; font-weight: 600; color: #e6edf3; margin-top: 6px; }
+    .rival-cond-body  { font-size: 14px; line-height: 1.75; color: #e6edf3; margin-top: 8px; }
+    .rival-cond-supp  { font-size: 14px; line-height: 1.75; color: #7d8590; margin-top: 8px; }
+  </style>
+</head>
+<body>
+
+<p class="page-label">Radar — Fim de semana &nbsp;·&nbsp; 3 variações</p>
+
+<div class="grid-3">
+
+  <!-- ═══════════════════════════════════════
+       A — padrão atual + chip de importância
+       ═══════════════════════════════════════ -->
+  <div>
+    <p class="variant-label">A — Padrão atual + chips</p>
+    <div class="glass-card">
+      <div class="sec-header">
+        <div>
+          <p class="sec-eye">Radar</p>
+          <h3 class="sec-title">Fim de semana</h3>
+        </div>
+        <p class="sec-meta">3 histórias</p>
+      </div>
+
+      <div class="stack">
+        <!-- Rival — BriefingPreviewPanel idêntico -->
+        <div class="inner-panel">
+          <p class="panel-eye">Rival principal</p>
+          <p class="panel-body">
+            Max Harrington chega embalado por um pódio na última etapa, com ritmo especialmente forte em classificação. Principal ameaça neste fim de semana.
+          </p>
+          <p class="panel-supp">
+            Histórico no circuito favorece pilotos agressivos na frenagem — exatamente o ponto forte dele.
+          </p>
+        </div>
+
+        <!-- Story 1 -->
+        <div class="story-row">
+          <div class="story-header">
+            <span class="story-icon">🏎</span>
+            <div>
+              <p class="story-name">Chute de setup da Red Ring</p>
+              <span class="chip chip-red">Alta relevância</span>
+            </div>
+          </div>
+          <p class="story-body">
+            Pacote aerodinâmico completamente diferente do esperado visto nos treinos livres. Pode ser um trunfo escondido para a corrida.
+          </p>
+        </div>
+
+        <!-- Story 2 -->
+        <div class="story-row">
+          <div class="story-header">
+            <span class="story-icon">⛽</span>
+            <div>
+              <p class="story-name">Janela de pit antecipada</p>
+              <span class="chip chip-yellow">Relevante</span>
+            </div>
+          </div>
+          <p class="story-body">
+            Dados de degradação apontam para pit entre as voltas 18–22. Sair dessa janela pode custar 2–4 posições.
+          </p>
+        </div>
+
+        <!-- Story 3 -->
+        <div class="story-row">
+          <div class="story-header">
+            <span class="story-icon">🌦</span>
+            <div>
+              <p class="story-name">Chuva prevista no 3º stint</p>
+              <span class="chip chip-blue">Situacional</span>
+            </div>
+          </div>
+          <p class="story-body">
+            40% de chance de chuva leve após a meia corrida. Equipes ágeis na leitura da pista podem ganhar posições.
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════
+       B — rival com visual à la "Prévia"
+       ═══════════════════════════════════════ -->
+  <div>
+    <p class="variant-label">B — Rival em destaque editorial</p>
+    <div class="glass-card">
+      <div class="sec-header">
+        <div>
+          <p class="sec-eye">Radar</p>
+          <h3 class="sec-title">Fim de semana</h3>
+        </div>
+        <p class="sec-meta">3 histórias</p>
+      </div>
+
+      <!-- Rival — visual idêntico ao inner da "Prévia da corrida" -->
+      <div class="rival-preview">
+        <p class="rival-preview-eye">Rival principal</p>
+        <h4 class="rival-preview-title">
+          Harrington vem em forma — cuidado nas frenagens
+        </h4>
+        <p class="rival-preview-body">
+          Max Harrington chega embalado por um pódio na última etapa, com ritmo especialmente forte em classificação. Principal ameaça neste fim de semana.
+        </p>
+        <p class="rival-preview-supp">
+          Histórico no circuito favorece pilotos agressivos na frenagem — exatamente o ponto forte dele.
+        </p>
+      </div>
+
+      <!-- Stories — WeekendStoryRow sem alteração -->
+      <div class="stack">
+        <div class="story-row">
+          <div class="story-header">
+            <span class="story-icon">🏎</span>
+            <div>
+              <p class="story-name">Chute de setup da Red Ring</p>
+              <p class="story-imp">Alta relevância</p>
+            </div>
+          </div>
+          <p class="story-body">
+            Pacote aerodinâmico completamente diferente do esperado visto nos treinos livres. Pode ser um trunfo escondido para a corrida.
+          </p>
+        </div>
+
+        <div class="story-row">
+          <div class="story-header">
+            <span class="story-icon">⛽</span>
+            <div>
+              <p class="story-name">Janela de pit antecipada</p>
+              <p class="story-imp">Relevante</p>
+            </div>
+          </div>
+          <p class="story-body">
+            Dados de degradação apontam para pit entre as voltas 18–22. Sair dessa janela pode custar 2–4 posições.
+          </p>
+        </div>
+
+        <div class="story-row">
+          <div class="story-header">
+            <span class="story-icon">🌦</span>
+            <div>
+              <p class="story-name">Chuva prevista no 3º stint</p>
+              <p class="story-imp">Situacional</p>
+            </div>
+          </div>
+          <p class="story-body">
+            40% de chance de chuva leve após a meia corrida. Equipes ágeis na leitura da pista podem ganhar posições.
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════
+       C — stories no padrão ConditionReportRow
+       ═══════════════════════════════════════ -->
+  <div>
+    <p class="variant-label">C — Stories no estilo Condições</p>
+    <div class="glass-card">
+      <div class="sec-header">
+        <div>
+          <p class="sec-eye">Radar</p>
+          <h3 class="sec-title">Fim de semana</h3>
+        </div>
+        <p class="sec-meta">3 histórias</p>
+      </div>
+
+      <!-- Rival — BriefingPreviewPanel idêntico -->
+      <div class="rival-cond" style="margin-bottom:12px;">
+        <p class="rival-cond-eye">Rival principal</p>
+        <p class="rival-cond-name">Max Harrington</p>
+        <p class="rival-cond-body">
+          Embalado por um pódio na última etapa, com ritmo forte em classificação. Principal ameaça neste fim de semana.
+        </p>
+        <p class="rival-cond-supp">
+          Histórico no circuito favorece pilotos agressivos na frenagem — exatamente o ponto forte dele.
+        </p>
+      </div>
+
+      <!-- Stories — no padrão ConditionReportRow -->
+      <div class="stack">
+        <div class="condition-row">
+          <div class="cond-icon red">🏎</div>
+          <div>
+            <p class="cond-label">Estratégia</p>
+            <p class="cond-value">Chute de setup Red Ring</p>
+            <p class="cond-meta">Pacote aerodinâmico incomum visto nos treinos livres — pode ser trunfo para a corrida.</p>
+          </div>
+        </div>
+
+        <div class="condition-row">
+          <div class="cond-icon yellow">⛽</div>
+          <div>
+            <p class="cond-label">Pneus &amp; pit</p>
+            <p class="cond-value">Janela voltas 18–22</p>
+            <p class="cond-meta">Degradação elevada. Sair da janela pode custar 2–4 posições.</p>
+          </div>
+        </div>
+
+        <div class="condition-row">
+          <div class="cond-icon">🌦</div>
+          <div>
+            <p class="cond-label">Condições</p>
+            <p class="cond-value">Chuva · 40% no 3º stint</p>
+            <p class="cond-meta">Chance de chuva leve após a meia corrida. Equipes ágeis podem ganhar posições.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>
