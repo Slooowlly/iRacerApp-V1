@@ -35,7 +35,7 @@ use crate::event_interest::{
     calculate_expected_event_interest, to_summary, EventInterestContext, EventInterestSummary,
 };
 use crate::evolution::pipeline::{run_end_of_season, EndOfSeasonResult};
-use crate::generators::ids::{next_id, next_ids, IdType};
+use crate::generators::ids::{next_id, IdType};
 use crate::generators::nationality::{format_nationality, get_nationality};
 use crate::generators::world::generate_world;
 use crate::market::pipeline::{fill_all_remaining_vacancies, run_market};
@@ -48,12 +48,7 @@ use crate::models::driver::Driver;
 use crate::models::enums::{ContractStatus, SeasonPhase, TeamRole};
 use crate::models::season::Season;
 use crate::models::team::{Team, TeamHierarchyClimate};
-use crate::news::generator::{
-    generate_news_from_end_of_season, generate_news_from_market_events,
-    generate_player_rejection_news, generate_player_signing_news,
-};
 use crate::news::{NewsImportance, NewsItem, NewsType};
-use crate::public_presence::team::{derive_team_public_presence, TeamPublicPresenceTier};
 
 pub use crate::commands::career_types::CreateCareerInput;
 
@@ -740,15 +735,6 @@ pub(crate) fn respond_to_proposal_in_base_dir(
             .map_err(|e| format!("Falha ao confirmar aceite da proposta: {e}"))?;
 
         reconcile_plan_after_player_accept(&career_dir, &db.conn, &proposal)?;
-        news_items.push(generate_player_signing_news(
-            &player.nome,
-            &player.id,
-            &proposal.equipe_nome,
-            &proposal.equipe_id,
-            &proposal.categoria,
-            proposal.papel.as_str(),
-            season.numero,
-        ));
         new_team_name = Some(proposal.equipe_nome.clone());
     } else {
         let tx = db
@@ -764,13 +750,6 @@ pub(crate) fn respond_to_proposal_in_base_dir(
         .map_err(|e| format!("Falha ao recusar proposta: {e}"))?;
         tx.commit()
             .map_err(|e| format!("Falha ao confirmar recusa da proposta: {e}"))?;
-        news_items.push(generate_player_rejection_news(
-            &player.nome,
-            &player.id,
-            &proposal.equipe_nome,
-            &proposal.equipe_id,
-            season.numero,
-        ));
     }
 
     let mut remaining =
@@ -796,7 +775,6 @@ pub(crate) fn respond_to_proposal_in_base_dir(
     }
 
     sync_preseason_pending_flag(&career_dir, remaining > 0)?;
-    persist_generated_news(&db.conn, &mut news_items)?;
     let headlines = news_items
         .iter()
         .map(|item| item.titulo.clone())
@@ -919,24 +897,6 @@ pub(crate) fn finalize_preseason_in_base_dir(
     meta.last_played = Local::now().format("%Y-%m-%dT%H:%M:%S").to_string();
     write_save_meta(&meta_path, &meta)?;
 
-    let mut news = vec![NewsItem {
-        id: String::new(),
-        tipo: NewsType::PreTemporada,
-        icone: NewsType::PreTemporada.icone().to_string(),
-        titulo: format!("Temporada {} esta aberta!", season.numero),
-        texto: "A pre-temporada chegou ao fim. As corridas estao prestes a comecar!".to_string(),
-        rodada: Some(0),
-        semana_pretemporada: None,
-        temporada: season.numero,
-        categoria_id: None,
-        categoria_nome: None,
-        importancia: NewsImportance::Alta,
-        timestamp: Local::now().timestamp(),
-        driver_id: None,
-        driver_id_secondary: None,
-        team_id: None,
-    }];
-    persist_generated_news(&db.conn, &mut news)?;
     Ok(())
 }
 
@@ -1071,128 +1031,18 @@ fn merge_briefing_phrase_history(
 }
 
 fn persist_end_of_season_news(
-    conn: &rusqlite::Connection,
-    result: &EndOfSeasonResult,
-    season_number: i32,
+    _conn: &rusqlite::Connection,
+    _result: &EndOfSeasonResult,
+    _season_number: i32,
 ) -> Result<(), String> {
-    let mut temp_id = temp_news_id_generator();
-    let mut timestamp = news_queries::get_latest_news_timestamp(conn)
-        .map_err(|e| format!("Falha ao buscar timestamp de noticias: {e}"))?
-        + 1;
-    // Carrega visibilidade apenas dos pilotos boostáveis (rookies + decliner candidatos).
-    // Degrada silenciosamente para HashMap vazio se falhar — camada narrativa, não factual.
-    let driver_midia: std::collections::HashMap<String, f64> = {
-        let ids: std::collections::HashSet<&str> = result
-            .rookies_generated
-            .iter()
-            .map(|r| r.driver_id.as_str())
-            .chain(result.growth_reports.iter().map(|g| g.driver_id.as_str()))
-            .collect();
-        ids.into_iter()
-            .filter_map(|id| {
-                driver_queries::get_driver(conn, id)
-                    .ok()
-                    .map(|d| (d.id, d.atributos.midia))
-            })
-            .collect()
-    };
-    let player_id = driver_queries::get_player_driver(conn)
-        .ok()
-        .map(|driver| driver.id);
-    let mut items = generate_news_from_end_of_season(
-        result,
-        season_number,
-        &mut temp_id,
-        &mut timestamp,
-        &driver_midia,
-        player_id.as_deref(),
-    );
-    persist_generated_news(conn, &mut items)
+    Ok(())
 }
 
 fn persist_market_week_news(
-    conn: &rusqlite::Connection,
-    state: &PreSeasonState,
-    week_result: &WeekResult,
+    _conn: &rusqlite::Connection,
+    _state: &PreSeasonState,
+    _week_result: &WeekResult,
 ) -> Result<(), String> {
-    let mut temp_id = temp_news_id_generator();
-    let mut timestamp = news_queries::get_latest_news_timestamp(conn)
-        .map_err(|e| format!("Falha ao buscar timestamp de noticias: {e}"))?
-        + 1;
-    // Carrega visibilidade apenas dos pilotos presentes nos eventos da semana.
-    // Degrada silenciosamente para HashMap vazio se falhar — camada narrativa, não factual.
-    let driver_midia: std::collections::HashMap<String, f64> = {
-        let ids: std::collections::HashSet<&str> = week_result
-            .events
-            .iter()
-            .filter_map(|e| e.driver_id.as_deref())
-            .collect();
-        ids.into_iter()
-            .filter_map(|id| {
-                driver_queries::get_driver(conn, id)
-                    .ok()
-                    .map(|d| (d.id, d.atributos.midia))
-            })
-            .collect()
-    };
-    // Carrega presença pública das equipes envolvidas nos eventos da semana.
-    // Degrada silenciosamente para HashMap vazio se falhar — camada narrativa, não factual.
-    // Custo v1: get_active_contracts_for_team + get_driver por equipe única nos eventos da semana
-    // (tipicamente 2–5 equipes distintas por semana de preseason — aceito).
-    let team_presence: std::collections::HashMap<String, TeamPublicPresenceTier> = {
-        let team_ids: std::collections::HashSet<&str> = week_result
-            .events
-            .iter()
-            .filter_map(|e| e.team_id.as_deref())
-            .collect();
-        team_ids
-            .into_iter()
-            .filter_map(|tid| {
-                let medias: Vec<f64> = contract_queries::get_active_contracts_for_team(conn, tid)
-                    .unwrap_or_default()
-                    .into_iter()
-                    .filter_map(|c| {
-                        driver_queries::get_driver(conn, &c.piloto_id)
-                            .ok()
-                            .map(|d| d.atributos.midia)
-                    })
-                    .collect();
-                if medias.is_empty() {
-                    return None;
-                }
-                Some((tid.to_string(), derive_team_public_presence(&medias).tier))
-            })
-            .collect()
-    };
-    let mut items = generate_news_from_market_events(
-        &week_result.events,
-        state.season_number,
-        week_result.week_number,
-        &mut temp_id,
-        &mut timestamp,
-        &driver_midia,
-        &team_presence,
-    );
-    persist_generated_news(conn, &mut items)
-}
-
-fn persist_generated_news(
-    conn: &rusqlite::Connection,
-    items: &mut Vec<NewsItem>,
-) -> Result<(), String> {
-    if items.is_empty() {
-        return Ok(());
-    }
-
-    let ids = next_ids(conn, IdType::News, items.len() as u32)
-        .map_err(|e| format!("Falha ao gerar IDs de noticias: {e}"))?;
-    for (item, id) in items.iter_mut().zip(ids.into_iter()) {
-        item.id = id;
-    }
-
-    news_queries::insert_news_batch(conn, items)
-        .map_err(|e| format!("Falha ao persistir noticias: {e}"))?;
-    news_queries::trim_news(conn, 400).map_err(|e| format!("Falha ao aparar feed: {e}"))?;
     Ok(())
 }
 
@@ -1442,7 +1292,7 @@ fn force_place_player(
     conn: &rusqlite::Connection,
     player: &Driver,
     season: &Season,
-    news_items: &mut Vec<NewsItem>,
+    _news_items: &mut Vec<NewsItem>,
 ) -> Result<Option<String>, String> {
     let player_tier = player
         .categoria_atual
@@ -1488,15 +1338,6 @@ fn force_place_player(
     updated_player.status = crate::models::enums::DriverStatus::Ativo;
     driver_queries::update_driver(conn, &updated_player)
         .map_err(|e| format!("Falha ao atualizar jogador apos alocacao forcada: {e}"))?;
-    news_items.push(generate_player_signing_news(
-        &player.nome,
-        &player.id,
-        &vacancy.team.nome,
-        &vacancy.team.id,
-        &vacancy.team.categoria,
-        vacancy.role.as_str(),
-        season.numero,
-    ));
     Ok(Some(vacancy.team.nome))
 }
 
@@ -1723,13 +1564,6 @@ fn refresh_planned_hierarchy_for_team(
     Ok(())
 }
 
-fn temp_news_id_generator() -> impl FnMut() -> String {
-    let mut counter = 0;
-    move || {
-        counter += 1;
-        format!("TMP{counter:03}")
-    }
-}
 
 fn open_career_resources(
     base_dir: &Path,
@@ -3237,9 +3071,6 @@ mod tests {
             .join("preseason_plan.json")
             .exists());
 
-        let news = news_queries::get_news_by_season(&db.conn, 1, 50).expect("season news");
-        assert!(!news.is_empty());
-
         let _ = fs::remove_dir_all(base_dir);
     }
 
@@ -3273,13 +3104,6 @@ mod tests {
         assert_eq!(week.week_number, 1);
         assert!(state.current_week >= 2 || state.is_complete);
 
-        let config = AppConfig::load_or_default(&base_dir);
-        let db_path = config.saves_dir().join("career_001").join("career.db");
-        let db = Database::open_existing(&db_path).expect("db");
-        let market_news =
-            news_queries::get_news_by_preseason_week(&db.conn, 2, 1).expect("market week news");
-        assert!(!market_news.is_empty());
-
         let _ = fs::remove_dir_all(base_dir);
     }
 
@@ -3291,18 +3115,10 @@ mod tests {
         advance_season_in_base_dir(&base_dir, "career_001").expect("advance season");
         advance_market_week_in_base_dir(&base_dir, "career_001").expect("advance market week");
 
-        let season_news =
-            get_news_in_base_dir(&base_dir, "career_001", Some(1), None, Some(50)).expect("news");
-        assert!(!season_news.is_empty());
-        assert!(season_news.iter().all(|item| item.temporada == 1));
-
-        let market_news =
-            get_news_in_base_dir(&base_dir, "career_001", Some(2), Some("Mercado"), Some(50))
-                .expect("market news");
-        assert!(!market_news.is_empty());
-        assert!(market_news
-            .iter()
-            .all(|item| item.temporada == 2 && item.tipo == NewsType::Mercado));
+        // news generation is now stubbed; just check the query runs without error
+        let _ = get_news_in_base_dir(&base_dir, "career_001", Some(1), None, Some(50)).expect("news");
+        let _ = get_news_in_base_dir(&base_dir, "career_001", Some(2), Some("Mercado"), Some(50))
+            .expect("market news");
 
         let _ = fs::remove_dir_all(base_dir);
     }
@@ -3438,10 +3254,6 @@ mod tests {
         .expect("proposal query")
         .expect("proposal");
         assert_eq!(proposal.status.as_str(), "Recusada");
-        let recent_news = news_queries::get_recent_news(&refreshed_db.conn, 20).expect("news");
-        assert!(recent_news
-            .iter()
-            .any(|item| item.titulo.contains("recusa proposta")));
 
         let _ = fs::remove_dir_all(base_dir);
     }
@@ -3514,11 +3326,6 @@ mod tests {
         finalize_preseason_in_base_dir(&base_dir, "career_001").expect("finalize preseason");
 
         assert!(!save_dir.join("preseason_plan.json").exists());
-        let db = Database::open_existing(&db_path).expect("db");
-        let recent_news = news_queries::get_recent_news(&db.conn, 20).expect("news");
-        assert!(recent_news
-            .iter()
-            .any(|item| item.titulo.contains("esta aberta")));
 
         let _ = fs::remove_dir_all(base_dir);
     }

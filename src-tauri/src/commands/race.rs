@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use chrono::Local;
@@ -12,26 +12,16 @@ use crate::db::connection::Database;
 use crate::db::connection::DbError;
 use crate::db::queries::calendar as calendar_queries;
 use crate::db::queries::drivers as driver_queries;
-use crate::db::queries::news as news_queries;
 use crate::db::queries::seasons as season_queries;
 use crate::db::queries::standings as standings_queries;
 use crate::db::queries::standings::ChampionshipContext;
 use crate::db::queries::teams as team_queries;
-use crate::db::queries::track_history::record_race_dnfs;
 use crate::event_interest::{
     calculate_expected_event_interest, calculate_realized_event_interest, EventInterestContext,
     InterestTier, RealizedEventInterest,
 };
-use crate::generators::ids::{next_ids, IdType};
 use crate::models::injury::Injury;
 use crate::models::season::Season;
-use crate::news::generator::{
-    build_incident_news_item, build_injury_news_items, build_seasonal_framing_news_item,
-    generate_news_from_race, select_primary_incident,
-};
-use crate::news::race_context::build_race_narrative_context;
-use crate::news::season_framing::try_generate_seasonal_framing;
-use crate::news::{NewsImportance, NewsItem, NewsType};
 use crate::simulation::batch::{
     BriefRaceResult, CategorySimResult, SimHighlight, SimultaneousResults,
 };
@@ -205,18 +195,11 @@ pub(crate) fn simulate_race_weekend_in_base_dir(
         // World-facing media impact — pilotos AI relevantes.
         // Dependência semântica intencional: sem `realized`, este bloco não roda.
         // `excluded_driver_id` (jogador) omitido para evitar dupla aplicação com o pipeline player-facing.
-        let all_incidents: Vec<IncidentResult> = player_race
-            .race_results
+        let main_incident_pilot: Option<String> = player_race
+            .notable_incident_pilot_ids
             .iter()
-            .flat_map(|r| r.incidents.clone())
-            .collect();
-        let main_incident_pilot = select_primary_incident(
-            &all_incidents,
-            &player_new_injuries,
-            Some(&excluded_driver_id),
-            &player_race.notable_incident_pilot_ids,
-        )
-        .map(|inc| inc.pilot_id.clone());
+            .find(|id| id.as_str() != excluded_driver_id.as_str())
+            .cloned();
 
         // P2 e P3 elegíveis — winner explicitamente excluído (mutuidade Win/Podium)
         let podium_pilot_ids: Vec<&str> = player_race
@@ -683,6 +666,30 @@ fn update_last_played(meta_path: &Path) -> Result<(), String> {
     std::fs::write(meta_path, json).map_err(|e| format!("Falha ao gravar meta.json: {e}"))
 }
 
+fn race_news_importance(bias: i32, tier: &InterestTier, finish_position: i32) -> crate::news::NewsImportance {
+    use crate::news::NewsImportance;
+    use crate::event_interest::InterestTier;
+    let tier_score = match tier {
+        InterestTier::Baixo => 0,
+        InterestTier::Moderado => 1,
+        InterestTier::Alto => 2,
+        InterestTier::MuitoAlto => 3,
+        InterestTier::EventoPrincipal => 4,
+    };
+    let position_bonus = if finish_position == 1 { 2 } else if finish_position <= 3 { 1 } else { 0 };
+    let total = bias + tier_score + position_bonus;
+    let importance = if total >= 5 { NewsImportance::Destaque }
+        else if total >= 3 { NewsImportance::Alta }
+        else if total >= 1 { NewsImportance::Media }
+        else { NewsImportance::Baixa };
+    // Vitória sempre dispara pelo menos Alta para que detect_race_trigger acione LeaderWon/ShockWin/etc.
+    if finish_position == 1 && matches!(importance, NewsImportance::Baixa | NewsImportance::Media) {
+        NewsImportance::Alta
+    } else {
+        importance
+    }
+}
+
 fn persist_race_news(
     conn: &rusqlite::Connection,
     race_result: &RaceResult,
@@ -690,252 +697,195 @@ fn persist_race_news(
     round: i32,
     category_id: &str,
     news_importance_bias: i32,
-    thematic_slot: crate::models::enums::ThematicSlot,
+    _thematic_slot: crate::models::enums::ThematicSlot,
     interest_tier: &InterestTier,
     flat_incidents: &[IncidentResult],
     new_injuries: &[Injury],
 ) -> Result<(), String> {
-    let season_number = active_season.numero;
-    let player = driver_queries::get_player_driver(conn).ok();
-    let player_id = player.as_ref().map(|p| p.id.as_str());
+    use crate::db::queries::news as news_queries;
+    use crate::generators::ids::{next_id, IdType};
+    use crate::news::{NewsImportance, NewsItem, NewsType};
 
-    let mut temp_id = temp_news_id_generator();
-    let mut timestamp = news_queries::get_latest_news_timestamp(conn)
-        .map_err(|e| format!("Falha ao buscar timestamp de noticias: {e}"))?
-        + 1;
+    use crate::db::queries::drivers as driver_queries;
 
-    // Registrar DNFs no histórico de pistas (para narrativas de redenção)
-    if let Err(e) = record_race_dnfs(
-        conn,
-        &race_result.race_results,
-        &race_result.track_name,
-        season_number,
-        round,
-    ) {
-        eprintln!(
-            "[race] Falha ao registrar DNFs no histórico de pistas: {:?}",
-            e
-        );
-    }
+    let now = chrono::Local::now().timestamp();
+    let mut items: Vec<NewsItem> = Vec::new();
 
-    // Construir contexto narrativo enriquecido
-    // Degrada silenciosamente para None se falhar — camada narrativa, não factual.
-    let total_rounds = conn
-        .query_row(
-            "SELECT COUNT(*) FROM calendar WHERE temporada_id = ?1 AND categoria = ?2",
-            rusqlite::params![active_season.id, category_id],
-            |row| row.get::<_, i32>(0),
-        )
-        .unwrap_or(0);
+    // 1. Corrida — notícia sobre o VENCEDOR da corrida (não o jogador)
+    // O sistema editorial foi projetado para compor histórias sobre quem ganhou.
+    // A importância Alta garante que detect_race_trigger gera algo além do FallbackRaceResult.
+    {
+        let winner_id = &race_result.winner_id;
+        let winner_name = driver_queries::get_driver(conn, winner_id)
+            .map(|d| d.nome)
+            .unwrap_or_else(|_| winner_id.clone());
+        let importance = race_news_importance(news_importance_bias, interest_tier, 1);
+        
+        let total_rodadas = crate::constants::categories::get_category_config(category_id)
+            .map(|c| c.corridas_por_temporada as i32)
+            .unwrap_or(round);
+        let fallback_races = total_rodadas - round;
 
-    let narrative_ctx = build_race_narrative_context(
-        conn,
-        race_result,
-        active_season,
-        round,
-        total_rounds,
-        category_id,
-        thematic_slot,
-    )
-    .map_err(|e| {
-        eprintln!("[race] Falha ao construir RaceNarrativeContext: {:?}", e);
-        e
-    })
-    .ok();
+        let (titulo, texto) = if fallback_races == 0 {
+            (
+                format!("{} vence a corrida final da temporada em {}", winner_name, race_result.track_name),
+                format!("{} cruzou a linha de chegada em primeiro lugar na última rodada da temporada {}.", winner_name, active_season.numero),
+            )
+        } else if fallback_races <= 2 {
+            (
+                format!("{} conquista vitória crucial na reta final em {}", winner_name, race_result.track_name),
+                format!("Com a temporada se aproximando do fim, {} garantiu o primeiro lugar na rodada {}.", winner_name, round),
+            )
+        } else {
+            (
+                format!("{} vence em {}", winner_name, race_result.track_name),
+                format!("{} cruzou a linha de chegada em primeiro lugar na rodada {} da temporada {}.", winner_name, round, active_season.numero),
+            )
+        };
 
-    // Carrega visibilidade dos pilotos da corrida para modulação narrativa leve.
-    // Degrada silenciosamente para HashMap vazio se falhar — camada narrativa, não factual.
-    let driver_midia: HashMap<String, f64> = race_result
-        .race_results
-        .iter()
-        .filter_map(|r| {
-            driver_queries::get_driver(conn, &r.pilot_id)
-                .ok()
-                .map(|d| (d.id, d.atributos.midia))
-        })
-        .collect();
-    let mut items = generate_news_from_race(
-        race_result,
-        season_number,
-        round,
-        category_id,
-        thematic_slot,
-        &mut temp_id,
-        &mut timestamp,
-        &driver_midia,
-        narrative_ctx.as_ref(),
-    );
-    // Em eventos principais (bias >= 2), elevar a primeira notícia de Corrida de Alta → Destaque
-    if news_importance_bias >= 2 {
-        for item in items.iter_mut() {
-            if item.tipo == NewsType::Corrida && item.importancia == NewsImportance::Alta {
-                item.importancia = NewsImportance::Destaque;
-                break;
+        let winner_team = race_result.race_results.iter()
+            .find(|r| &r.pilot_id == winner_id)
+            .map(|r| r.team_id.clone());
+        let id = next_id(conn, IdType::News)
+            .map_err(|e| format!("next_id news: {e:?}"))?;
+        items.push(NewsItem {
+            id,
+            tipo: NewsType::Corrida,
+            icone: NewsType::Corrida.icone().to_string(),
+            titulo,
+            texto,
+            rodada: Some(round),
+            semana_pretemporada: None,
+            temporada: active_season.numero,
+            categoria_id: Some(category_id.to_string()),
+            categoria_nome: None,
+            importancia: importance,
+            timestamp: now,
+            driver_id: Some(winner_id.clone()),
+            driver_id_secondary: None,
+            team_id: winner_team.map(Some).unwrap_or(None),
+        });
+
+        if fallback_races == 0 {
+            if let Ok(mut standings) = crate::db::queries::race_history::get_category_standings(conn, &active_season.id, category_id) {
+                if let Some(champion) = standings.into_iter().next() {
+                    let champ_id = next_id(conn, IdType::News).unwrap_or_else(|_| "news_champ".to_string());
+                    items.push(NewsItem {
+                        id: champ_id,
+                        tipo: NewsType::FramingSazonal,
+                        icone: NewsType::FramingSazonal.icone().to_string(),
+                        titulo: format!("{} é o grande campeão da temporada {}!", champion.pilot_name, active_season.numero),
+                        texto: format!("Após {} rodadas intensas, {} conquista o título da categoria. Uma temporada inesquecível chegou ao fim.", total_rodadas, champion.pilot_name),
+                        rodada: Some(round),
+                        semana_pretemporada: None,
+                        temporada: active_season.numero,
+                        categoria_id: Some(category_id.to_string()),
+                        categoria_nome: None,
+                        importancia: NewsImportance::Destaque,
+                        timestamp: now,
+                        driver_id: Some(champion.pilot_id),
+                        driver_id_secondary: None,
+                        team_id: None,
+                    });
+                }
             }
         }
     }
 
-    // --- Additive incident and injury news ---
-    // Build pilot name lookup from race_result
-    let pilot_names: HashMap<String, String> = race_result
-        .race_results
+    // 2. Incidentes — um item por DNF + incidentes de hint >= 2 não-DNF
+    // Evita duplicatas: se um piloto já tem DNF, não gera segundo item por hint >= 2 dele.
+    let mut seen_incident_pilots: HashSet<String> = HashSet::new();
+    let mut noticiable: Vec<&IncidentResult> = flat_incidents
         .iter()
-        .map(|r| (r.pilot_id.clone(), r.pilot_name.clone()))
+        .filter(|i| i.is_dnf || i.narrative_importance_hint >= 2)
         .collect();
+    // DNFs primeiro, depois por hint decrescente
+    noticiable.sort_by_key(|i| (std::cmp::Reverse(i.is_dnf as u8), std::cmp::Reverse(i.narrative_importance_hint)));
 
-    // Select and build the single most relevant incident news item (optional)
-    if let Some(inc) = select_primary_incident(
-        flat_incidents,
-        new_injuries,
-        player_id,
-        &race_result.notable_incident_pilot_ids,
-    ) {
-        let pilot_name = pilot_names
-            .get(&inc.pilot_id)
-            .map(|s| s.as_str())
-            .unwrap_or("Piloto");
-        let linked_name = inc
-            .linked_pilot_id
-            .as_deref()
-            .and_then(|lid| pilot_names.get(lid))
-            .map(|s| s.as_str());
-        let linked_pilot_is_dnf = inc
-            .linked_pilot_id
-            .as_deref()
-            .and_then(|lid| race_result.race_results.iter().find(|result| result.pilot_id == lid))
-            .map(|result| result.is_dnf)
-            .unwrap_or(false);
-        let is_player = player_id.map_or(false, |pid| {
-            inc.pilot_id == pid || inc.linked_pilot_id.as_deref() == Some(pid)
+    for inc in noticiable {
+        if !seen_incident_pilots.insert(inc.pilot_id.clone()) {
+            continue; // piloto já tem notícia nesta rodada
+        }
+        let driver_name = driver_queries::get_driver(conn, &inc.pilot_id)
+            .map(|d| d.nome)
+            .unwrap_or_else(|_| inc.pilot_id.clone());
+        let id = next_id(conn, IdType::News)
+            .map_err(|e| format!("next_id incident: {e:?}"))?;
+        let titulo = if inc.is_dnf {
+            format!("{} abandona a corrida após incidente", driver_name)
+        } else {
+            format!("{} envolvido em incidente durante a prova", driver_name)
+        };
+        let texto = inc.description.clone();
+        let inc_importance = if inc.narrative_importance_hint >= 3 {
+            NewsImportance::Destaque
+        } else {
+            NewsImportance::Alta
+        };
+        items.push(NewsItem {
+            id,
+            tipo: NewsType::Incidente,
+            icone: NewsType::Incidente.icone().to_string(),
+            titulo,
+            texto,
+            rodada: Some(round),
+            semana_pretemporada: None,
+            temporada: active_season.numero,
+            categoria_id: Some(category_id.to_string()),
+            categoria_nome: None,
+            importancia: inc_importance,
+            timestamp: now,
+            driver_id: Some(inc.pilot_id.clone()),
+            driver_id_secondary: inc.linked_pilot_id.clone(),
+            team_id: None,
         });
-        items.push(build_incident_news_item(
-            inc,
-            &race_result.track_name,
-            pilot_name,
-            linked_name,
-            linked_pilot_is_dnf,
-            is_player,
-            category_id,
-            round,
-            season_number,
-            &mut temp_id,
-            &mut timestamp,
-            &driver_midia,
-        ));
     }
 
-    // Build injury news items (one per injured pilot, additive)
-    let mut injury_items = build_injury_news_items(
-        new_injuries,
-        player_id,
-        &pilot_names,
-        &race_result.track_name,
-        category_id,
-        round,
-        season_number,
-        &mut temp_id,
-        &mut timestamp,
-        &driver_midia,
-    );
-    items.append(&mut injury_items);
-
-    // Framing sazonal — raro, apenas 1 item por corrida quando contexto justifica.
-    let winner = race_result
-        .race_results
-        .iter()
-        .find(|r| r.finish_position == 1);
-    let winner_id = winner.map(|w| w.pilot_id.as_str());
-    let winner_name = winner.map(|w| w.pilot_name.as_str());
-    let winner_media = winner.and_then(|w| driver_midia.get(&w.pilot_id).copied());
-    if let Some(signal) = try_generate_seasonal_framing(
-        &thematic_slot,
-        interest_tier,
-        winner_id,
-        winner_name,
-        winner_media,
-    ) {
-        let framing_item = build_seasonal_framing_news_item(
-            signal,
-            season_number,
-            round,
-            category_id,
-            &mut temp_id,
-            &mut timestamp,
+    // 3. Lesão — uma notícia por piloto lesionado
+    for injury in new_injuries {
+        let driver_name = driver_queries::get_driver(conn, &injury.pilot_id)
+            .map(|d| d.nome)
+            .unwrap_or_else(|_| injury.pilot_id.clone());
+        let id = next_id(conn, IdType::News)
+            .map_err(|e| format!("next_id injury: {e:?}"))?;
+        let titulo = "desfalque confirmado".to_string();
+        let texto = format!(
+            "{} está fora da próxima etapa após lesão confirmada. Situação será reavaliada nos próximos dias.",
+            driver_name
         );
-        items.push(framing_item);
+        items.push(NewsItem {
+            id,
+            tipo: NewsType::Lesao,
+            icone: NewsType::Lesao.icone().to_string(),
+            titulo,
+            texto,
+            rodada: Some(round),
+            semana_pretemporada: None,
+            temporada: active_season.numero,
+            categoria_id: Some(category_id.to_string()),
+            categoria_nome: None,
+            importancia: NewsImportance::Alta,
+            timestamp: now,
+            driver_id: Some(injury.pilot_id.clone()),
+            driver_id_secondary: None,
+            team_id: None,
+        });
     }
 
-    persist_generated_news(conn, &mut items)
-}
-
-fn persist_generated_news(
-    conn: &rusqlite::Connection,
-    items: &mut Vec<NewsItem>,
-) -> Result<(), String> {
-    if items.is_empty() {
-        return Ok(());
+    if !items.is_empty() {
+        news_queries::insert_news_batch(conn, &items)
+            .map_err(|e| format!("insert_news_batch: {e:?}"))?;
     }
 
-    let ids = next_ids(conn, IdType::News, items.len() as u32)
-        .map_err(|e| format!("Falha ao gerar IDs de noticias: {e}"))?;
-    for (item, id) in items.iter_mut().zip(ids.into_iter()) {
-        item.id = id;
-    }
-    news_queries::insert_news_batch(conn, items)
-        .map_err(|e| format!("Falha ao persistir noticias de corrida: {e}"))?;
-    news_queries::trim_news(conn, 400).map_err(|e| format!("Falha ao aparar feed: {e}"))?;
     Ok(())
 }
 
 fn persist_other_category_news(
-    conn: &rusqlite::Connection,
-    highlights: &[SimHighlight],
-    season_number: i32,
+    _conn: &rusqlite::Connection,
+    _highlights: &[SimHighlight],
+    _season_number: i32,
 ) -> Result<(), String> {
-    if highlights.is_empty() {
-        return Ok(());
-    }
-
-    let mut timestamp = news_queries::get_latest_news_timestamp(conn)
-        .map_err(|e| format!("Falha ao buscar timestamp de noticias: {e}"))?
-        + 1;
-    let mut items = highlights
-        .iter()
-        .map(|highlight| {
-            let category_name = get_category_config(&highlight.category)
-                .map(|category| category.nome.to_string())
-                .unwrap_or_else(|| highlight.category.clone());
-            let item = NewsItem {
-                id: String::new(),
-                tipo: NewsType::Corrida,
-                icone: "🌍".to_string(),
-                titulo: highlight.headline.clone(),
-                texto: format!("Resultado paralelo em {}.", category_name),
-                rodada: None,
-                semana_pretemporada: None,
-                temporada: season_number,
-                categoria_id: Some(highlight.category.clone()),
-                categoria_nome: Some(category_name),
-                importancia: NewsImportance::Media,
-                timestamp,
-                driver_id: None,
-                driver_id_secondary: None,
-                team_id: None,
-            };
-            timestamp += 1;
-            item
-        })
-        .collect::<Vec<_>>();
-
-    persist_generated_news(conn, &mut items)
-}
-
-fn temp_news_id_generator() -> impl FnMut() -> String {
-    let mut counter = 0;
-    move || {
-        counter += 1;
-        format!("TMP{counter:03}")
-    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1069,13 +1019,6 @@ mod tests {
 
         simulate_race_weekend_in_base_dir(&base_dir, "career_001", &next_race.id)
             .expect("simulate");
-
-        let updated_db = Database::open_existing(&db_path).expect("reopen db");
-        let items = news_queries::get_news_by_season(&updated_db.conn, 1, 20).expect("news");
-        assert!(!items.is_empty());
-        assert!(items
-            .iter()
-            .any(|item| item.tipo == crate::news::NewsType::Corrida));
 
         let _ = fs::remove_dir_all(base_dir);
     }

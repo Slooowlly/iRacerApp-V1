@@ -1,10 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-pub mod flavour;
-pub mod generator;
-pub mod race_context;
-pub mod season_framing;
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NewsItem {
     pub id: String,

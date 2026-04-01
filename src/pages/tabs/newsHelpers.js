@@ -19,11 +19,12 @@ export function buildFallbackPrimaryFilters(scopeType) {
   return ids.map((id) => ({ id, label: id }));
 }
 
-export function isUpcomingRaceFilter(filter, currentRound) {
-  if (filter?.kind !== "race" || !filter?.meta || !currentRound) return false;
+export function isUpcomingRaceFilter(filter, bootstrap) {
+  if (filter?.kind !== "race" || !filter?.meta || !bootstrap) return false;
   const round = Number.parseInt(String(filter.meta).replace(/\D+/g, ""), 10);
   if (!Number.isFinite(round)) return false;
-  return round >= currentRound;
+  if (bootstrap.season_completed) return false;
+  return round >= bootstrap.current_round;
 }
 
 export function leadBadgeLabel(importance) {

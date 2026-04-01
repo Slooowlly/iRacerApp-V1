@@ -7,7 +7,6 @@ pub mod config;
 pub mod convocation;
 pub mod export;
 pub mod market;
-pub mod news_editorial;
 pub mod news_helpers;
 pub mod news_tab;
 pub mod race;

@@ -61,8 +61,8 @@ function NewsTab() {
           scopeId: data.default_scope_id,
           scopeClass: null,
           primaryFilter: data.default_primary_filter ?? null,
-          contextType: null,
-          contextId: null,
+          contextType: data.default_context_type ?? null,
+          contextId: data.default_context_id ?? null,
         });
         setSelectedStoryId(null);
       } catch (invokeError) {
@@ -207,169 +207,139 @@ function NewsTab() {
   }
 
   return (
-    <div className="space-y-4">
-      <section data-news-section="hero" className="px-12">
-        <GlassCard
-          hover={false}
-          className="relative overflow-hidden rounded-[26px] border-white/8 bg-[linear-gradient(135deg,rgba(8,17,31,0.98)_0%,rgba(9,22,39,0.93)_48%,rgba(16,25,39,0.91)_100%)] !p-0"
-        >
-          <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_80%_0%,rgba(88,166,255,0.12),transparent_38%),radial-gradient(circle_at_5%_100%,rgba(255,212,122,0.05),transparent_30%)]" />
-          <div className="pointer-events-none absolute inset-x-0 top-0 h-0.5 bg-gradient-to-r from-accent-primary via-[rgba(142,208,255,0.4)] to-transparent" />
+    <div className="space-y-6">
+      <section data-news-section="hero" className="mx-auto w-full max-w-[1400px]">
+        <div className="rounded-[32px] overflow-hidden relative border border-white/[0.06] shadow-[0_8px_32px_rgba(0,0,0,0.4)]" style={{ background: "linear-gradient(180deg, rgba(22, 27, 34, 0.8) 0%, rgba(13, 17, 23, 0.8) 100%)", backdropFilter: "blur(20px)" }}>
+          <div className="absolute inset-0 bg-[url('https://images.unsplash.com/photo-1541348263662-e068c2ee03e7?auto=format&fit=crop&q=80&w=1500')] bg-cover bg-center opacity-5 mix-blend-screen pointer-events-none"></div>
 
-          {/* header: eyebrow | publicada em | etapa */}
-          <div className="relative flex items-center justify-between px-5 pt-3">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.26em] text-accent-primary">
-              {snapshot?.hero?.section_label ?? "Central de Notícias"}
-            </p>
-            <div className="absolute left-1/2 -translate-x-1/2 flex items-center gap-2">
-              <span className="text-[11px] font-semibold uppercase tracking-[0.22em] text-text-muted">Publicada em</span>
-              <span className="h-3 w-px bg-white/10" />
-              <span className="text-[13px] font-semibold tracking-[0.04em] text-text-secondary">
-                {bootstrap?.pub_date_label ?? String(bootstrap?.season_year ?? "")}
-              </span>
-            </div>
-            <p className="text-[13px] font-semibold tracking-[0.06em] text-text-secondary whitespace-nowrap">
-              {bootstrap
-                ? `Etapa ${bootstrap.current_round} / ${bootstrap.total_rounds}${bootstrap.last_race_name ? ` · Última — ${bootstrap.last_race_name}` : ""}`
-                : ""}
-            </p>
-          </div>
-
-          {/* título */}
-          <div
-            data-news-hero-body
-            className="relative space-y-0 px-5 pb-3 pt-1"
-          >
-            <div className="relative">
-            <div data-news-hero-summary className="min-w-0 flex flex-col gap-2 pr-[220px]">
-              <h2 className="text-[2rem] font-bold leading-[1.0] tracking-[-0.06em] text-text-primary">
-                {snapshot?.hero?.title ?? "Panorama do Campeonato"}
-              </h2>
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="inline-flex items-center rounded-lg border border-white/8 bg-white/[0.03] px-3 py-1.5">
-                  <span className="text-[0.82rem] font-semibold text-accent-primary">
-                    {stories.length} {stories.length === 1 ? "matéria nesta edição" : "matérias nesta edição"}
+          <div className="px-6 pt-10 pb-6 sm:px-10 lg:pt-10 flex flex-col md:flex-row md:justify-between items-start border-b border-white/5 relative z-10">
+            <div className="space-y-3">
+               <div className="inline-flex items-center gap-2">
+                  <div className="w-1.5 h-1.5 rounded-full bg-accent-primary"></div>
+                  <h3 className="text-[10px] font-bold uppercase tracking-[0.2em] text-accent-primary">
+                     {snapshot?.hero?.section_label ?? "Diretoria de Imprensa"}
+                  </h3>
+               </div>
+               
+               <h1 className="text-[2.2rem] sm:text-[2.5rem] font-extrabold leading-none tracking-tight text-white drop-shadow-sm">
+                 {snapshot?.hero?.title ?? "Panorama do Campeonato"}
+               </h1>
+               <div className="flex items-center gap-3">
+                  <span className="inline-flex items-center rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold text-white">
+                     Publicada em: {bootstrap?.pub_date_label ?? String(bootstrap?.season_year ?? "")}
                   </span>
-                </span>
-              </div>
+                  <span className="text-sm font-medium text-text-secondary">
+                     {stories.length} {stories.length === 1 ? "matéria na edição" : "matérias na edição"}
+                  </span>
+               </div>
             </div>
-            <div className="absolute right-0 top-0 w-fit rounded-xl border border-white/8 bg-white/[0.035] flex flex-col justify-center gap-0.5 whitespace-nowrap px-3.5 py-2">
-              <p className="text-[9px] font-semibold uppercase tracking-[0.22em] text-text-muted">Próxima etapa</p>
-              <p className="text-[1.4rem] font-bold leading-[1.1] tracking-[-0.04em] text-text-primary mt-0.5">
-                {bootstrap?.next_race_date_label ?? "—"}
-              </p>
-              <p className="text-sm font-medium text-text-secondary">
-                {bootstrap?.next_race_name ?? ""}
-              </p>
-            </div>
-            </div>
-            <NewsScopeDrawers
-              scopeTabs={scopeTabs}
-              requestState={requestState}
-              showDrawer={Boolean(snapshot)}
-              onScopeChange={handleScopeChange}
-            />
-          </div>
 
-        </GlassCard>
+            <div className="rounded-2xl border border-white/10 bg-black/40 backdrop-blur-md px-6 py-4 text-right shadow-xl mt-6 md:mt-0">
+               <p className="text-[10px] font-bold uppercase tracking-widest text-[#8b949e]">
+                 Próxima Etapa • <span className="text-white">
+                   {bootstrap ? `Etapa ${bootstrap.current_round} / ${bootstrap.total_rounds}` : ""}
+                 </span>
+               </p>
+               <p className="text-[1.3rem] font-extrabold text-white mt-1 leading-tight">
+                 {bootstrap?.next_race_date_label ?? "—"}
+               </p>
+               <p className="text-sm font-semibold text-text-secondary mt-0.5">
+                 {bootstrap?.next_race_name ?? ""}
+               </p>
+            </div>
+          </div>
+            <div className="mt-2 w-full flex flex-col z-10">
+              <NewsScopeDrawers
+                scopeTabs={scopeTabs}
+                requestState={requestState}
+                showDrawer={Boolean(snapshot)}
+                onScopeChange={handleScopeChange}
+                renderPrimaryFilters={() => snapshot ? (
+                  <>
+                    {primaryFilters.map((filter) => {
+                      const isActive = requestState.primaryFilter === filter.id;
+                      return (
+                        <button
+                          key={filter.id}
+                          type="button"
+                          onClick={() => handlePrimaryFilterChange(filter.id)}
+                          className={[
+                            "flex items-center gap-2 rounded-full px-4 py-1.5 text-sm transition-all",
+                            isActive
+                              ? filter.id === "Mercado"
+                                ? "font-bold text-status-yellow bg-status-yellow/10 shadow-[0_0_0_1px_rgba(210,153,34,0.3)]"
+                                : "font-bold text-accent-primary bg-accent-primary/10 shadow-[0_0_0_1px_rgba(88,166,255,0.2)]"
+                              : "font-medium text-text-secondary hover:text-white",
+                          ].join(" ")}
+                        >
+                          {filter.label}
+                        </button>
+                      );
+                    })}
+                  </>
+                ) : null}
+                renderContextualFilters={() => snapshot && hasActivePrimaryFilter && contextualFilters.length > 0 ? (
+                  <>
+                    {contextualFilters.map((filter, index) => {
+                      const isActive =
+                        requestState.contextType === (filter.kind ?? null) && requestState.contextId === filter.id;
+                      const isUpcomingRace =
+                        requestState.primaryFilter === "Corridas"
+                        && isUpcomingRaceFilter(filter, bootstrap)
+                        && !isActive;
+                      const chipToneClass = contextChipToneClass(filter, requestState.primaryFilter, index, isActive);
+                      return (
+                        <button
+                          key={`${filter.kind ?? "context"}-${filter.id}`}
+                          type="button"
+                          disabled={isUpcomingRace}
+                          onClick={() => handleContextFilterClick(filter)}
+                          className={[
+                            "rounded-full border px-4 py-1.5 text-[0.85rem] font-semibold text-center transition-glass",
+                            chipToneClass
+                              ? chipToneClass
+                              : isActive
+                              ? "border-accent-primary/30 bg-accent-primary/10 shadow-[0_0_12px_rgba(88,166,255,0.1)]"
+                              : "border-white/10 bg-white/[0.04] hover:bg-white/10 hover:text-white border-transparent",
+                            isUpcomingRace ? "cursor-not-allowed opacity-35" : "",
+                          ].join(" ")}
+                          style={contextChipStyle(filter, isActive)}
+                        >
+                          <div className="flex items-center justify-center gap-2.5">
+                            {requestState.primaryFilter === "Corridas" ? null : (
+                              <span className={["h-2 w-2 rounded-full", toneDotClass(filter.tone)].join(" ")} />
+                            )}
+                            <span
+                              className={isActive ? "text-text-primary" : "text-text-secondary"}
+                              style={filter.kind === "team" && filter.color_primary ? { color: getReadableTeamColor(filter.color_primary) } : undefined}
+                            >
+                              {filter.label}
+                            </span>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </>
+                ) : null}
+              />
+            </div>
+          </div>
       </section>
 
       {snapshot ? (
         <>
-          <section data-news-section="context-panel">
-            <GlassCard
-              hover={false}
-              className="rounded-[24px] border-white/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.05)_0%,rgba(255,255,255,0.03)_100%)] px-4 py-4"
-            >
-              <div className="flex justify-center">
-                <div
-                  data-news-primary-pill
-                  className="mx-auto inline-flex flex-wrap items-center justify-center gap-1.5 rounded-full border border-white/8 bg-white/[0.03] p-1.5"
-                >
-                  {primaryFilters.map((filter) => {
-                    const isActive = requestState.primaryFilter === filter.id;
-                    return (
-                      <button
-                        key={filter.id}
-                        type="button"
-                        onClick={() => handlePrimaryFilterChange(filter.id)}
-                        className={[
-                          "rounded-full px-4 py-2 text-sm font-semibold tracking-[0.01em] transition-glass",
-                          isActive
-                            ? filter.id === "Mercado"
-                              ? "bg-status-yellow/12 text-status-yellow shadow-[inset_0_0_0_1px_rgba(240,190,84,0.16)]"
-                              : "bg-accent-primary/12 text-text-primary shadow-[inset_0_0_0_1px_rgba(88,166,255,0.16)]"
-                            : "text-text-secondary hover:bg-white/[0.04] hover:text-text-primary",
-                        ].join(" ")}
-                      >
-                        {filter.label}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <div data-news-context-results className="mt-4 flex flex-wrap justify-center gap-2">
-                {hasActivePrimaryFilter && contextualFilters.length > 0 ? (
-                  contextualFilters.map((filter, index) => {
-                    const isActive =
-                      requestState.contextType === (filter.kind ?? null) && requestState.contextId === filter.id;
-                    const isUpcomingRace =
-                      requestState.primaryFilter === "Corridas"
-                      && isUpcomingRaceFilter(filter, bootstrap?.current_round)
-                      && !isActive;
-                    const chipToneClass = contextChipToneClass(filter, requestState.primaryFilter, index, isActive);
-                    return (
-                      <button
-                        key={`${filter.kind ?? "context"}-${filter.id}`}
-                        type="button"
-                        disabled={isUpcomingRace}
-                        onClick={() => handleContextFilterClick(filter)}
-                        className={[
-                          "rounded-[18px] border px-3.5 py-2 text-center transition-glass",
-                          chipToneClass
-                            ? chipToneClass
-                            : isActive
-                            ? "border-accent-primary/32 bg-accent-primary/14"
-                            : "border-white/10 bg-white/[0.04] hover:border-white/18 hover:bg-white/[0.06]",
-                          isUpcomingRace ? "cursor-not-allowed opacity-35" : "",
-                        ].join(" ")}
-                        style={contextChipStyle(filter, isActive)}
-                      >
-                        <div className="flex items-center justify-center gap-2.5">
-                          {requestState.primaryFilter === "Corridas" ? null : (
-                            <span className={["h-2 w-2 rounded-full", toneDotClass(filter.tone)].join(" ")} />
-                          )}
-                          <span
-                            className={isActive ? "text-sm font-semibold text-text-primary" : "text-sm text-text-secondary"}
-                            style={filter.kind === "team" && filter.color_primary ? { color: getReadableTeamColor(filter.color_primary) } : undefined}
-                          >
-                            {filter.label}
-                          </span>
-                        </div>
-                      </button>
-                    );
-                  })
-                ) : (
-                  <p className="w-full text-center text-sm text-text-muted">
-                    {hasActivePrimaryFilter
-                      ? "Nenhum recorte adicional neste filtro."
-                      : "Escolha um filtro."}
-                  </p>
-                )}
-              </div>
-            </GlassCard>
-          </section>
-
-          <section data-news-section="main-reader">
-            <div className="grid gap-4 xl:grid-cols-[1.16fr_0.84fr]">
-              <GlassCard
-                hover={false}
-                className="relative overflow-hidden rounded-[28px] border-white/8 bg-[linear-gradient(180deg,rgba(8,16,26,0.96)_0%,rgba(6,12,20,0.96)_100%)] p-0"
+          <section data-news-section="main-reader" className="mx-auto w-full max-w-[1400px]">
+            <div className="grid gap-6 xl:grid-cols-[1.6fr_1fr] items-stretch">
+              
+              {/* Leitura Principal (Lado Esquerdo) */}
+              <div
+                className="relative overflow-hidden rounded-[32px] border border-white/[0.06] shadow-[0_8px_32px_rgba(0,0,0,0.4)] flex flex-col group p-0"
+                style={{ background: "linear-gradient(180deg, rgba(22, 27, 34, 0.8) 0%, rgba(13, 17, 23, 0.8) 100%)", backdropFilter: "blur(20px)" }}
               >
-                <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-accent-primary via-[#8ed0ff] to-transparent" />
-                <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_center,rgba(255,255,255,0.04),transparent_26%),linear-gradient(180deg,transparent,rgba(4,10,18,0.28))]" />
-                <div className="relative p-5 sm:p-6">
+                <div className="absolute inset-0 bg-[url('https://images.unsplash.com/photo-1568605117036-5fe5e7bab0b7?auto=format&fit=crop&q=80')] bg-cover bg-center transition-transform duration-1000 group-hover:scale-105 opacity-60 mix-blend-luminosity"></div>
+                <div className="absolute inset-0 bg-gradient-to-t from-[#0a0d14] via-[#0a0d14]/80 to-transparent"></div>
+                
+                <div className="relative z-10 flex-1 flex flex-col p-8 lg:p-10 justify-end min-h-[500px]">
                   {error ? (
                     <p className="text-sm font-semibold text-status-red">{error}</p>
                   ) : selectedStory ? (
@@ -378,19 +348,19 @@ function NewsTab() {
                     <ReaderEmptyState loading={isLoading} />
                   )}
                 </div>
-              </GlassCard>
+              </div>
 
-              <GlassCard
-                hover={false}
-                className="overflow-hidden rounded-[28px] border-white/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.035)_0%,rgba(255,255,255,0.015)_100%)] p-0"
+              {/* Leituras do Recorte (Lado Direito) */}
+              <div
+                className="rounded-[32px] p-8 flex flex-col border border-white/5 transition-all"
+                style={{ background: "linear-gradient(180deg, rgba(255, 255, 255, 0.03) 0%, rgba(255, 255, 255, 0.01) 100%)", backgroundColor: "#11161d" }}
               >
-                <div className="px-5 pb-2 pt-5 sm:px-6">
-                  <p className="text-[10px] uppercase tracking-[0.22em] text-text-muted">Leituras do recorte</p>
-                  <h3 className="mt-2 text-[1.2rem] font-semibold tracking-[-0.04em] text-text-primary">
-                    Capítulos paralelos
-                  </h3>
+                <div className="mb-6 flex items-center justify-between">
+                   <h3 className="text-xs font-bold uppercase tracking-[0.15em] text-text-muted">Acontecimentos Secundários</h3>
+                   <span className="text-xs font-bold bg-white/10 text-white rounded-full px-2.5 py-0.5">{stories.length}</span>
                 </div>
-                <div className="space-y-0 px-4 pb-4 sm:px-5 sm:pb-5">
+                
+                <div className="space-y-4 overflow-y-auto pr-2 no-scrollbar flex-1 relative max-h-[600px]">
                   {stories.length > 0 ? (
                     stories.map((story) => (
                       <StoryListItem
@@ -406,7 +376,8 @@ function NewsTab() {
                     </p>
                   )}
                 </div>
-              </GlassCard>
+              </div>
+
             </div>
           </section>
         </>
@@ -416,48 +387,44 @@ function NewsTab() {
 }
 
 function OpenStory({ story }) {
-  const storyContext = story.entity_label ?? story.category_label ?? "Campeonato";
-  const storyTiming = story.race_label ?? story.meta_label ?? "Edicao atual";
   const storyHeadline = story.headline ?? story.title ?? "Leitura atual";
   const storyDeck = story.deck ?? story.summary ?? "";
   const storyBlocks = resolveStoryBlocks(story);
 
   return (
-    <div data-news-open-story className="flex h-full flex-col gap-6">
-      <div className="flex flex-wrap items-center gap-2">
-        <span className={["inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.22em] shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]", storyToneBadgeClass(story.accent_tone)].join(" ")}>
-          <span className="h-px w-4 rounded-full bg-current opacity-70" />
-          {leadBadgeLabel(story.importance)}
-        </span>
-        <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-[10px] uppercase tracking-[0.18em] text-text-muted">
-          {story.news_type}
-        </span>
+    <div className="space-y-4 max-w-2xl flex flex-col justify-end">
+      {/* Badges */}
+      <div className="flex items-center gap-2">
+         {story.news_type && (
+           <span className={["inline-flex items-center px-3 py-1 rounded-md text-[11px] font-bold uppercase tracking-wider backdrop-blur-md border shadow-sm", storyToneBadgeClass(story.accent_tone)].join(" ")}>
+             {story.news_type}
+           </span>
+         )}
+         {story.importance && (
+           <span className="text-[11px] font-semibold text-white bg-black/50 px-3 py-1 rounded-md backdrop-blur-md border border-white/10 uppercase tracking-widest">
+             {leadBadgeLabel(story.importance)}
+           </span>
+         )}
       </div>
-
-      <div>
-        <h3 className="max-w-4xl text-[2.05rem] font-semibold leading-[0.98] tracking-[-0.06em] text-text-primary sm:text-[2.45rem]">
-          {storyHeadline}
-        </h3>
-        {storyDeck ? (
-          <p className="mt-3 max-w-3xl text-[0.97rem] leading-7 text-text-secondary">
-            {storyDeck}
-          </p>
-        ) : null}
-      </div>
-
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_260px]">
-        <div className="space-y-0">
+      
+      {/* Titulo & Resumo */}
+      <h2 className="text-[2rem] sm:text-4xl font-extrabold text-white leading-[1.1] tracking-tight drop-shadow-md">
+         {storyHeadline}
+      </h2>
+      {storyDeck && (
+         <p className="text-[1.05rem] font-medium text-gray-300 leading-relaxed mt-4 drop-shadow-md">
+           {storyDeck}
+         </p>
+      )}
+      
+      {/* Chapters/Blocks if available */}
+      {storyBlocks.length > 0 && (
+        <div className="mt-4 pt-4 border-t border-white/10 space-y-3">
           {storyBlocks.map((block) => (
             <StoryChapter key={`${block.label}-${block.text}`} label={block.label} text={block.text} />
           ))}
         </div>
-
-        <div className="flex flex-col gap-3">
-          <StoryInfoCard label="Publicada em" value={story.time_label} />
-          <StoryInfoCard label="Leitura" value={storyTiming} />
-          <StoryInfoCard label="Contexto" value={storyContext} />
-        </div>
-      </div>
+      )}
     </div>
   );
 }
@@ -465,39 +432,25 @@ function OpenStory({ story }) {
 function StoryListItem({ story, active, onClick }) {
   const storyHeadline = story.headline ?? story.title ?? "Leitura atual";
   const storyDeck = story.deck ?? story.summary ?? "";
+  const toneClass = storyToneBadgeClass(story.accent_tone);
 
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      data-news-story-list-item={story.id}
-      className={[
-        "w-full border-t border-white/8 px-0 py-4 text-left transition-glass first:border-t-0 first:pt-0 last:pb-0",
-        active
-          ? "text-text-primary"
-          : "text-text-secondary hover:text-text-primary",
-      ].join(" ")}
+    <div 
+        onClick={onClick} 
+        className={["group relative rounded-2xl border bg-white/[0.02] p-5 hover:bg-white/[0.04] transition-all cursor-pointer text-left block w-full", active ? "border-white/20 bg-white/[0.08]" : "border-white/5"].join(" ")}
     >
-      <div
-        className={[
-          "rounded-[20px] border px-4 py-4 transition-glass",
-          active
-            ? "border-accent-primary/30 bg-accent-primary/[0.1]"
-            : "border-white/8 bg-white/[0.02] hover:border-white/12 hover:bg-white/[0.04]",
-        ].join(" ")}
-      >
-        <div className="text-[10px] uppercase tracking-[0.18em] text-text-muted">
-          {[story.news_type, story.importance_label].filter(Boolean).join(" / ")}
-        </div>
-        <h4 className="mt-2 text-[1rem] font-semibold leading-[1.28] tracking-[-0.03em] text-inherit">
-          {storyHeadline}
-        </h4>
-        {storyDeck ? <p className="mt-2 text-sm leading-6 text-text-secondary">{storyDeck}</p> : null}
-        <p className="mt-3 text-[11px] uppercase tracking-[0.14em] text-text-muted">
-          {[story.entity_label ?? story.category_label, story.time_label].filter(Boolean).join(" / ")}
-        </p>
-      </div>
-    </button>
+      {story.news_type && (
+        <span className={["px-2 py-1 text-[10px] font-bold uppercase tracking-wider rounded w-fit mb-3 block border", toneClass].join(" ")}>
+          {story.news_type}
+        </span>
+      )}
+      <h4 className="text-lg font-bold text-white mb-1.5 leading-snug group-hover:text-accent-primary transition-colors line-clamp-2">
+        {storyHeadline}
+      </h4>
+      <p className="text-sm font-medium text-text-secondary line-clamp-2">
+        {storyDeck}
+      </p>
+    </div>
   );
 }
 
@@ -527,13 +480,5 @@ function StoryChapter({ label, text }) {
   );
 }
 
-function StoryInfoCard({ label, value }) {
-  return (
-    <div className="rounded-[22px] border border-white/8 bg-white/[0.025] px-4 py-4">
-      <p className="text-[10px] uppercase tracking-[0.18em] text-text-muted">{label}</p>
-      <p className="mt-2 text-sm font-semibold leading-6 text-text-primary">{value}</p>
-    </div>
-  );
-}
 
 export default NewsTab;

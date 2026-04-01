@@ -38,7 +38,13 @@
       "Bash(grep -r log::warn 'c:\\\\Users\\\\rodri\\\\OneDrive\\\\Área de Trabalho\\\\Jogos\\\\iRacerApp V1\\\\src-tauri\\\\src' --include=*.rs -l)",
       "Bash(start \"c:\\\\Users\\\\rodri\\\\OneDrive\\\\Área de Trabalho\\\\Jogos\\\\iRacerApp V1\\\\preview-radar.html\")",
       "Bash(powershell -ExecutionPolicy Bypass -File \"c:\\\\Users\\\\rodri\\\\OneDrive\\\\Área de Trabalho\\\\Jogos\\\\iRacerApp V1\\\\fix-accents.ps1\")",
-      "Bash(npx vitest:*)"
+      "Bash(npx vitest:*)",
+      "Bash(sed -n '735,780p' src/commands/career.rs)",
+      "Bash(sed -n '1095,1200p' src/commands/career.rs)",
+      "Bash(sed -n '1485,1505p' src/commands/career.rs)",
+      "Bash(grep -E \"FAILED|ok$|running [0-9]|test commands\")",
+      "Bash(grep -v \"^\\\\s*-->\\\\|^\\\\s*|\\\\|^\\\\s*=\\\\|^$\")",
+      "Bash(grep -E \"FAILED|ok$|running [0-9]\")"
     ]
   }
 }

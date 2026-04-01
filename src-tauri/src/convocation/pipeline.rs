@@ -4,12 +4,11 @@ use serde::{Deserialize, Serialize};
 use crate::calendar::generate_and_insert_special_calendars;
 use crate::db::connection::DbError;
 use crate::db::queries::{
-    contracts as contract_queries, drivers as driver_queries, news as news_queries,
+    contracts as contract_queries, drivers as driver_queries,
     seasons as season_queries, teams as team_queries,
 };
-use crate::generators::ids::{next_id, next_ids, IdType};
+use crate::generators::ids::IdType;
 use crate::models::enums::{SeasonPhase, TeamRole};
-use crate::news::generator::generate_news_from_pos_especial;
 
 use super::eligibility::{coletar_candidatos, FonteConvocacao};
 use super::quotas::calcular_cotas;
@@ -544,26 +543,6 @@ pub fn run_pos_especial(conn: &Connection) -> Result<PosEspecialResult, DbError>
     team_queries::reset_special_team_hierarchies(&tx)?;
 
     tx.commit()?;
-
-    // Gerar e persistir notícias (fora da transação de cleanup)
-    let mut temp_counter = 0u32;
-    let mut temp_id = || {
-        temp_counter += 1;
-        format!("TMP{temp_counter:03}")
-    };
-    let mut timestamp = news_queries::get_latest_news_timestamp(conn).unwrap_or(0) + 1;
-    let mut items =
-        generate_news_from_pos_especial(&campeoes, season.numero, &mut temp_id, &mut timestamp);
-
-    if !items.is_empty() {
-        if let Ok(ids) = next_ids(conn, IdType::News, items.len() as u32) {
-            for (item, id) in items.iter_mut().zip(ids) {
-                item.id = id;
-            }
-            let _ = news_queries::insert_news_batch(conn, &items);
-            let _ = news_queries::trim_news(conn, 400);
-        }
-    }
 
     Ok(PosEspecialResult {
         contratos_encerrados,

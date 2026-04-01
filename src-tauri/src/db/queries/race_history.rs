@@ -107,6 +107,120 @@ pub fn get_category_wins_this_season(
     Ok(count)
 }
 
+/// Retorna a sequência atual de vitórias do piloto na categoria/temporada indicadas.
+/// Conta rodadas consecutivas com posicao_final = 1 a partir da mais recente para trás.
+/// Retorna 0 se o piloto nunca venceu ou não disputou corridas nessa categoria/temporada.
+pub fn get_win_streak(
+    conn: &Connection,
+    pilot_id: &str,
+    temporada_id: &str,
+    categoria: &str,
+) -> Result<u32, DbError> {
+    let mut stmt = conn.prepare(
+        "SELECT r.posicao_final
+         FROM race_results r
+         JOIN calendar c ON r.race_id = c.id
+         WHERE r.piloto_id = ?1
+           AND c.temporada_id = ?2
+           AND c.categoria = ?3
+         ORDER BY c.rodada DESC",
+    )?;
+    let positions: Vec<i32> = stmt
+        .query_map(rusqlite::params![pilot_id, temporada_id, categoria], |row| row.get(0))?
+        .filter_map(|r| r.ok())
+        .collect();
+    let streak = positions.iter().take_while(|&&pos| pos == 1).count() as u32;
+    Ok(streak)
+}
+
+/// Retorna o ID do piloto que liderava a categoria na temporada com base nos resultados
+/// anteriores à rodada indicada (exclusive). Retorna None se não há rodadas anteriores.
+/// Usado para detectar mudança de liderança: se o líder atual for diferente deste valor,
+/// houve troca de liderança na rodada mais recente.
+pub fn get_category_leader_before_round(
+    conn: &Connection,
+    temporada_id: &str,
+    categoria: &str,
+    before_round: i32,
+) -> Result<Option<String>, DbError> {
+    let result = conn.query_row(
+        "SELECT r.piloto_id
+         FROM race_results r
+         JOIN calendar c ON r.race_id = c.id
+         WHERE c.temporada_id = ?1 AND c.categoria = ?2 AND c.rodada < ?3
+         GROUP BY r.piloto_id
+         ORDER BY SUM(r.pontos) DESC
+         LIMIT 1",
+        rusqlite::params![temporada_id, categoria, before_round],
+        |row| row.get::<_, String>(0),
+    );
+    match result {
+        Ok(id) => Ok(Some(id)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(DbError::Sqlite(e)),
+    }
+}
+
+/// Retorna os resultados de todos os pilotos numa rodada específica de uma categoria.
+/// Retorna Vec<(driver_id, posicao_largada, posicao_final, is_dnf)>.
+pub fn get_results_for_round(
+    conn: &Connection,
+    temporada_id: &str,
+    categoria: &str,
+    round: i32,
+) -> Result<Vec<(String, i32, i32, bool)>, DbError> {
+    let mut stmt = conn.prepare(
+        "SELECT r.piloto_id, r.posicao_largada, r.posicao_final, r.dnf
+         FROM race_results r
+         JOIN calendar c ON r.race_id = c.id
+         WHERE c.temporada_id = ?1 AND c.categoria = ?2 AND c.rodada = ?3
+         ORDER BY r.posicao_final ASC",
+    )?;
+    let results = stmt
+        .query_map(rusqlite::params![temporada_id, categoria, round], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i32>(1)?,
+                row.get::<_, i32>(2)?,
+                row.get::<_, i32>(3)? != 0,
+            ))
+        })?
+        .filter_map(|r| r.ok())
+        .collect();
+    Ok(results)
+}
+
+/// Retorna fatos de DNF catalogado por piloto numa rodada de uma categoria.
+/// Vec<(driver_id, incident_source, is_dnf, dnf_segment)>
+/// incident_source vem de incident_catalog.incident_source (Mechanical/DriverError/PostCollision/Operational)
+/// ou None se o piloto não tiver dnf_catalog_id.
+pub fn get_dnf_incident_facts_for_round(
+    conn: &Connection,
+    temporada_id: &str,
+    categoria: &str,
+    round: i32,
+) -> Result<Vec<(String, Option<String>, bool, Option<String>)>, DbError> {
+    let mut stmt = conn.prepare(
+        "SELECT r.piloto_id, ic.incident_source, r.dnf, r.dnf_segment
+         FROM race_results r
+         JOIN calendar c ON r.race_id = c.id
+         LEFT JOIN incident_catalog ic ON r.dnf_catalog_id = ic.id
+         WHERE c.temporada_id = ?1 AND c.categoria = ?2 AND c.rodada = ?3",
+    )?;
+    let results = stmt
+        .query_map(rusqlite::params![temporada_id, categoria, round], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Option<String>>(1)?,
+                row.get::<_, i32>(2)? != 0,
+                row.get::<_, Option<String>>(3)?,
+            ))
+        })?
+        .filter_map(|r| r.ok())
+        .collect();
+    Ok(results)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -129,7 +243,9 @@ mod tests {
                 race_id TEXT NOT NULL,
                 piloto_id TEXT NOT NULL,
                 equipe_id TEXT NOT NULL,
+                posicao_largada INTEGER NOT NULL DEFAULT 0,
                 posicao_final INTEGER NOT NULL,
+                dnf INTEGER NOT NULL DEFAULT 0,
                 pontos REAL NOT NULL
             );
             INSERT INTO seasons (id, numero) VALUES ('S1', 1), ('S2', 2);

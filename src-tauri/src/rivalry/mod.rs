@@ -4,7 +4,6 @@ use crate::common::time::current_timestamp;
 
 use crate::db::connection::DbError;
 use crate::db::queries::drivers::get_driver;
-use crate::db::queries::news::insert_news;
 use crate::db::queries::rivalries::{
     delete_rivalry, get_all_rivalries, get_rivalries_for_pilot, get_rivalry_by_pair,
     insert_rivalry, update_rivalry_axes,
@@ -13,9 +12,7 @@ use crate::generators::ids::{next_id, IdType};
 use crate::models::rivalry::{
     normalize_pair, perceived_intensity, rivalry_lifecycle, Rivalry, RivalryLifecycle, RivalryType,
 };
-use crate::news::flavour::{pick_title_and_body, templates};
-use crate::news::generator::{format_category_name, promote_narrative_importance};
-use crate::news::{NewsImportance, NewsItem, NewsType};
+use crate::news::NewsItem;
 
 // ── Constantes de domínio ─────────────────────────────────────────────────────
 
@@ -219,106 +216,19 @@ pub fn remove_rivalry(conn: &Connection, rivalry_id: &str) -> Result<(), DbError
 // ── Passo 10: Geração de notícia (atualizado para percebida) ──────────────────
 
 fn build_rivalry_news_item(
-    applied: &RivalryApplied,
-    tipo: &RivalryType,
-    nome_a: &str,
-    nome_b: &str,
-    categoria_id: &str,
-    temporada: i32,
-    rodada: i32,
-    piloto_a_id: &str,
-    piloto_b_id: &str,
-    team_id: Option<&str>,
-    driver_midia: &std::collections::HashMap<String, f64>,
+    _applied: &RivalryApplied,
+    _tipo: &RivalryType,
+    _nome_a: &str,
+    _nome_b: &str,
+    _categoria_id: &str,
+    _temporada: i32,
+    _rodada: i32,
+    _piloto_a_id: &str,
+    _piloto_b_id: &str,
+    _team_id: Option<&str>,
+    _driver_midia: &std::collections::HashMap<String, f64>,
 ) -> Option<NewsItem> {
-    let level = crossed_threshold(applied.old_perceived, applied.new_perceived)?;
-    let seed = format!("riv:{}:{}:{}:{}", piloto_a_id, nome_b, rodada, temporada);
-    let rep = [("{a}", nome_a), ("{b}", nome_b)];
-
-    let (importancia_base, titles, texts): (NewsImportance, &[&str], &[&str]) = match (tipo, &level)
-    {
-        (RivalryType::Companheiros, RivalryIntensityLevel::Intensa) => (
-            NewsImportance::Destaque,
-            templates::rivalry::COMP_INTENSA_TITULO,
-            templates::rivalry::COMP_INTENSA_TEXTO,
-        ),
-        (RivalryType::Companheiros, RivalryIntensityLevel::Forte) => (
-            NewsImportance::Alta,
-            templates::rivalry::COMP_FORTE_TITULO,
-            templates::rivalry::COMP_FORTE_TEXTO,
-        ),
-        (RivalryType::Campeonato, RivalryIntensityLevel::Intensa) => (
-            NewsImportance::Destaque,
-            templates::rivalry::CAMP_INTENSA_TITULO,
-            templates::rivalry::CAMP_INTENSA_TEXTO,
-        ),
-        (RivalryType::Campeonato, RivalryIntensityLevel::Forte) => (
-            NewsImportance::Alta,
-            templates::rivalry::CAMP_FORTE_TITULO,
-            templates::rivalry::CAMP_FORTE_TEXTO,
-        ),
-        (RivalryType::Colisao, RivalryIntensityLevel::Intensa) => (
-            NewsImportance::Destaque,
-            templates::rivalry::COL_INTENSA_TITULO,
-            templates::rivalry::COL_INTENSA_TEXTO,
-        ),
-        (RivalryType::Colisao, RivalryIntensityLevel::Forte) => (
-            NewsImportance::Alta,
-            templates::rivalry::COL_FORTE_TITULO,
-            templates::rivalry::COL_FORTE_TEXTO,
-        ),
-        (RivalryType::Pista, RivalryIntensityLevel::Intensa) => (
-            NewsImportance::Alta,
-            templates::rivalry::PISTA_INTENSA_TITULO,
-            templates::rivalry::PISTA_INTENSA_TEXTO,
-        ),
-        (RivalryType::Pista, RivalryIntensityLevel::Forte) => (
-            NewsImportance::Alta,
-            templates::rivalry::PISTA_FORTE_TITULO,
-            templates::rivalry::PISTA_FORTE_TEXTO,
-        ),
-        (_, RivalryIntensityLevel::Clara) => (
-            NewsImportance::Media,
-            templates::rivalry::CLARA_TITULO,
-            templates::rivalry::CLARA_TEXTO,
-        ),
-        (_, RivalryIntensityLevel::Inicial) => (
-            NewsImportance::Baixa,
-            templates::rivalry::INICIAL_TITULO,
-            templates::rivalry::INICIAL_TEXTO,
-        ),
-        _ => return None,
-    };
-
-    let (titulo, texto) = pick_title_and_body(titles, texts, &seed, &rep);
-
-    let midia_a = driver_midia.get(piloto_a_id).copied();
-    let midia_b = driver_midia.get(piloto_b_id).copied();
-    let max_midia = match (midia_a, midia_b) {
-        (Some(a), Some(b)) => Some(a.max(b)),
-        (Some(a), None) => Some(a),
-        (None, Some(b)) => Some(b),
-        (None, None) => None,
-    };
-    let importancia = promote_narrative_importance(importancia_base, max_midia);
-
-    Some(NewsItem {
-        id: String::new(),
-        tipo: NewsType::Rivalidade,
-        icone: "\u{2694}\u{FE0F}".to_string(),
-        titulo,
-        texto,
-        rodada: Some(rodada),
-        semana_pretemporada: None,
-        temporada,
-        categoria_id: Some(categoria_id.to_string()),
-        categoria_nome: Some(format_category_name(categoria_id)),
-        importancia,
-        timestamp: chrono::Local::now().timestamp(),
-        driver_id: Some(piloto_a_id.to_string()),
-        driver_id_secondary: Some(piloto_b_id.to_string()),
-        team_id: team_id.map(|value| value.to_string()),
-    })
+    None
 }
 
 fn load_rivalry_driver_midia(
@@ -335,12 +245,6 @@ fn load_rivalry_driver_midia(
     }
 
     driver_midia
-}
-
-fn persist_rivalry_news(conn: &Connection, item: NewsItem) -> Result<(), DbError> {
-    let mut item = item;
-    item.id = next_id(conn, IdType::News)?;
-    insert_news(conn, &item)
 }
 
 // ── Passo 6: Rivalidade por hierarquia interna ────────────────────────────────
@@ -405,7 +309,7 @@ pub fn process_hierarchy_rivalry(
             .unwrap_or_else(|_| n2_id.to_string());
         let driver_midia = load_rivalry_driver_midia(conn, n1_id, n2_id);
 
-        if let Some(item) = build_rivalry_news_item(
+        let _ = build_rivalry_news_item(
             &applied,
             &RivalryType::Companheiros,
             &nome_a,
@@ -417,11 +321,7 @@ pub fn process_hierarchy_rivalry(
             n2_id,
             Some(team_id),
             &driver_midia,
-        ) {
-            if let Err(e) = persist_rivalry_news(conn, item) {
-                eprintln!("[rivalry] falha ao persistir noticia de rivalidade: {}", e);
-            }
-        }
+        );
     }
 
     Ok(())
@@ -476,7 +376,7 @@ pub fn process_championship_rivalry(
 
             if crossed_threshold(applied.old_perceived, applied.new_perceived).is_some() {
                 let driver_midia = load_rivalry_driver_midia(conn, &drivers[i].id, &drivers[j].id);
-                if let Some(item) = build_rivalry_news_item(
+                let _ = build_rivalry_news_item(
                     &applied,
                     &RivalryType::Campeonato,
                     &drivers[i].nome,
@@ -488,11 +388,7 @@ pub fn process_championship_rivalry(
                     &drivers[j].id,
                     None,
                     &driver_midia,
-                ) {
-                    if let Err(e) = persist_rivalry_news(conn, item) {
-                        eprintln!("[rivalry] falha ao persistir noticia de rivalidade: {}", e);
-                    }
-                }
+                );
             }
         }
     }
@@ -618,7 +514,7 @@ pub fn process_collisions_rivalry(
                 .unwrap_or_else(|_| p2.clone());
             let driver_midia = load_rivalry_driver_midia(conn, &p1, &p2);
 
-            if let Some(item) = build_rivalry_news_item(
+            let _ = build_rivalry_news_item(
                 &applied,
                 &RivalryType::Colisao,
                 &nome_a,
@@ -630,11 +526,7 @@ pub fn process_collisions_rivalry(
                 &p2,
                 None,
                 &driver_midia,
-            ) {
-                if let Err(e) = persist_rivalry_news(conn, item) {
-                    eprintln!("[rivalry] falha ao persistir noticia de rivalidade: {}", e);
-                }
-            }
+            );
         }
     }
 
@@ -989,138 +881,4 @@ mod tests {
         assert!(get_pilot_rivalries(&conn, "P001").unwrap().is_empty());
     }
 
-    // ── Passo 15: Templates Colisão Forte/Intensa ───────────────────────────
-
-    #[test]
-    fn colisao_forte_gera_noticia() {
-        let applied = RivalryApplied {
-            rivalry_id: "R001".to_string(),
-            old_perceived: 55.0,
-            new_perceived: 65.0,
-        };
-        let mut driver_midia = std::collections::HashMap::new();
-        driver_midia.insert("P001".to_string(), 90.0);
-        let item = build_rivalry_news_item(
-            &applied,
-            &RivalryType::Colisao,
-            "Piloto A",
-            "Piloto B",
-            "gt3",
-            1,
-            5,
-            "P001",
-            "P002",
-            None,
-            &driver_midia,
-        );
-        assert!(item.is_some());
-        let news = item.unwrap();
-        assert_eq!(news.importancia, NewsImportance::Alta);
-        assert!(news.titulo.contains("Piloto A") || news.titulo.contains("Piloto B"));
-        assert!(news.categoria_nome.is_some());
-        assert_eq!(news.driver_id_secondary, Some("P002".to_string()));
-    }
-
-    #[test]
-    fn colisao_intensa_gera_destaque() {
-        let applied = RivalryApplied {
-            rivalry_id: "R002".to_string(),
-            old_perceived: 75.0,
-            new_perceived: 85.0,
-        };
-        let driver_midia = std::collections::HashMap::new();
-        let item = build_rivalry_news_item(
-            &applied,
-            &RivalryType::Colisao,
-            "Piloto A",
-            "Piloto B",
-            "gt3",
-            1,
-            8,
-            "P001",
-            "P002",
-            None,
-            &driver_midia,
-        );
-        assert!(item.is_some());
-        let news = item.unwrap();
-        assert_eq!(news.importancia, NewsImportance::Destaque);
-        assert!(news.titulo.contains("Piloto A") || news.titulo.contains("Piloto B"));
-    }
-
-    #[test]
-    fn pista_forte_gera_noticia() {
-        let applied = RivalryApplied {
-            rivalry_id: "R003".to_string(),
-            old_perceived: 55.0,
-            new_perceived: 65.0,
-        };
-        let driver_midia = std::collections::HashMap::new();
-        let item = build_rivalry_news_item(
-            &applied,
-            &RivalryType::Pista,
-            "Piloto A",
-            "Piloto B",
-            "gt4",
-            1,
-            3,
-            "P001",
-            "P002",
-            None,
-            &driver_midia,
-        );
-        assert!(item.is_some());
-        let news = item.unwrap();
-        assert_eq!(news.importancia, NewsImportance::Alta);
-    }
-
-    #[test]
-    fn categoria_nome_preenchido_em_rivalry_news() {
-        let applied = RivalryApplied {
-            rivalry_id: "R004".to_string(),
-            old_perceived: 15.0,
-            new_perceived: 25.0,
-        };
-        let driver_midia = std::collections::HashMap::new();
-        let item = build_rivalry_news_item(
-            &applied,
-            &RivalryType::Campeonato,
-            "A",
-            "B",
-            "gt3",
-            1,
-            1,
-            "P001",
-            "P002",
-            None,
-            &driver_midia,
-        );
-        assert!(item.is_some());
-        assert_eq!(item.unwrap().categoria_nome, Some("GT3".to_string()));
-    }
-
-    #[test]
-    fn companheiros_rivalry_news_recebe_team_id() {
-        let applied = RivalryApplied {
-            rivalry_id: "R005".to_string(),
-            old_perceived: 55.0,
-            new_perceived: 65.0,
-        };
-        let driver_midia = std::collections::HashMap::new();
-        let item = build_rivalry_news_item(
-            &applied,
-            &RivalryType::Companheiros,
-            "A",
-            "B",
-            "gt3",
-            1,
-            1,
-            "P001",
-            "P002",
-            Some("T001"),
-            &driver_midia,
-        )
-        .expect("rivalry news");
-        assert_eq!(item.team_id, Some("T001".to_string()));
-    }
 }
