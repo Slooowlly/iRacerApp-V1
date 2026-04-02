@@ -9,6 +9,7 @@ const initialState = {
   isCalendarAdvancing: false,
   isAdvancingWeek: false,
   isRespondingProposal: false,
+  isConvocating: false,
   isDirty: false,
   lastSaved: null,
   error: null,
@@ -34,6 +35,8 @@ const initialState = {
   endOfSeasonResult: null,
   showEndOfSeason: false,
   showPreseason: false,
+  convocationResult: null,
+  showConvocation: false,
 };
 
 function getErrorMessage(error, fallback) {
@@ -161,6 +164,61 @@ function buildTemporalUiState(temporalSummary) {
   };
 }
 
+async function buildResumeUiState(careerId, resumeContext) {
+  if (!careerId || !resumeContext?.active_view) {
+    return {
+      showEndOfSeason: false,
+      showPreseason: false,
+      endOfSeasonResult: null,
+      preseasonState: null,
+      preseasonWeeks: [],
+      playerProposals: [],
+    };
+  }
+
+  if (resumeContext.active_view === "end_of_season" && resumeContext.end_of_season_result) {
+    return {
+      showEndOfSeason: true,
+      showPreseason: false,
+      endOfSeasonResult: resumeContext.end_of_season_result,
+      preseasonState: null,
+      preseasonWeeks: [],
+      playerProposals: [],
+    };
+  }
+
+  if (resumeContext.active_view === "preseason") {
+    const [state, proposals] = await Promise.all([
+      invoke("get_preseason_state", { careerId }),
+      invoke("get_player_proposals", { careerId }).catch(() => []),
+    ]);
+    const news = await invoke("get_news", {
+      careerId,
+      season: state.season_number,
+      tipo: null,
+      limit: 400,
+    });
+
+    return {
+      showEndOfSeason: false,
+      showPreseason: true,
+      endOfSeasonResult: null,
+      preseasonState: state,
+      preseasonWeeks: buildWeeksFromNews(news),
+      playerProposals: proposals,
+    };
+  }
+
+  return {
+    showEndOfSeason: false,
+    showPreseason: false,
+    endOfSeasonResult: null,
+    preseasonState: null,
+    preseasonWeeks: [],
+    playerProposals: [],
+  };
+}
+
 async function loadTemporalSummary(careerId, season, playerTeam) {
   if (!careerId || !season?.id || !playerTeam?.categoria) {
     return null;
@@ -187,6 +245,7 @@ const useCareerStore = create((set, get) => ({
       isLoading: true,
       isSimulating: false,
       isCalendarAdvancing: false,
+      isConvocating: false,
       error: null,
       showResult: false,
       showRaceBriefing: false,
@@ -198,6 +257,8 @@ const useCareerStore = create((set, get) => ({
       preseasonState: null,
       preseasonWeeks: [],
       playerProposals: [],
+      showConvocation: false,
+      convocationResult: null,
     });
 
     try {
@@ -210,16 +271,32 @@ const useCareerStore = create((set, get) => ({
         console.error("Erro ao carregar resumo temporal:", error);
         return null;
       });
+      const resumeUiState = await buildResumeUiState(
+        data.career_id,
+        data.resume_context,
+      ).catch((error) => {
+        console.error("Erro ao restaurar contexto salvo da carreira:", error);
+        return {
+          showEndOfSeason: false,
+          showPreseason: false,
+          endOfSeasonResult: null,
+          preseasonState: null,
+          preseasonWeeks: [],
+          playerProposals: [],
+        };
+      });
+
+      // Se a carreira foi salva no meio da janela de convocação, restaura a tela.
+      const convocationResumeState =
+        data.season?.fase === "JanelaConvocacao"
+          ? { showConvocation: true, convocationResult: null }
+          : {};
 
       set({
         ...applyCareerData(data),
         ...buildTemporalUiState(temporalSummary),
-        showEndOfSeason: false,
-        showPreseason: false,
-        endOfSeasonResult: null,
-        preseasonState: null,
-        preseasonWeeks: [],
-        playerProposals: [],
+        ...resumeUiState,
+        ...convocationResumeState,
         isDirty: false,
       });
       return data;
@@ -269,13 +346,17 @@ const useCareerStore = create((set, get) => ({
   },
 
   dismissResult: async () => {
-    const { careerId, loadCareer } = get();
+    const { careerId, loadCareer, runConvocationWindow } = get();
     set({ showResult: false });
 
     if (!careerId) return;
 
     try {
-      await loadCareer(careerId);
+      const data = await loadCareer(careerId);
+      // Ao fechar o resultado da última corrida regular, aciona a janela de convocação.
+      if (data?.season?.fase === "BlocoRegular" && !data?.next_race) {
+        await runConvocationWindow();
+      }
     } catch (error) {
       console.error("Erro ao recarregar carreira:", error);
     }
@@ -332,6 +413,89 @@ const useCareerStore = create((set, get) => ({
     }
   },
 
+  // ── Bloco Especial ───────────────────────────────────────────────────────────
+
+  /**
+   * Abre a Janela de Convocação: transiciona BlocoRegular → JanelaConvocacao,
+   * executa a convocação e armazena o resultado para exibição.
+   */
+  runConvocationWindow: async () => {
+    const { careerId } = get();
+    if (!careerId) throw new Error("Carreira nao carregada.");
+
+    set({ isConvocating: true, error: null });
+
+    try {
+      await invoke("advance_to_convocation_window", { careerId });
+      const result = await invoke("run_convocation_window", { careerId });
+      set({
+        isConvocating: false,
+        convocationResult: result,
+        showConvocation: true,
+        isDirty: true,
+      });
+      return result;
+    } catch (error) {
+      set({
+        isConvocating: false,
+        error: getErrorMessage(error, "Erro ao processar convocacao."),
+      });
+      throw error;
+    }
+  },
+
+  /**
+   * Confirma o início do Bloco Especial: JanelaConvocacao → BlocoEspecial.
+   * Gera o calendário especial (semanas 41–50) e recarrega a carreira.
+   */
+  confirmSpecialBlock: async () => {
+    const { careerId, loadCareer } = get();
+    if (!careerId) throw new Error("Carreira nao carregada.");
+
+    set({ isConvocating: true, error: null });
+
+    try {
+      await invoke("iniciar_bloco_especial", { careerId });
+      set({ showConvocation: false, convocationResult: null });
+      const data = await loadCareer(careerId);
+      set({ isConvocating: false });
+      return data;
+    } catch (error) {
+      set({
+        isConvocating: false,
+        error: getErrorMessage(error, "Erro ao iniciar bloco especial."),
+      });
+      throw error;
+    }
+  },
+
+  /**
+   * Encerra o Bloco Especial: simula todas as corridas especiais pendentes,
+   * transiciona BlocoEspecial → PosEspecial e faz a desmontagem dos contratos.
+   * Após isso, advance_season fica disponível normalmente.
+   */
+  finishSpecialBlock: async () => {
+    const { careerId, loadCareer } = get();
+    if (!careerId) throw new Error("Carreira nao carregada.");
+
+    set({ isConvocating: true, error: null });
+
+    try {
+      await invoke("simulate_special_block", { careerId });
+      await invoke("encerrar_bloco_especial", { careerId });
+      await invoke("run_pos_especial", { careerId });
+      const data = await loadCareer(careerId);
+      set({ isConvocating: false });
+      return data;
+    } catch (error) {
+      set({
+        isConvocating: false,
+        error: getErrorMessage(error, "Erro ao encerrar bloco especial."),
+      });
+      throw error;
+    }
+  },
+
   enterPreseason: async () => {
     const { careerId } = get();
     if (!careerId) {
@@ -348,6 +512,11 @@ const useCareerStore = create((set, get) => ({
         season: state.season_number,
         tipo: null,
         limit: 400,
+      });
+      await invoke("set_career_resume_context", {
+        careerId,
+        activeView: "preseason",
+        endOfSeasonResult: null,
       });
 
       set({
@@ -516,7 +685,7 @@ const useCareerStore = create((set, get) => ({
       isCalendarAdvancing,
     } = get();
 
-    if (isCalendarAdvancing || !nextRace) {
+    if (isCalendarAdvancing) {
       return;
     }
 
@@ -534,8 +703,13 @@ const useCareerStore = create((set, get) => ({
       }
     }
 
+    // Se nÃ£o hÃ¡ prÃ³xima corrida do jogador E nada pendente na fase, nÃ£o avanÃ§a
+    if (!nextRace && (!effectiveTemporalSummary || effectiveTemporalSummary.pending_in_phase === 0)) {
+      return;
+    }
+
     const targetDate =
-      effectiveTemporalSummary?.next_event_display_date ?? nextRace.display_date ?? null;
+      effectiveTemporalSummary?.next_event_display_date ?? nextRace?.display_date ?? null;
     const startDate =
       calendarDisplayDate ??
       effectiveTemporalSummary?.current_display_date ??

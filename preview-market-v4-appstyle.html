@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>Mercado - V4 AppStyle (Base)</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            app: { bg: '#0E0E10', card: '#1C1C1E', 'card-hover': '#2C2C2E', header: '#000000' },
+            text: { primary: '#e6edf3', secondary: '#9ba3ae', muted: '#484f58' },
+            accent: { primary: '#58a6ff', hover: '#79b8ff' },
+            border: { DEFAULT: '#21262d' }
+          },
+          fontFamily: { sans: ['Segoe UI', 'system-ui', 'sans-serif'] }
+        }
+      }
+    }
+  </script>
+</head>
+<body class="bg-app-bg text-text-primary font-sans h-screen flex flex-col overflow-hidden">
+
+  <!-- HEADER -->
+  <header class="shrink-0 px-8 py-5 border-b border-border flex items-center justify-between gap-6 z-10 bg-app-header">
+    <div class="flex items-center gap-5">
+      <div>
+        <p class="text-[10px] uppercase tracking-[0.22em] text-accent-primary font-semibold">Pré-Temporada</p>
+        <h1 class="text-xl font-bold tracking-tight mt-0.5 text-text-primary">Mercado de Transferências</h1>
+      </div>
+      <div class="bg-app-card border border-border rounded-xl px-4 py-2.5 flex items-center gap-4">
+        <div>
+          <p class="text-[9px] uppercase tracking-widest text-text-muted">Semana</p>
+          <p class="text-lg font-bold leading-none mt-0.5 text-text-primary">4 <span class="text-xs font-normal text-text-muted">/ 8</span></p>
+        </div>
+      </div>
+    </div>
+    <button class="bg-accent-primary text-[#0E0E10] font-bold px-6 py-2.5 rounded-full text-sm hover:bg-accent-hover transition-all">
+      ⏭ Avançar Semana
+    </button>
+  </header>
+
+  <!-- FILTRO GLOBAL (No estilo de ABAS do App) -->
+  <div class="shrink-0 px-8 py-3 border-b border-border bg-app-header flex items-center">
+    <div class="flex items-center bg-app-card rounded-full p-1 border border-border">
+      <button class="px-5 py-1.5 rounded-full text-xs font-semibold text-accent-primary bg-accent-primary/10">Todas</button>
+      <button class="px-5 py-1.5 rounded-full text-xs font-semibold text-text-secondary hover:text-text-primary">Mazda</button>
+      <button class="px-5 py-1.5 rounded-full text-xs font-semibold text-text-secondary hover:text-text-primary">Toyota</button>
+      <button class="px-5 py-1.5 rounded-full text-xs font-semibold text-text-secondary hover:text-text-primary">BMW</button>
+      <button class="px-5 py-1.5 rounded-full text-xs font-semibold text-text-secondary hover:text-text-primary">GT4</button>
+      <button class="px-5 py-1.5 rounded-full text-xs font-semibold text-text-secondary hover:text-text-primary">GT3</button>
+    </div>
+  </div>
+
+  <!-- MAIN: 3 COLUNAS -->
+  <div class="flex flex-1 overflow-hidden">
+
+    <!-- ESQUERDA: Noticias -->
+    <aside class="w-[300px] shrink-0 border-r border-border overflow-y-auto p-5 bg-app-bg">
+      <p class="text-[10px] uppercase tracking-[0.2em] text-accent-primary font-bold mb-4">📰 Feed do Paddock</p>
+      
+      <div class="space-y-3">
+        <p class="text-[9px] font-bold text-text-muted uppercase tracking-widest pl-1">Semana 4</p>
+        
+        <div class="bg-app-card border border-border rounded-xl p-3 flex flex-col">
+           <p class="text-xs font-bold text-accent-primary mb-1">💼 Proposta Recebida</p>
+           <p class="text-xs text-text-secondary">Ferrari AF Corse formalizou uma oferta pela vaga N1 no GT3.</p>
+        </div>
+        
+        <div class="bg-app-card border border-border rounded-xl p-3 flex flex-col">
+           <p class="text-xs font-bold text-[#3fb950] mb-1">📝 Contrato</p>
+           <p class="text-xs text-text-secondary">Lewis Hamilton confirmado na SKY.</p>
+        </div>
+      </div>
+    </aside>
+
+    <!-- CENTRO: Grid -->
+    <main class="flex-1 overflow-y-auto p-6 bg-[#0E0E10]">
+      <div class="flex items-center justify-between mb-5">
+        <p class="text-[10px] uppercase tracking-[0.2em] text-text-secondary font-bold">Mapeamento das Equipes</p>
+        <div class="text-[10px] text-text-muted flex gap-4">
+          <span class="flex items-center gap-1"><span class="w-2 h-2 rounded bg-status-green"></span> Renovado/Garantido</span>
+          <span class="flex items-center gap-1"><span class="w-2 h-2 rounded border border-border border-dashed"></span> Vaga Vazia</span>
+        </div>
+      </div>
+
+      <!-- Teams -->
+      <div class="mb-4">
+         <h3 class="text-xs font-bold text-text-primary uppercase tracking-widest border-b border-border pb-2 mb-4">Mazda Cup</h3>
+         <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
+            
+            <div class="bg-app-card border border-border rounded-xl p-4">
+               <div class="flex justify-between items-start mb-4">
+                  <div class="flex items-center gap-3">
+                     <div class="w-8 h-8 rounded-lg bg-app-bg border border-border flex items-center justify-center font-bold text-[#C8102E]">GR</div>
+                     <div>
+                        <p class="font-bold text-sm text-text-primary">Ghost Racing</p>
+                     </div>
+                  </div>
+                  <span class="text-xs font-bold text-[#ffd700]">1º LUGAR</span>
+               </div>
+               <div class="space-y-1.5">
+                  <!-- Slit -->
+                  <div class="flex items-center gap-2 p-1.5 rounded-lg bg-app-bg border border-status-green/20">
+                     <div class="w-[3px] h-6 rounded-sm shrink-0 bg-[#C8102E]"></div>
+                     <div class="flex-1 min-w-0">
+                        <p class="text-[12px] font-semibold text-text-primary">Roberto Silva</p>
+                        <p class="text-[10px] text-text-secondary">Renovado</p>
+                     </div>
+                     <span class="text-[10px] font-bold text-text-muted mr-1">N1</span>
+                  </div>
+                  <!-- Empty -->
+                  <div class="flex items-center gap-2 p-1.5 rounded-lg bg-app-bg border border-border border-dashed">
+                     <div class="w-[3px] h-6 rounded-sm shrink-0 bg-border"></div>
+                     <div class="flex-1 min-w-0">
+                        <p class="text-[12px] text-text-muted italic">Vaga Aberta</p>
+                     </div>
+                     <span class="text-[10px] font-bold text-text-muted mr-1">N2</span>
+                  </div>
+               </div>
+            </div>
+
+            <div class="bg-app-card border border-border rounded-xl p-4">
+               <div class="flex justify-between items-start mb-4">
+                  <div class="flex items-center gap-3">
+                     <div class="w-8 h-8 rounded-lg bg-app-bg border border-border flex items-center justify-center font-bold text-[#cc0000]">NM</div>
+                     <div>
+                        <p class="font-bold text-sm text-text-primary">Neo Mazdas</p>
+                     </div>
+                  </div>
+                  <span class="text-xs font-bold text-text-secondary">2º LUGAR</span>
+               </div>
+               <div class="space-y-1.5">
+                  <div class="flex items-center gap-2 p-1.5 rounded-lg bg-app-bg border border-border border-dashed">
+                     <div class="w-[3px] h-6 rounded-sm shrink-0 bg-border"></div>
+                     <div class="flex-1 min-w-0"><p class="text-[12px] text-text-muted italic">Vaga Aberta</p></div>
+                     <span class="text-[10px] font-bold text-text-muted mr-1">N1</span>
+                  </div>
+                  <div class="flex items-center gap-2 p-1.5 rounded-lg bg-app-bg border border-border border-dashed">
+                     <div class="w-[3px] h-6 rounded-sm shrink-0 bg-border"></div>
+                     <div class="flex-1 min-w-0"><p class="text-[12px] text-text-muted italic">Vaga Aberta</p></div>
+                     <span class="text-[10px] font-bold text-text-muted mr-1">N2</span>
+                  </div>
+               </div>
+            </div>
+
+         </div>
+      </div>
+
+    </main>
+
+    <!-- DIREITA: Propostas -->
+    <aside class="w-[300px] shrink-0 border-l border-border overflow-y-auto p-5 bg-app-bg">
+      <div class="flex items-center gap-2 mb-5">
+         <div class="w-2 h-2 rounded-full bg-accent-primary animate-pulse"></div>
+         <p class="text-[10px] uppercase tracking-[0.2em] text-accent-primary font-bold">Decisões Pendentes</p>
+      </div>
+
+      <div class="space-y-4">
+         <div class="bg-app-card border border-accent-primary/50 rounded-xl p-4 relative overflow-hidden">
+            <div class="flex items-center gap-3 mb-4">
+               <div class="w-10 h-10 rounded-xl bg-app-bg border border-border flex items-center justify-center font-bold text-[#E73F47] text-sm">FE</div>
+               <div>
+                  <p class="text-sm font-bold text-text-primary">Ferrari AF Corse</p>
+                  <p class="text-[10px] text-accent-primary font-bold">Piloto N1 - GT3</p>
+               </div>
+            </div>
+            
+            <div class="grid grid-cols-2 gap-2 mb-4">
+               <div class="bg-app-bg rounded p-2">
+                  <p class="text-[9px] text-text-muted uppercase mb-0.5">Salário</p>
+                  <p class="text-xs font-bold text-[#3fb950]">$ 1.2M</p>
+               </div>
+               <div class="bg-app-bg rounded p-2">
+                  <p class="text-[9px] text-text-muted uppercase mb-0.5">Companheiro</p>
+                  <p class="text-xs font-bold text-text-primary">C. Leclerc</p>
+               </div>
+            </div>
+
+            <div class="flex gap-2">
+               <button class="flex-1 bg-accent-primary hover:bg-accent-hover text-[#0E0E10] text-xs font-bold py-2 rounded-lg transition-colors">Aceitar</button>
+               <button class="flex-1 bg-app-bg border border-border hover:border-text-secondary text-text-secondary text-xs font-bold py-2 rounded-lg transition-colors">Recusar</button>
+            </div>
+         </div>
+      </div>
+    </aside>
+
+  </div>
+
+</body>
+</html>

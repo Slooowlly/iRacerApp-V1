@@ -9,13 +9,14 @@ use crate::commands::career::{
     get_calendar_for_category_in_base_dir, get_driver_detail_in_base_dir, get_driver_in_base_dir,
     get_drivers_by_category_in_base_dir, get_news_in_base_dir, get_player_proposals_in_base_dir,
     get_preseason_state_in_base_dir, get_previous_champions_in_base_dir,
+    persist_resume_context_in_base_dir,
     get_race_results_by_category_in_base_dir, get_teams_standings_in_base_dir,
     list_saves_in_base_dir, load_career_in_base_dir, respond_to_proposal_in_base_dir,
     save_briefing_phrase_history_in_base_dir, PlayerProposalView, ProposalResponse,
 };
 use crate::commands::career_types::{
-    BriefingPhraseEntryInput, BriefingPhraseHistory, CareerData, CreateCareerInput,
-    CreateCareerResult, DriverDetail, DriverSummary, RaceSummary, SaveInfo, TeamStanding,
+    BriefingPhraseEntryInput, BriefingPhraseHistory, CareerData, CareerResumeView,
+    CreateCareerInput, CreateCareerResult, DriverDetail, DriverSummary, RaceSummary, SaveInfo, TeamStanding,
 };
 use crate::commands::race_history::{DriverRaceHistory, PreviousChampions};
 use crate::evolution::pipeline::EndOfSeasonResult;
@@ -72,6 +73,17 @@ pub async fn get_preseason_state(
 pub async fn finalize_preseason(app: AppHandle, career_id: String) -> Result<(), String> {
     let base_dir = app_data_dir(&app)?;
     finalize_preseason_in_base_dir(&base_dir, &career_id)
+}
+
+#[tauri::command]
+pub async fn set_career_resume_context(
+    app: AppHandle,
+    career_id: String,
+    active_view: CareerResumeView,
+    end_of_season_result: Option<EndOfSeasonResult>,
+) -> Result<(), String> {
+    let base_dir = app_data_dir(&app)?;
+    persist_resume_context_in_base_dir(&base_dir, &career_id, active_view, end_of_season_result)
 }
 
 #[tauri::command]

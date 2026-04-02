@@ -188,6 +188,7 @@ pub(crate) struct NewsTabContext {
     pub(crate) base_dir: PathBuf,
     pub(crate) career_id: String,
     pub(crate) db: Database,
+    pub(crate) active_season_id: String,
     pub(crate) career: crate::commands::career_types::CareerData,
     pub(crate) all_news: Vec<NewsItem>,
     pub(crate) newest_timestamp: i64,
@@ -434,12 +435,7 @@ fn load_context(base_dir: &Path, career_id: &str) -> Result<NewsTabContext, Stri
                 completed_round,
             ) {
                 for (driver_id, incident_source, is_dnf, segment) in facts {
-                    let incident_type = incident_source.as_deref().and_then(|s| match s {
-                        "Mechanical" => Some(IncidentFactType::Mechanical),
-                        "DriverError" => Some(IncidentFactType::DriverError),
-                        "PostCollision" => Some(IncidentFactType::Collision),
-                        _ => None,
-                    });
+                    let incident_type = incident_fact_type_from_source(incident_source.as_deref());
                     latest_incident_facts.insert(
                         format!("{}:{}", category.id, driver_id),
                         IncidentEditorialFacts { incident_type, is_dnf, segment },
@@ -475,6 +471,7 @@ fn load_context(base_dir: &Path, career_id: &str) -> Result<NewsTabContext, Stri
         base_dir: base_dir.to_path_buf(),
         career_id: career_id.to_string(),
         db,
+        active_season_id: active_season.id.clone(),
         career,
         all_news,
         newest_timestamp,
@@ -1161,10 +1158,8 @@ fn select_public_briefing_items(context: &NewsTabContext, items: Vec<NewsItem>) 
 }
 fn build_stories(context: &NewsTabContext, items: Vec<NewsItem>) -> Vec<NewsTabStory> {
     let mut result = Vec::with_capacity(items.len());
-    let completed_round = context.career.season.rodada_atual - 1;
 
     for item in items {
-        let is_current_round = item.rodada.map_or(true, |r| r == completed_round);
         let meta_label = build_meta_label(&item);
         let time_label = build_story_time_label(context, &item);
         let news_type = item.tipo.as_str().to_string();
@@ -1203,12 +1198,12 @@ fn build_stories(context: &NewsTabContext, items: Vec<NewsItem>) -> Vec<NewsTabS
 
         let titulo = item.titulo.clone();
         let texto = item.texto.clone();
-        let bundle = if item.tipo == NewsType::Corrida && is_current_round {
+        let bundle = if item.tipo == NewsType::Corrida {
             compose_race_story_bundle(&item, context)
         } else {
             Vec::new()
         };
-        let pilot_composed = if item.tipo == NewsType::Hierarquia && item.driver_id.is_some() && is_current_round {
+        let pilot_composed = if item.tipo == NewsType::Hierarquia && item.driver_id.is_some() {
             compose_pilot_story(&item, context)
         } else {
             None
@@ -1227,12 +1222,12 @@ fn build_stories(context: &NewsTabContext, items: Vec<NewsItem>) -> Vec<NewsTabS
         } else {
             None
         };
-        let injury_composed = if item.tipo == NewsType::Lesao && is_current_round {
+        let injury_composed = if item.tipo == NewsType::Lesao {
             compose_injury_story(&item, context)
         } else {
             None
         };
-        let incident_composed = if item.tipo == NewsType::Incidente && is_current_round {
+        let incident_composed = if item.tipo == NewsType::Incidente {
             compose_incident_story(&item, context)
         } else {
             None
@@ -1374,6 +1369,194 @@ struct ComposedRaceStory {
     body: String,
 }
 
+fn historical_standings_after_round(
+    context: &NewsTabContext,
+    season_number: i32,
+    category_id: &str,
+    round: i32,
+) -> Option<Vec<(String, i32, i32)>> {
+    let mut stmt = context
+        .db
+        .conn
+        .prepare(
+            "SELECT r.piloto_id,
+                    CAST(ROUND(SUM(r.pontos)) AS INTEGER) AS total_points,
+                    SUM(CASE WHEN r.posicao_final = 1 THEN 1 ELSE 0 END) AS wins,
+                    SUM(CASE WHEN r.posicao_final <= 3 THEN 1 ELSE 0 END) AS podiums
+             FROM race_results r
+             JOIN calendar c ON r.race_id = c.id
+             JOIN seasons s ON c.temporada_id = s.id
+             WHERE s.numero = ?1 AND c.categoria = ?2 AND c.rodada <= ?3
+             GROUP BY r.piloto_id
+             ORDER BY total_points DESC, wins DESC, podiums DESC, r.piloto_id ASC",
+        )
+        .ok()?;
+
+    let rows = stmt
+        .query_map(rusqlite::params![season_number, category_id, round], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i32>(1)?))
+        })
+        .ok()?;
+
+    let standings = rows
+        .filter_map(|row| row.ok())
+        .enumerate()
+        .map(|(index, (driver_id, points))| (driver_id, index as i32 + 1, points))
+        .collect::<Vec<_>>();
+
+    if standings.is_empty() {
+        None
+    } else {
+        Some(standings)
+    }
+}
+
+fn historical_round_results(
+    context: &NewsTabContext,
+    category_id: &str,
+    round: i32,
+) -> Option<Vec<(String, i32, i32, bool)>> {
+    race_history_queries::get_results_for_round(
+        &context.db.conn,
+        &context.active_season_id,
+        category_id,
+        round,
+    )
+    .ok()
+}
+
+fn incident_fact_type_from_source(source: Option<&str>) -> Option<IncidentFactType> {
+    match source {
+        Some("Mechanical") => Some(IncidentFactType::Mechanical),
+        Some("DriverError") => Some(IncidentFactType::DriverError),
+        Some("PostCollision") => Some(IncidentFactType::Collision),
+        _ => None,
+    }
+}
+
+fn historical_incident_facts_for_round(
+    context: &NewsTabContext,
+    category_id: &str,
+    driver_id: &str,
+    round: i32,
+) -> Option<IncidentEditorialFacts> {
+    race_history_queries::get_dnf_incident_facts_for_round(
+        &context.db.conn,
+        &context.active_season_id,
+        category_id,
+        round,
+    )
+    .ok()?
+    .into_iter()
+    .find(|(candidate_driver_id, _, _, _)| candidate_driver_id == driver_id)
+    .map(|(_, incident_source, is_dnf, segment)| IncidentEditorialFacts {
+        incident_type: incident_fact_type_from_source(incident_source.as_deref()),
+        is_dnf,
+        segment,
+    })
+}
+
+fn historical_driver_position_after_round(
+    context: &NewsTabContext,
+    season_number: i32,
+    category_id: &str,
+    driver_id: &str,
+    round: i32,
+) -> Option<i32> {
+    historical_standings_after_round(context, season_number, category_id, round)?
+        .into_iter()
+        .find(|(candidate_driver_id, _, _)| candidate_driver_id == driver_id)
+        .map(|(_, position, _)| position)
+}
+
+fn historical_win_streak_through_round(
+    context: &NewsTabContext,
+    pilot_id: &str,
+    season_number: i32,
+    category_id: &str,
+    round: i32,
+) -> Option<u32> {
+    let mut stmt = context
+        .db
+        .conn
+        .prepare(
+            "SELECT r.posicao_final
+             FROM race_results r
+             JOIN calendar c ON r.race_id = c.id
+             JOIN seasons s ON c.temporada_id = s.id
+             WHERE r.piloto_id = ?1
+               AND s.numero = ?2
+               AND c.categoria = ?3
+               AND c.rodada <= ?4
+             ORDER BY c.rodada DESC",
+        )
+        .ok()?;
+
+    let positions = stmt
+        .query_map(rusqlite::params![pilot_id, season_number, category_id, round], |row| {
+            row.get::<_, i32>(0)
+        })
+        .ok()?
+        .filter_map(|row| row.ok())
+        .collect::<Vec<_>>();
+
+    Some(positions.iter().take_while(|&&position| position == 1).count() as u32)
+}
+
+fn historical_season_wins_through_round(
+    context: &NewsTabContext,
+    pilot_id: &str,
+    season_number: i32,
+    category_id: &str,
+    round: i32,
+) -> Option<u32> {
+    context
+        .db
+        .conn
+        .query_row(
+            "SELECT COUNT(*)
+             FROM race_results r
+             JOIN calendar c ON r.race_id = c.id
+             JOIN seasons s ON c.temporada_id = s.id
+             WHERE r.piloto_id = ?1
+               AND s.numero = ?2
+               AND c.categoria = ?3
+               AND c.rodada <= ?4
+               AND r.posicao_final = 1",
+            rusqlite::params![pilot_id, season_number, category_id, round],
+            |row| row.get::<_, i32>(0),
+        )
+        .ok()
+        .and_then(|count| u32::try_from(count).ok())
+}
+
+fn historical_career_wins_through_round(
+    context: &NewsTabContext,
+    pilot_id: &str,
+    season_number: i32,
+    round: i32,
+) -> Option<u32> {
+    context
+        .db
+        .conn
+        .query_row(
+            "SELECT COUNT(*)
+             FROM race_results r
+             JOIN calendar c ON r.race_id = c.id
+             JOIN seasons s ON c.temporada_id = s.id
+             WHERE r.piloto_id = ?1
+               AND r.posicao_final = 1
+               AND (
+                 s.numero < ?2
+                 OR (s.numero = ?2 AND c.rodada <= ?3)
+               )",
+            rusqlite::params![pilot_id, season_number, round],
+            |row| row.get::<_, i32>(0),
+        )
+        .ok()
+        .and_then(|count| u32::try_from(count).ok())
+}
+
 /// Compõe uma ou duas stories editoriais para um NewsItem de Corrida.
 /// Retorna Vec vazio se não há composição possível (itens sem driver/categoria).
 fn compose_race_story_bundle(
@@ -1403,38 +1586,111 @@ fn compose_race_story_bundle(
         .as_ref()
         .zip(item.driver_id.as_ref())
         .map(|(cat, drv)| format!("{cat}:{drv}"));
+    let category_id = match item.categoria_id.as_deref() {
+        Some(category_id) => category_id,
+        None => return Vec::new(),
+    };
+    let driver_id_str = item.driver_id.as_deref().unwrap_or("");
+    let editorial_round = item.rodada.filter(|round| *round > 0);
+    let historical_standings = editorial_round.and_then(|round| {
+        historical_standings_after_round(context, item.temporada, category_id, round)
+    });
+    let historical_results =
+        editorial_round.and_then(|round| historical_round_results(context, category_id, round));
+    let historical_prev_leader = editorial_round.and_then(|round| {
+        race_history_queries::get_category_leader_before_round(
+            &context.db.conn,
+            &context.active_season_id,
+            category_id,
+            round,
+        )
+        .ok()
+        .flatten()
+    });
 
-    let win_streak = driver_key
-        .as_deref()
-        .and_then(|k| context.driver_win_streaks.get(k).copied())
+    let win_streak = editorial_round
+        .and_then(|round| {
+            historical_win_streak_through_round(
+                context,
+                driver_id_str,
+                item.temporada,
+                category_id,
+                round,
+            )
+        })
+        .or_else(|| {
+            driver_key
+                .as_deref()
+                .and_then(|k| context.driver_win_streaks.get(k).copied())
+        })
         .unwrap_or(0);
 
-    let driver_position = driver_key
-        .as_deref()
-        .and_then(|k| context.driver_positions.get(k).copied());
+    let driver_position = historical_standings
+        .as_ref()
+        .and_then(|standings| {
+            standings
+                .iter()
+                .find(|(driver_id, _, _)| driver_id == driver_id_str)
+                .map(|(_, position, _)| *position)
+        })
+        .or_else(|| {
+            driver_key
+                .as_deref()
+                .and_then(|k| context.driver_positions.get(k).copied())
+        });
+    let driver_points = historical_standings
+        .as_ref()
+        .and_then(|standings| {
+            standings
+                .iter()
+                .find(|(driver_id, _, _)| driver_id == driver_id_str)
+                .map(|(_, _, points)| *points)
+        })
+        .or_else(|| {
+            driver_key
+                .as_deref()
+                .and_then(|k| context.driver_points.get(k).copied())
+        });
 
     // Houve mudança de liderança se: o piloto é agora o líder (pos 1) E era diferente do
     // líder anterior. Sem líder anterior (primeira corrida) → não é mudança.
     let is_lead_change = driver_position == Some(1)
-        && item
-            .categoria_id
-            .as_ref()
-            .and_then(|cat| context.category_prev_leaders.get(cat))
-            != item.driver_id.as_ref()
-        && item
-            .categoria_id
-            .as_ref()
-            .and_then(|cat| context.category_prev_leaders.get(cat))
-            .is_some();
+        && historical_prev_leader.as_deref() != item.driver_id.as_deref()
+        && historical_prev_leader.is_some();
 
     // ── Dados do próprio piloto (disponíveis antes da detecção do trigger) ─────
-    let driver_id_str = item.driver_id.as_deref().unwrap_or("");
-    let driver_race_result: Option<(i32, i32, bool)> = driver_key
-        .as_deref()
-        .and_then(|k| context.latest_race_results.get(k).copied());
+    let driver_race_result: Option<(i32, i32, bool)> = historical_results
+        .as_ref()
+        .and_then(|results| {
+            results
+                .iter()
+                .find(|(driver_id, _, _, _)| driver_id == driver_id_str)
+                .map(|(_, grid, finish, dnf)| (*grid, *finish, *dnf))
+        })
+        .or_else(|| {
+            driver_key
+                .as_deref()
+                .and_then(|k| context.latest_race_results.get(k).copied())
+        });
     let driver_grid_pos = driver_race_result.map(|(g, _, _)| g).unwrap_or(0);
-    let season_wins = context.driver_season_wins.get(driver_id_str).copied().unwrap_or(0);
-    let career_wins = context.driver_career_wins.get(driver_id_str).copied().unwrap_or(0);
+    let season_wins = editorial_round
+        .and_then(|round| {
+            historical_season_wins_through_round(
+                context,
+                driver_id_str,
+                item.temporada,
+                category_id,
+                round,
+            )
+        })
+        .or_else(|| context.driver_season_wins.get(driver_id_str).copied())
+        .unwrap_or(0);
+    let career_wins = editorial_round
+        .and_then(|round| {
+            historical_career_wins_through_round(context, driver_id_str, item.temporada, round)
+        })
+        .or_else(|| context.driver_career_wins.get(driver_id_str).copied())
+        .unwrap_or(0);
 
     // Contexto parcial — inclui win flags para que detect_race_trigger possa promovê-los.
     // Apenas os campos de rival ficam de fora (dependem do trigger).
@@ -1442,9 +1698,7 @@ fn compose_race_story_bundle(
         driver_name: driver_name.clone(),
         category_name: category_name.clone(),
         driver_position,
-        driver_points: driver_key
-            .as_deref()
-            .and_then(|k| context.driver_points.get(k).copied()),
+        driver_points,
         win_streak,
         item_seed: item.timestamp as u64,
         is_lead_change,
@@ -1461,32 +1715,51 @@ fn compose_race_story_bundle(
 
     // Rival principal depende do trigger — capturado como String para reutilização.
     //   LeaderWon / LeadChanged / ViceWon têm rival definido; outros não.
-    let rival_id_opt: Option<String> = item.categoria_id.as_deref().and_then(|cat| {
-        match trigger {
-            RaceTrigger::LeaderWon => context
-                .category_standings_top
-                .get(cat)
-                .and_then(|v| v.get(1))
-                .cloned(),
-            RaceTrigger::LeadChanged => context.category_prev_leaders.get(cat).cloned(),
-            RaceTrigger::ViceWon => context
-                .category_standings_top
-                .get(cat)
-                .and_then(|v| v.get(0))
-                .cloned(),
-            _ => None,
-        }
-    });
+    let rival_id_opt: Option<String> = match trigger {
+        RaceTrigger::LeaderWon => historical_standings
+            .as_ref()
+            .and_then(|standings| standings.get(1))
+            .map(|(driver_id, _, _)| driver_id.clone())
+            .or_else(|| {
+                context
+                    .category_standings_top
+                    .get(category_id)
+                    .and_then(|standings| standings.get(1))
+                    .cloned()
+            }),
+        RaceTrigger::LeadChanged => historical_prev_leader
+            .clone()
+            .or_else(|| context.category_prev_leaders.get(category_id).cloned()),
+        RaceTrigger::ViceWon => historical_standings
+            .as_ref()
+            .and_then(|standings| standings.get(0))
+            .map(|(driver_id, _, _)| driver_id.clone())
+            .or_else(|| {
+                context
+                    .category_standings_top
+                    .get(category_id)
+                    .and_then(|standings| standings.get(0))
+                    .cloned()
+            }),
+        _ => None,
+    };
 
-    let rival_result: Option<(i32, i32, bool)> = rival_id_opt
-        .as_deref()
-        .zip(item.categoria_id.as_deref())
-        .and_then(|(rid, cat)| {
-            context
-                .latest_race_results
-                .get(&format!("{cat}:{rid}"))
-                .copied()
-        });
+    let rival_result: Option<(i32, i32, bool)> = rival_id_opt.as_deref().and_then(|rival_id| {
+        historical_results
+            .as_ref()
+            .and_then(|results| {
+                results
+                    .iter()
+                    .find(|(driver_id, _, _, _)| driver_id == rival_id)
+                    .map(|(_, grid, finish, dnf)| (*grid, *finish, *dnf))
+            })
+            .or_else(|| {
+                context
+                    .latest_race_results
+                    .get(&format!("{category_id}:{rival_id}"))
+                    .copied()
+            })
+    });
 
     let race_ctx = RaceStoryContext {
         rival_finish_position: rival_result.map(|(_, pos, _)| pos),
@@ -2482,6 +2755,7 @@ fn compose_pilot_headline(trigger: PilotTrigger, ctx: &PilotStoryContext) -> Str
 }
 
 fn compose_pilot_story(item: &NewsItem, context: &NewsTabContext) -> Option<ComposedRaceStory> {
+    let driver_id = item.driver_id.as_deref()?;
     let driver_name = item
         .driver_id
         .as_ref()
@@ -2502,34 +2776,90 @@ fn compose_pilot_story(item: &NewsItem, context: &NewsTabContext) -> Option<Comp
         .zip(item.driver_id.as_ref())
         .map(|(cat, drv)| format!("{cat}:{drv}"));
 
-    let driver_position = driver_key
-        .as_deref()
-        .and_then(|k| context.driver_positions.get(k).copied());
+    let category_id = item.categoria_id.as_deref();
+    let editorial_round = item.rodada.filter(|round| *round > 0);
+    let historical_standings = match (category_id, editorial_round) {
+        (Some(category_id), Some(round)) => {
+            historical_standings_after_round(context, item.temporada, category_id, round)
+        }
+        _ => None,
+    };
+    let historical_results = match (category_id, editorial_round) {
+        (Some(category_id), Some(round)) => historical_round_results(context, category_id, round),
+        _ => None,
+    };
 
-    let win_streak = driver_key
-        .as_deref()
-        .and_then(|k| context.driver_win_streaks.get(k).copied())
+    let driver_position = historical_standings
+        .as_ref()
+        .and_then(|standings| {
+            standings
+                .iter()
+                .find(|(candidate_driver_id, _, _)| candidate_driver_id == driver_id)
+                .map(|(_, position, _)| *position)
+        })
+        .or_else(|| {
+            driver_key
+                .as_deref()
+                .and_then(|k| context.driver_positions.get(k).copied())
+        });
+
+    let win_streak = match (category_id, editorial_round) {
+        (Some(category_id), Some(round)) => historical_win_streak_through_round(
+            context,
+            driver_id,
+            item.temporada,
+            category_id,
+            round,
+        ),
+        _ => None,
+    }
+        .or_else(|| {
+            driver_key
+                .as_deref()
+                .and_then(|k| context.driver_win_streaks.get(k).copied())
+        })
         .unwrap_or(0);
 
-    let last_race_result = driver_key
-        .as_deref()
-        .and_then(|k| context.latest_race_results.get(k).copied());
+    let last_race_result = historical_results
+        .as_ref()
+        .and_then(|results| {
+            results
+                .iter()
+                .find(|(candidate_driver_id, _, _, _)| candidate_driver_id == driver_id)
+                .map(|(_, grid, finish, dnf)| (*grid, *finish, *dnf))
+        })
+        .or_else(|| {
+            driver_key
+                .as_deref()
+                .and_then(|k| context.latest_race_results.get(k).copied())
+        });
     let last_race_finish = last_race_result.map(|(_, finish, _)| finish);
     let last_race_dnf = last_race_result.map(|(_, _, dnf)| dnf).unwrap_or(false);
 
-    let points_gap_to_leader = item.categoria_id.as_ref().and_then(|cat| {
-        let standings = context.category_standings_top.get(cat)?;
-        let leader_id = standings.first()?;
-        if item.driver_id.as_deref() == Some(leader_id.as_str()) {
-            return Some(0);
-        }
-        let leader_key = format!("{cat}:{leader_id}");
-        let leader_pts = context.driver_points.get(&leader_key).copied()?;
-        let driver_pts = driver_key
-            .as_deref()
-            .and_then(|k| context.driver_points.get(k).copied())?;
-        Some(leader_pts - driver_pts)
-    });
+    let points_gap_to_leader = historical_standings
+        .as_ref()
+        .and_then(|standings| {
+            let (_, _, leader_points) = standings.first()?;
+            let (_, _, driver_points) = standings
+                .iter()
+                .find(|(candidate_driver_id, _, _)| candidate_driver_id == driver_id)?;
+            Some(*leader_points - *driver_points)
+        })
+        .or_else(|| {
+            item.categoria_id.as_ref().and_then(|cat| {
+                let standings = context.category_standings_top.get(cat)?;
+                let leader_id = standings.first()?;
+                if item.driver_id.as_deref() == Some(leader_id.as_str()) {
+                    return Some(0);
+                }
+                let leader_key = format!("{cat}:{leader_id}");
+                let leader_pts = context.driver_points.get(&leader_key).copied()?;
+                let driver_pts = driver_key
+                    .as_deref()
+                    .and_then(|k| context.driver_points.get(k).copied())?;
+                Some(leader_pts - driver_pts)
+            })
+        });
 
     let ctx = PilotStoryContext {
         driver_name,
@@ -3012,6 +3342,7 @@ enum IncidentFactType {
     Collision,
 }
 
+#[derive(Clone)]
 /// Fatos catalogados do ultimo resultado, usados para enriquecer a leitura editorial.
 pub(crate) struct IncidentEditorialFacts {
     incident_type: Option<IncidentFactType>,
@@ -3953,17 +4284,39 @@ fn compose_injury_story(item: &NewsItem, context: &NewsTabContext) -> Option<Com
             .as_ref()
             .and_then(|id| context.category_names.get(id).cloned())
     });
-    let driver_position = item
-        .categoria_id
-        .as_ref()
-        .and_then(|cat| item.driver_id.as_ref().map(|drv| format!("{cat}:{drv}")))
-        .as_deref()
-        .and_then(|key| context.driver_positions.get(key).copied());
-    let next_race_label = item
-        .categoria_id
-        .as_ref()
-        .and_then(|cat| context.next_race_by_category.get(cat))
-        .map(|r| r.label.clone());
+    let driver_position = match (
+        item.categoria_id.as_deref(),
+        item.driver_id.as_deref(),
+        item.rodada,
+    ) {
+        (Some(category_id), Some(driver_id), Some(round)) if round >= 1 => {
+            historical_driver_position_after_round(
+                context,
+                item.temporada,
+                category_id,
+                driver_id,
+                round,
+            )
+            .or_else(|| context.driver_positions.get(&format!("{category_id}:{driver_id}")).copied())
+        }
+        (Some(category_id), Some(driver_id), _) => context
+            .driver_positions
+            .get(&format!("{category_id}:{driver_id}"))
+            .copied(),
+        _ => None,
+    };
+    let next_race_label = match (item.categoria_id.as_deref(), item.rodada) {
+        (Some(category_id), Some(round)) if round >= 1 => context
+            .race_labels
+            .get(&format!("{category_id}:{}", round + 1))
+            .cloned()
+            .or_else(|| context.next_race_by_category.get(category_id).map(|r| r.label.clone())),
+        (Some(category_id), _) => context
+            .next_race_by_category
+            .get(category_id)
+            .map(|r| r.label.clone()),
+        _ => None,
+    };
     let (is_ruled_out, is_returning, is_uncertain) = detect_injury_flags(&item.titulo, &item.texto);
 
     let ctx = InjuryStoryContext {
@@ -3996,6 +4349,19 @@ fn is_mechanical_incident(titulo: &str, texto: &str, has_secondary: bool) -> boo
     ["quebra", "quebrou", "quebrado", "falha mec", "problema mec", "pane", "motor"]
         .iter()
         .any(|kw| combined.contains(kw))
+}
+
+fn is_dnf_incident_text(titulo: &str, texto: &str) -> bool {
+    let combined = format!("{} {}", titulo.to_lowercase(), texto.to_lowercase());
+    [
+        "abandona",
+        "abandono",
+        "sem ver a bandeira quadriculada",
+        "fora da corrida",
+        "encerrou a prova",
+    ]
+    .iter()
+    .any(|kw| combined.contains(kw))
 }
 
 fn compose_incident_headline(trigger: IncidentTrigger, ctx: &IncidentStoryContext) -> String {
@@ -4043,14 +4409,22 @@ fn compose_incident_story(item: &NewsItem, context: &NewsTabContext) -> Option<C
             .as_ref()
             .and_then(|id| context.category_names.get(id).cloned())
     });
-    let facts_key = item
-        .categoria_id
-        .as_ref()
-        .and_then(|cat| item.driver_id.as_ref().map(|drv| format!("{cat}:{drv}")));
-    let facts = facts_key
-        .as_ref()
-        .and_then(|key| context.latest_incident_facts.get(key));
-    let is_mechanical = match facts.and_then(|f| f.incident_type) {
+    let completed_round = context.career.season.rodada_atual.saturating_sub(1);
+    let facts = match (
+        item.categoria_id.as_deref(),
+        item.driver_id.as_deref(),
+        item.rodada,
+    ) {
+        (Some(category_id), Some(driver_id), Some(round)) if round >= 1 && round != completed_round => {
+            historical_incident_facts_for_round(context, category_id, driver_id, round)
+        }
+        (Some(category_id), Some(driver_id), _) => context
+            .latest_incident_facts
+            .get(&format!("{category_id}:{driver_id}"))
+            .cloned(),
+        _ => None,
+    };
+    let is_mechanical = match facts.as_ref().and_then(|f| f.incident_type) {
         Some(IncidentFactType::Mechanical) => true,
         Some(_) => false,
         None => is_mechanical_incident(
@@ -4066,8 +4440,11 @@ fn compose_incident_story(item: &NewsItem, context: &NewsTabContext) -> Option<C
         category_name,
         is_mechanical,
         is_still_open: false,
-        is_dnf: facts.map(|f| f.is_dnf).unwrap_or(false),
-        segment: facts.and_then(|f| f.segment.clone()),
+        is_dnf: facts
+            .as_ref()
+            .map(|f| f.is_dnf)
+            .unwrap_or_else(|| is_dnf_incident_text(&item.titulo, &item.texto)),
+        segment: facts.as_ref().and_then(|f| f.segment.clone()),
         item_seed: item.timestamp as u64,
     };
 
@@ -6029,6 +6406,179 @@ mod tests {
     }
 
     #[test]
+    fn test_news_tab_snapshot_keeps_editorial_race_body_after_a_new_round() {
+        let base_dir = create_test_career_dir("news_story_persists_after_next_round");
+        seed_news_items(&base_dir, "career_001");
+        seed_round_results_for_news_history(&base_dir, "career_001");
+        advance_active_season_round(&base_dir, "career_001", 3);
+
+        let snapshot = get_news_tab_snapshot_in_base_dir(
+            &base_dir,
+            "career_001",
+            NewsTabSnapshotRequest {
+                scope_type: "category".to_string(),
+                scope_id: "mazda_rookie".to_string(),
+                scope_class: None,
+                primary_filter: Some("Corridas".to_string()),
+                context_type: Some("race".to_string()),
+                context_id: Some("R001".to_string()),
+            },
+        )
+        .expect("snapshot");
+
+        let story = snapshot
+            .stories
+            .iter()
+            .find(|story| story.id == "NT001")
+            .expect("round one race story");
+
+        assert_ne!(
+            story.body_text,
+            "Uma largada intensa abriu a temporada com disputa em toda a reta."
+        );
+        assert!(
+            story.body_text.contains("campeonato")
+                || story.body_text.contains("rodada")
+                || story.body_text.contains("temporada"),
+            "older race story should keep editorial body instead of raw summary"
+        );
+
+        let _ = fs::remove_dir_all(base_dir);
+    }
+
+    #[test]
+    fn test_news_tab_snapshot_keeps_editorial_incident_body_after_a_new_round() {
+        let base_dir = create_test_career_dir("news_incident_story_persists_after_next_round");
+        seed_news_items(&base_dir, "career_001");
+        seed_incident_results_for_news_history(&base_dir, "career_001");
+        advance_active_season_round(&base_dir, "career_001", 3);
+
+        let snapshot = get_news_tab_snapshot_in_base_dir(
+            &base_dir,
+            "career_001",
+            NewsTabSnapshotRequest {
+                scope_type: "category".to_string(),
+                scope_id: "mazda_rookie".to_string(),
+                scope_class: None,
+                primary_filter: Some("Pilotos".to_string()),
+                context_type: Some("driver".to_string()),
+                context_id: Some("P001".to_string()),
+            },
+        )
+        .expect("snapshot");
+
+        let story = snapshot
+            .stories
+            .iter()
+            .find(|story| story.id == "NT004")
+            .expect("round one incident story");
+
+        assert_ne!(
+            story.body_text,
+            "Uma quebra encerrou a prova de Thomas Baker ainda antes da metade da corrida."
+        );
+        assert!(
+            story.body_text.contains("abandono")
+                || story.body_text.contains("bandeira quadriculada"),
+            "older incident story should keep abandonment framing instead of raw summary"
+        );
+
+        let _ = fs::remove_dir_all(base_dir);
+    }
+
+    #[test]
+    fn test_news_tab_snapshot_keeps_editorial_injury_body_after_a_new_round() {
+        let base_dir = create_test_career_dir("news_injury_story_persists_after_next_round");
+        seed_news_items(&base_dir, "career_001");
+        seed_injury_news_item(&base_dir, "career_001");
+        advance_active_season_round(&base_dir, "career_001", 3);
+        let expected_next_race = get_calendar_for_category_in_base_dir(
+            &base_dir,
+            "career_001",
+            "mazda_rookie",
+        )
+        .expect("calendar")
+        .into_iter()
+        .find(|entry| entry.rodada == 2)
+        .map(|entry| entry.track_name)
+        .expect("round 2 race");
+
+        let snapshot = get_news_tab_snapshot_in_base_dir(
+            &base_dir,
+            "career_001",
+            NewsTabSnapshotRequest {
+                scope_type: "category".to_string(),
+                scope_id: "mazda_rookie".to_string(),
+                scope_class: None,
+                primary_filter: Some("Pilotos".to_string()),
+                context_type: Some("driver".to_string()),
+                context_id: Some("P001".to_string()),
+            },
+        )
+        .expect("snapshot");
+
+        let story = snapshot
+            .stories
+            .iter()
+            .find(|story| story.id == "NT005")
+            .expect("round one injury story");
+
+        assert_ne!(
+            story.body_text,
+            "Thomas Baker esta fora da proxima etapa apos lesao confirmada. Situacao sera reavaliada nos proximos dias."
+        );
+        assert!(
+            story.body_text.contains(&expected_next_race),
+            "older injury story should keep the original next-race target instead of drifting to the current one: {}",
+            story.body_text
+        );
+
+        let _ = fs::remove_dir_all(base_dir);
+    }
+
+    #[test]
+    fn test_news_tab_snapshot_keeps_editorial_pilot_body_after_a_new_round() {
+        let base_dir = create_test_career_dir("news_pilot_story_persists_after_next_round");
+        seed_news_items(&base_dir, "career_001");
+        seed_round_results_for_news_history(&base_dir, "career_001");
+        seed_pilot_news_item(&base_dir, "career_001");
+        advance_active_season_round(&base_dir, "career_001", 3);
+
+        let snapshot = get_news_tab_snapshot_in_base_dir(
+            &base_dir,
+            "career_001",
+            NewsTabSnapshotRequest {
+                scope_type: "category".to_string(),
+                scope_id: "mazda_rookie".to_string(),
+                scope_class: None,
+                primary_filter: Some("Pilotos".to_string()),
+                context_type: Some("driver".to_string()),
+                context_id: Some("P001".to_string()),
+            },
+        )
+        .expect("snapshot");
+
+        let story = snapshot
+            .stories
+            .iter()
+            .find(|story| story.id == "NT006")
+            .expect("round one pilot story");
+
+        assert_ne!(
+            story.body_text,
+            "Thomas Baker ganhou moral no paddock depois de um fim de semana muito forte."
+        );
+        assert!(
+            story.body_text.contains("campeonato")
+                || story.body_text.contains("temporada")
+                || story.body_text.contains("tabela"),
+            "older pilot story should keep editorial body instead of raw summary"
+        );
+
+        let _ = fs::remove_dir_all(base_dir);
+    }
+
+    #[test]
     fn test_news_tab_time_label_uses_preseason_week_and_derived_date() {
         let base_dir = create_test_career_dir("news_time_label_preseason");
         seed_news_items(&base_dir, "career_001");
@@ -6192,6 +6742,260 @@ mod tests {
             .id
     }
 
+    fn advance_active_season_round(base_dir: &std::path::Path, career_id: &str, round: i32) {
+        let config = AppConfig::load_or_default(base_dir);
+        let db_path = config.saves_dir().join(career_id).join("career.db");
+        let db = Database::open_existing(&db_path).expect("db");
+        let season = season_queries::get_active_season(&db.conn)
+            .expect("season query")
+            .expect("active season");
+        season_queries::update_season_rodada(&db.conn, &season.id, round)
+            .expect("update season round");
+    }
+
+    fn seed_round_results_for_news_history(base_dir: &std::path::Path, career_id: &str) {
+        let config = AppConfig::load_or_default(base_dir);
+        let db_path = config.saves_dir().join(career_id).join("career.db");
+        let db = Database::open_existing(&db_path).expect("db");
+        let player_team_id = current_team_id(base_dir, career_id);
+        let rival_team_id = team_queries::get_all_teams(&db.conn)
+            .expect("all teams")
+            .into_iter()
+            .find(|team| team.categoria == "mazda_rookie" && team.id != player_team_id)
+            .expect("rival team")
+            .id;
+        let calendar = get_calendar_for_category_in_base_dir(base_dir, career_id, "mazda_rookie")
+            .expect("calendar");
+        let round_1_id = calendar
+            .iter()
+            .find(|entry| entry.rodada == 1)
+            .map(|entry| entry.id.clone())
+            .expect("round 1 race");
+        let round_2_id = calendar
+            .iter()
+            .find(|entry| entry.rodada == 2)
+            .map(|entry| entry.id.clone())
+            .expect("round 2 race");
+
+        for (race_id, driver_id, team_id, grid_position, finish_position, points) in [
+            (&round_1_id, "P001", player_team_id.as_str(), 2, 1, 25.0_f64),
+            (&round_1_id, "P002", rival_team_id.as_str(), 1, 2, 18.0_f64),
+            (&round_2_id, "P001", player_team_id.as_str(), 6, 4, 12.0_f64),
+            (&round_2_id, "P002", rival_team_id.as_str(), 3, 1, 25.0_f64),
+        ] {
+            db.conn
+                .execute(
+                    "INSERT INTO race_results (
+                        race_id,
+                        piloto_id,
+                        equipe_id,
+                        posicao_largada,
+                        posicao_final,
+                        voltas_completadas,
+                        dnf,
+                        pontos,
+                        tempo_total,
+                        fastest_lap,
+                        dnf_reason,
+                        dnf_segment,
+                        incidents_count,
+                        gap_to_winner_ms,
+                        final_tire_wear,
+                        dnf_catalog_id,
+                        damage_origin_segment
+                    ) VALUES (?1, ?2, ?3, ?4, ?5, 20, 0, ?6, 0, 0, NULL, NULL, 0, 0, 0.0, NULL, NULL)",
+                    rusqlite::params![
+                        race_id,
+                        driver_id,
+                        team_id,
+                        grid_position,
+                        finish_position,
+                        points,
+                    ],
+                )
+                .expect("insert race result");
+        }
+    }
+
+    fn seed_incident_results_for_news_history(base_dir: &std::path::Path, career_id: &str) {
+        let config = AppConfig::load_or_default(base_dir);
+        let db_path = config.saves_dir().join(career_id).join("career.db");
+        let db = Database::open_existing(&db_path).expect("db");
+        let player_team_id = current_team_id(base_dir, career_id);
+        let rival_team_id = team_queries::get_all_teams(&db.conn)
+            .expect("all teams")
+            .into_iter()
+            .find(|team| team.categoria == "mazda_rookie" && team.id != player_team_id)
+            .expect("rival team")
+            .id;
+        let calendar = get_calendar_for_category_in_base_dir(base_dir, career_id, "mazda_rookie")
+            .expect("calendar");
+        let round_1_id = calendar
+            .iter()
+            .find(|entry| entry.rodada == 1)
+            .map(|entry| entry.id.clone())
+            .expect("round 1 race");
+        let round_2_id = calendar
+            .iter()
+            .find(|entry| entry.rodada == 2)
+            .map(|entry| entry.id.clone())
+            .expect("round 2 race");
+
+        for (
+            race_id,
+            driver_id,
+            team_id,
+            grid_position,
+            finish_position,
+            is_dnf,
+            points,
+            dnf_segment,
+            dnf_catalog_id,
+        ) in [
+            (
+                &round_1_id,
+                "P001",
+                player_team_id.as_str(),
+                4,
+                18,
+                true,
+                0.0_f64,
+                Some("Mid"),
+                Some("SB_S_MEC_01"),
+            ),
+            (
+                &round_1_id,
+                "P002",
+                rival_team_id.as_str(),
+                1,
+                1,
+                false,
+                25.0_f64,
+                None,
+                None,
+            ),
+            (
+                &round_2_id,
+                "P001",
+                player_team_id.as_str(),
+                3,
+                2,
+                false,
+                18.0_f64,
+                None,
+                None,
+            ),
+            (
+                &round_2_id,
+                "P002",
+                rival_team_id.as_str(),
+                2,
+                1,
+                false,
+                25.0_f64,
+                None,
+                None,
+            ),
+        ] {
+            db.conn
+                .execute(
+                    "INSERT INTO race_results (
+                        race_id,
+                        piloto_id,
+                        equipe_id,
+                        posicao_largada,
+                        posicao_final,
+                        voltas_completadas,
+                        dnf,
+                        pontos,
+                        tempo_total,
+                        fastest_lap,
+                        dnf_reason,
+                        dnf_segment,
+                        incidents_count,
+                        gap_to_winner_ms,
+                        final_tire_wear,
+                        dnf_catalog_id,
+                        damage_origin_segment
+                    ) VALUES (?1, ?2, ?3, ?4, ?5, 12, ?6, ?7, 0, 0, NULL, ?8, 1, 0, 0.0, ?9, ?8)",
+                    rusqlite::params![
+                        race_id,
+                        driver_id,
+                        team_id,
+                        grid_position,
+                        finish_position,
+                        if is_dnf { 1 } else { 0 },
+                        points,
+                        dnf_segment,
+                        dnf_catalog_id,
+                    ],
+                )
+                .expect("insert incident race result");
+        }
+    }
+
+    fn seed_injury_news_item(base_dir: &std::path::Path, career_id: &str) {
+        let config = AppConfig::load_or_default(base_dir);
+        let db_path = config.saves_dir().join(career_id).join("career.db");
+        let db = Database::open_existing(&db_path).expect("db");
+        let season = season_queries::get_active_season(&db.conn)
+            .expect("season query")
+            .expect("active season");
+
+        news_queries::insert_news_batch(
+            &db.conn,
+            &vec![NewsItem {
+                id: "NT005".to_string(),
+                tipo: NewsType::Lesao,
+                icone: "L".to_string(),
+                titulo: "desfalque confirmado".to_string(),
+                texto: "Thomas Baker esta fora da proxima etapa apos lesao confirmada. Situacao sera reavaliada nos proximos dias.".to_string(),
+                rodada: Some(1),
+                semana_pretemporada: None,
+                temporada: season.numero,
+                categoria_id: Some("mazda_rookie".to_string()),
+                categoria_nome: Some("Mazda MX-5 Rookie Cup".to_string()),
+                importancia: NewsImportance::Alta,
+                timestamp: 160,
+                driver_id: Some("P001".to_string()),
+                driver_id_secondary: None,
+                team_id: None,
+            }],
+        )
+        .expect("insert injury news");
+    }
+
+    fn seed_pilot_news_item(base_dir: &std::path::Path, career_id: &str) {
+        let config = AppConfig::load_or_default(base_dir);
+        let db_path = config.saves_dir().join(career_id).join("career.db");
+        let db = Database::open_existing(&db_path).expect("db");
+        let season = season_queries::get_active_season(&db.conn)
+            .expect("season query")
+            .expect("active season");
+
+        news_queries::insert_news_batch(
+            &db.conn,
+            &vec![NewsItem {
+                id: "NT006".to_string(),
+                tipo: NewsType::Hierarquia,
+                icone: "P".to_string(),
+                titulo: "Thomas Baker cresce internamente depois da abertura".to_string(),
+                texto: "Thomas Baker ganhou moral no paddock depois de um fim de semana muito forte.".to_string(),
+                rodada: Some(1),
+                semana_pretemporada: None,
+                temporada: season.numero,
+                categoria_id: Some("mazda_rookie".to_string()),
+                categoria_nome: Some("Mazda MX-5 Rookie Cup".to_string()),
+                importancia: NewsImportance::Alta,
+                timestamp: 170,
+                driver_id: Some("P001".to_string()),
+                driver_id_secondary: None,
+                team_id: None,
+            }],
+        )
+        .expect("insert pilot news");
+    }
+
     fn seed_news_items(base_dir: &std::path::Path, career_id: &str) {
         let config = AppConfig::load_or_default(base_dir);
         let db_path = config.saves_dir().join(career_id).join("career.db");
@@ -6253,7 +7057,7 @@ mod tests {
                     timestamp: 200,
                     driver_id: Some("P002".to_string()),
                     driver_id_secondary: None,
-                    team_id: Some(team_id),
+                    team_id: Some(team_id.clone()),
                 },
                 NewsItem {
                     id: "NT002B".to_string(),
@@ -6288,6 +7092,23 @@ mod tests {
                     driver_id: Some("P001".to_string()),
                     driver_id_secondary: Some("P002".to_string()),
                     team_id: None,
+                },
+                NewsItem {
+                    id: "NT004".to_string(),
+                    tipo: NewsType::Incidente,
+                    icone: "I".to_string(),
+                    titulo: "Thomas Baker abandona a corrida apos quebra".to_string(),
+                    texto: "Uma quebra encerrou a prova de Thomas Baker ainda antes da metade da corrida.".to_string(),
+                    rodada: Some(1),
+                    semana_pretemporada: None,
+                    temporada: season.numero,
+                    categoria_id: Some("mazda_rookie".to_string()),
+                    categoria_nome: Some("Mazda MX-5 Rookie Cup".to_string()),
+                    importancia: NewsImportance::Alta,
+                    timestamp: 150,
+                    driver_id: Some("P001".to_string()),
+                    driver_id_secondary: None,
+                    team_id: Some(team_id.clone()),
                 },
             ],
         )

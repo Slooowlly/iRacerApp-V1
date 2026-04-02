@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="pt-BR" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Alternativas para Evolução de Pilotos</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap');
+    
+    body {
+      font-family: 'Space Grotesk', sans-serif;
+      background-color: #0E0E10;
+      color: #E6EDF3;
+      padding: 40px;
+    }
+
+    .glass {
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+    }
+  </style>
+</head>
+<body class="max-w-4xl mx-auto">
+
+  <h1 class="text-3xl font-bold mb-2">Soluções para o "Excesso de Atributos"</h1>
+  <p class="text-[#9ba3ae] mb-12 border-b border-white/10 pb-6">
+    Como exibir um piloto que evoluiu 5 atributos ao mesmo tempo sem quebrar (ou sujar) a interface?
+  </p>
+
+  <div class="space-y-12">
+
+    <!-- OPÇÃO 1 -->
+    <section>
+      <div class="mb-4">
+        <h2 class="text-xl font-bold text-[#58a6ff]">Opção 1: Chips / Tags Arredondadas (Wrap)</h2>
+        <p class="text-sm text-[#9ba3ae]">Usa o conceito de etiquetas (badges) que quebram de linha organizadamente se ficarem compridas demais. O visual fica como habilidades equipadas.</p>
+      </div>
+
+      <div class="glass rounded-xl p-4">
+        <div class="bg-white/[0.02] border border-white/5 rounded-lg p-5 flex flex-col md:flex-row md:justify-between items-start md:items-center gap-4">
+          
+          <div class="flex items-center gap-4">
+            <div class="w-10 h-10 bg-green-500/10 rounded-full flex items-center justify-center text-green-400 font-bold border border-green-500/20">
+              +7
+            </div>
+            <div>
+              <p class="font-bold text-lg">Liam Lawson</p>
+              <p class="text-xs text-[#9ba3ae]">Desenvolvimento Absoluto</p>
+            </div>
+          </div>
+          
+          <div class="flex flex-wrap gap-2 justify-start md:justify-end max-w-sm">
+            <span class="bg-green-500/10 border border-green-500/20 text-green-400 text-xs px-2.5 py-1 rounded-md font-semibold">Racecraft +2</span>
+            <span class="bg-green-500/10 border border-green-500/20 text-green-400 text-xs px-2.5 py-1 rounded-md font-semibold">Quali +2</span>
+            <span class="bg-green-500/10 border border-green-500/20 text-green-400 text-xs px-2.5 py-1 rounded-md font-semibold">Pneus +1</span>
+            <span class="bg-green-500/10 border border-green-500/20 text-green-400 text-xs px-2.5 py-1 rounded-md font-semibold">Defesa +1</span>
+            <span class="bg-green-500/10 border border-green-500/20 text-green-400 text-xs px-2.5 py-1 rounded-md font-semibold">Exp +1</span>
+          </div>
+
+        </div>
+      </div>
+    </section>
+
+    <!-- OPÇÃO 2 -->
+    <section>
+      <div class="mb-4">
+        <h2 class="text-xl font-bold text-[#58a6ff]">Opção 2: Top 2 + Agrupador Simplificado</h2>
+        <p class="text-sm text-[#9ba3ae]">Mostra apenas as duas evoluções mais significativas e recolhe o restante num botão descritivo limpo (estilo Football Manager).</p>
+      </div>
+
+      <div class="glass rounded-xl p-4">
+        <div class="bg-white/[0.02] border border-white/5 rounded-lg p-5 flex flex-col md:flex-row md:justify-between items-start md:items-center gap-4 hover:bg-white/[0.04] transition cursor-pointer">
+          
+          <div class="flex items-center gap-4">
+            <div>
+              <p class="font-bold tracking-wide">Kimi Antonelli</p>
+            </div>
+          </div>
+
+          <div class="flex items-center gap-3">
+            <span class="text-sm font-semibold text-green-400">Quali +2</span>
+            <span class="text-white/20">•</span>
+            <span class="text-sm font-semibold text-green-400">Pneus +2</span>
+            <span class="text-white/20">•</span>
+            <span class="text-xs bg-white/5 text-[#9ba3ae] px-3 py-1 rounded-full">+ 3 outros</span>
+            <span class="text-xs text-[#58a6ff] ml-2 group-hover:underline">Ver detalhes</span>
+          </div>
+
+        </div>
+      </div>
+    </section>
+
+    <!-- OPÇÃO 3 -->
+    <section>
+      <div class="mb-4">
+        <h2 class="text-xl font-bold text-[#58a6ff]">Opção 3: Accordion (Expansível) com Rating Geral</h2>
+        <p class="text-sm text-[#9ba3ae]">Na visão enxuta, só diz se a evolução foi Altíssima, Alta ou Média. O jogador clica na seta para expandir e ler a "lista de supermercado" sem afetar a tela inteira.</p>
+      </div>
+
+      <div class="glass rounded-xl overflow-hidden" id="acc-demo">
+        <!-- O resumo visível -->
+        <div class="bg-white/[0.02] border-b border-white/5 p-4 flex justify-between items-center cursor-pointer hover:bg-white/[0.05] transition" onclick="document.getElementById('acc-content').classList.toggle('hidden')">
+          <div class="flex items-center gap-3">
+            <span class="text-green-400">✅</span>
+            <p class="font-bold">Oliver Bearman</p>
+          </div>
+          <div class="flex items-center gap-4">
+            <span class="text-xs font-bold uppercase tracking-widest text-green-400">Alta Evolução</span>
+            <span class="text-white/50 text-sm">▼</span>
+          </div>
+        </div>
+        
+        <!-- O detalhe rico escondido (só aparece ao clicar) -->
+        <div id="acc-content" class="hidden p-6 bg-[#0E0E10]/50">
+          <p class="text-xs text-[#9ba3ae] uppercase tracking-widest mb-3 font-semibold">Relatório de Desempenho Físico e Técnico</p>
+          <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+             <div class="bg-green-500/5 border border-green-500/20 rounded p-3 text-center">
+               <p class="text-xs text-[#9ba3ae] mb-1">Ritmo Quali</p>
+               <p class="text-lg font-bold text-green-400">+2</p>
+             </div>
+             <div class="bg-green-500/5 border border-green-500/20 rounded p-3 text-center">
+               <p class="text-xs text-[#9ba3ae] mb-1">Agressividade</p>
+               <p class="text-lg font-bold text-green-400">+1</p>
+             </div>
+             <div class="bg-green-500/5 border border-green-500/20 rounded p-3 text-center">
+               <p class="text-xs text-[#9ba3ae] mb-1">Mídia</p>
+               <p class="text-lg font-bold text-green-400">+1</p>
+             </div>
+             <div class="bg-green-500/5 border border-green-500/20 rounded p-3 text-center">
+               <p class="text-xs text-[#9ba3ae] mb-1">Experiência</p>
+               <p class="text-lg font-bold text-green-400">+1</p>
+             </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </div>
+
+</body>
+</html>

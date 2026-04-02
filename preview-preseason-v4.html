@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <title>Pré-Temporada V4 – Grid em Construção</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap');
+    body { font-family: 'Space Grotesk', sans-serif; background: #0A0F1C; color: #E6EDF3; height: 100vh; overflow: hidden; display: flex; flex-direction: column; }
+    .glass { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); }
+    .glass-strong { background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12); }
+    ::-webkit-scrollbar { width: 5px; }
+    ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 8px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+
+    /* Category selector pill */
+    .cat-pill { padding: 5px 14px; border-radius: 99px; font-size: 11px; font-weight: 600; cursor: pointer; border: 1px solid transparent; transition: all 0.18s; }
+    .cat-pill.active { background: rgba(88,166,255,0.12); border-color: rgba(88,166,255,0.3); color: #58a6ff; }
+    .cat-pill:not(.active) { color: rgba(255,255,255,0.35); }
+    .cat-pill:not(.active):hover { background: rgba(255,255,255,0.04); color: rgba(255,255,255,0.6); }
+
+    /* Grid slot */
+    .grid-slot { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 10px; transition: background 0.15s; }
+    .grid-slot:hover { background: rgba(255,255,255,0.03); }
+    .grid-slot .team-color { width: 3px; height: 28px; border-radius: 2px; flex-shrink: 0; }
+    .grid-slot.empty .driver-name { color: rgba(255,255,255,0.18); font-style: italic; }
+    .grid-slot.empty .team-color { background: rgba(255,255,255,0.06) !important; }
+
+    /* Proposal badge pulse */
+    @keyframes pulse-ring { 0% { transform: scale(0.9); opacity: 1; } 100% { transform: scale(1.6); opacity: 0; } }
+    .pulse-ring::before { content: ''; position: absolute; inset: -3px; border-radius: 99px; border: 2px solid #58a6ff; animation: pulse-ring 1.5s ease-out infinite; }
+
+    /* Modal */
+    .modal-bg { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.65); z-index: 50; backdrop-filter: blur(10px); justify-content: center; align-items: center; }
+    .modal-bg.open { display: flex; }
+    .modal-pager { display: none; }
+    .modal-pager.active { display: block; }
+  </style>
+</head>
+<body>
+
+  <!-- ═══════════════════════════════════════════════ HEADER ═══ -->
+  <header class="shrink-0 px-8 pt-6 pb-4 border-b border-white/5 flex items-center justify-between">
+    <div>
+      <p class="text-[10px] uppercase tracking-[0.24em] text-[#58a6ff] font-semibold">Pré-Temporada · Mercado</p>
+      <h1 class="text-2xl font-bold tracking-tight mt-1">Transferências 2026</h1>
+    </div>
+
+    <div class="flex items-center gap-3">
+
+      <!-- Alerta de proposta (badge compacto) -->
+      <button onclick="openModal()" class="relative flex items-center gap-2.5 bg-[#58a6ff]/10 border border-[#58a6ff]/25 text-[#58a6ff] text-sm font-semibold px-4 py-2.5 rounded-xl hover:bg-[#58a6ff]/15 transition-all">
+        <span class="relative pulse-ring flex items-center justify-center w-5 h-5">
+          <span class="text-[11px]">💼</span>
+        </span>
+        2 Propostas pendentes
+      </button>
+
+      <!-- Avançar semana -->
+      <button class="bg-[#58a6ff] text-[#0A0F1C] font-bold px-6 py-2.5 rounded-xl text-sm shadow-[0_0_20px_rgba(88,166,255,0.3)] hover:bg-blue-400 transition-all hover:scale-105">
+        ⏭ Avançar Semana
+      </button>
+    </div>
+  </header>
+
+  <!-- ═══════════════════════════════════════════ TWO COLUMNS ═══ -->
+  <div class="flex flex-1 overflow-hidden gap-0">
+
+    <!-- ── COLUNA ESQUERDA: Progresso + Grid em Construção ── -->
+    <aside class="w-[340px] shrink-0 border-r border-white/5 flex flex-col gap-4 p-5 overflow-y-auto">
+
+      <!-- Progresso da pré-temporada -->
+      <div class="glass-strong rounded-2xl p-5">
+        <div class="flex items-center justify-between mb-4">
+          <p class="text-[10px] uppercase tracking-[0.2em] text-white/35 font-semibold">Progresso</p>
+          <span class="text-[10px] text-[#58a6ff] bg-[#58a6ff]/10 px-2 py-1 rounded-full font-bold">Semana 4 / 8</span>
+        </div>
+        <div class="h-1.5 rounded-full bg-white/5 overflow-hidden">
+          <div class="h-full rounded-full bg-[#58a6ff] transition-all duration-700" style="width:50%"></div>
+        </div>
+        <div class="flex justify-between text-[10px] text-white/25 mt-2">
+          <span>Fase: Mercado Livre</span>
+          <span>Próx: Hierarquia</span>
+        </div>
+      </div>
+
+      <!-- GRID EM CONSTRUÇÃO -->
+      <div class="glass rounded-2xl p-4 flex-1 flex flex-col min-h-0">
+        <div class="flex items-center justify-between mb-3">
+          <p class="text-[11px] uppercase tracking-[0.18em] text-white/40 font-semibold">🏎️ Grid em Construção</p>
+        </div>
+
+        <!-- Seletor de categoria -->
+        <div class="flex flex-wrap gap-1.5 mb-4">
+          <button class="cat-pill active" onclick="selectCat(this,'gt3')">GT3</button>
+          <button class="cat-pill" onclick="selectCat(this,'gt4')">GT4</button>
+          <button class="cat-pill" onclick="selectCat(this,'endurance')">Endurance</button>
+          <button class="cat-pill" onclick="selectCat(this,'bmw')">BMW M2</button>
+        </div>
+
+        <!-- GT3 -->
+        <div id="grid-gt3" class="grid-cat flex-1 overflow-y-auto space-y-0.5">
+          <div class="grid-slot">
+            <div class="team-color" style="background:#E73F47"></div>
+            <div class="flex-1 min-w-0">
+              <p class="text-sm font-semibold truncate">Charles Leclerc</p>
+              <p class="text-[10px] text-white/35">Ferrari AF Corse · N1</p>
+            </div>
+            <span class="text-[9px] text-green-400 bg-green-400/10 px-1.5 py-0.5 rounded font-bold">✓</span>
+          </div>
+          <div class="grid-slot">
+            <div class="team-color" style="background:#E73F47"></div>
+            <div class="flex-1 min-w-0">
+              <p class="text-sm font-semibold truncate">Carlos Sainz Jr.</p>
+              <p class="text-[10px] text-white/35">Ferrari AF Corse · N2</p>
+            </div>
+            <span class="text-[9px] text-green-400 bg-green-400/10 px-1.5 py-0.5 rounded font-bold">✓</span>
+          </div>
+          <div class="grid-slot">
+            <div class="team-color" style="background:#00D2BE"></div>
+            <div class="flex-1 min-w-0">
+              <p class="text-sm font-semibold truncate">George Russell</p>
+              <p class="text-[10px] text-white/35">Mercedes-AMG · N1</p>
+            </div>
+            <span class="text-[9px] text-green-400 bg-green-400/10 px-1.5 py-0.5 rounded font-bold">✓</span>
+          </div>
+          <div class="grid-slot">
+            <div class="team-color" style="background:#00D2BE"></div>
+            <div class="flex-1 min-w-0">
+              <p class="text-sm font-semibold truncate">Kimi Antonelli</p>
+              <p class="text-[10px] text-white/35">Mercedes-AMG · N2</p>
+            </div>
+            <span class="text-[9px] text-green-400 bg-green-400/10 px-1.5 py-0.5 rounded font-bold">✓</span>
+          </div>
+          <div class="grid-slot">
+            <div class="team-color" style="background:#FF8000"></div>
+            <div class="flex-1 min-w-0">
+              <p class="text-sm font-semibold truncate">Lando Norris</p>
+              <p class="text-[10px] text-white/35">McLaren GT · N1</p>
+            </div>
+            <span class="text-[9px] text-green-400 bg-green-400/10 px-1.5 py-0.5 rounded font-bold">✓</span>
+          </div>
+          <!-- Vagas abertas -->
+          <div class="grid-slot empty">
+            <div class="team-color" style="background:#FF8000"></div>
+            <div class="flex-1 min-w-0">
+              <p class="text-sm driver-name">Vaga em aberto</p>
+              <p class="text-[10px] text-white/25">McLaren GT · N2</p>
+            </div>
+            <span class="text-[9px] text-[#58a6ff] bg-[#58a6ff]/10 px-1.5 py-0.5 rounded font-bold">💼</span>
+          </div>
+          <div class="grid-slot empty">
+            <div class="team-color" style="background:#3671C6"></div>
+            <div class="flex-1 min-w-0">
+              <p class="text-sm driver-name">Vaga em aberto</p>
+              <p class="text-[10px] text-white/25">Alpine GT · N1</p>
+            </div>
+            <span class="text-[9px] text-white/20 bg-white/5 px-1.5 py-0.5 rounded font-bold">?</span>
+          </div>
+          <div class="grid-slot empty">
+            <div class="team-color" style="background:#3671C6"></div>
+            <div class="flex-1 min-w-0">
+              <p class="text-sm driver-name">Vaga em aberto</p>
+              <p class="text-[10px] text-white/25">Alpine GT · N2</p>
+            </div>
+            <span class="text-[9px] text-white/20 bg-white/5 px-1.5 py-0.5 rounded font-bold">?</span>
+          </div>
+          <!-- Contador -->
+          <div class="pt-3 border-t border-white/5 mt-2 flex items-center justify-between px-1">
+            <span class="text-[10px] text-white/25">Total</span>
+            <span class="text-[10px] font-bold"><span class="text-green-400">5</span><span class="text-white/25"> / 12 pilotos confirmados</span></span>
+          </div>
+        </div>
+
+        <!-- GT4 (oculto por padrão) -->
+        <div id="grid-gt4" class="grid-cat flex-1 overflow-y-auto space-y-0.5 hidden">
+          <div class="grid-slot">
+            <div class="team-color" style="background:#9B0000"></div>
+            <div class="flex-1 min-w-0"><p class="text-sm font-semibold">Oliver Bearman</p><p class="text-[10px] text-white/35">Prema GT4 · N1</p></div>
+            <span class="text-[9px] text-green-400 bg-green-400/10 px-1.5 py-0.5 rounded font-bold">✓</span>
+          </div>
+          <div class="grid-slot empty">
+            <div class="team-color" style="background:#9B0000"></div>
+            <div class="flex-1 min-w-0"><p class="text-sm driver-name">Vaga em aberto</p><p class="text-[10px] text-white/25">Prema GT4 · N2</p></div>
+            <span class="text-[9px] text-white/20 bg-white/5 px-1.5 py-0.5 rounded font-bold">?</span>
+          </div>
+          <div class="pt-3 border-t border-white/5 mt-2 flex items-center justify-between px-1">
+            <span class="text-[10px] text-white/25">Total</span>
+            <span class="text-[10px] font-bold"><span class="text-green-400">1</span><span class="text-white/25"> / 10 pilotos confirmados</span></span>
+          </div>
+        </div>
+
+        <!-- Endurance (oculto) -->
+        <div id="grid-endurance" class="grid-cat flex-1 overflow-y-auto space-y-0.5 hidden">
+          <div class="grid-slot">
+            <div class="team-color" style="background:#3671C6"></div>
+            <div class="flex-1 min-w-0"><p class="text-sm font-semibold">Max Verstappen</p><p class="text-[10px] text-white/35">Red Bull Racing · N1</p></div>
+            <span class="text-[9px] text-green-400 bg-green-400/10 px-1.5 py-0.5 rounded font-bold">✓</span>
+          </div>
+          <div class="grid-slot">
+            <div class="team-color" style="background:#3671C6"></div>
+            <div class="flex-1 min-w-0"><p class="text-sm font-semibold">Sergio Pérez</p><p class="text-[10px] text-white/35">Red Bull Racing · N2</p></div>
+            <span class="text-[9px] text-green-400 bg-green-400/10 px-1.5 py-0.5 rounded font-bold">✓</span>
+          </div>
+          <div class="grid-slot empty">
+            <div class="team-color" style="background:#006EB1"></div>
+            <div class="flex-1 min-w-0"><p class="text-sm driver-name">Vaga em aberto</p><p class="text-[10px] text-white/25">SKY Motorsport · N1</p></div>
+            <span class="text-[9px] text-white/20 bg-white/5 px-1.5 py-0.5 rounded font-bold">?</span>
+          </div>
+          <div class="pt-3 border-t border-white/5 mt-2 flex items-center justify-between px-1">
+            <span class="text-[10px] text-white/25">Total</span>
+            <span class="text-[10px] font-bold"><span class="text-green-400">2</span><span class="text-white/25"> / 8 pilotos confirmados</span></span>
+          </div>
+        </div>
+
+        <!-- BMW M2 (oculto) -->
+        <div id="grid-bmw" class="grid-cat flex-1 overflow-y-auto space-y-0.5 hidden">
+          <div class="grid-slot">
+            <div class="team-color" style="background:#6B4FBB"></div>
+            <div class="flex-1 min-w-0"><p class="text-sm font-semibold">Theo Pourchaire</p><p class="text-[10px] text-white/35">ART Grand Prix · N1</p></div>
+            <span class="text-[9px] text-green-400 bg-green-400/10 px-1.5 py-0.5 rounded font-bold">✓</span>
+          </div>
+          <div class="pt-3 border-t border-white/5 mt-2 flex items-center justify-between px-1">
+            <span class="text-[10px] text-white/25">Total</span>
+            <span class="text-[10px] font-bold"><span class="text-green-400">1</span><span class="text-white/25"> / 16 pilotos confirmados</span></span>
+          </div>
+        </div>
+
+      </div>
+
+    </aside>
+
+    <!-- ── COLUNA DIREITA: Feed de Notícias ── -->
+    <main class="flex-1 overflow-y-auto p-6 pl-7">
+      <div class="max-w-2xl">
+        <h2 class="text-[11px] font-bold uppercase tracking-[0.2em] text-white/30 mb-5">📰 Notícias do Mercado</h2>
+
+        <div class="space-y-6">
+
+          <div>
+            <div class="flex items-center gap-3 mb-3">
+              <div class="h-px flex-1 bg-white/5"></div>
+              <span class="text-[10px] uppercase tracking-widest text-white/20 font-semibold">Semana 4</span>
+              <div class="h-px flex-1 bg-white/5"></div>
+            </div>
+            <div class="space-y-2">
+              <div class="glass rounded-xl px-4 py-3 flex items-start gap-3 hover:bg-white/[0.04] transition cursor-pointer" onclick="openModal()">
+                <span class="text-base mt-0.5">💼</span>
+                <div class="flex-1 min-w-0">
+                  <p class="text-sm font-medium text-[#58a6ff]">Ferrari AF Corse enviou uma proposta para você</p>
+                  <p class="text-xs text-white/35 mt-1">Proposta N1 para GT3 Championship. R$ 1.2M/ano · 2 anos.</p>
+                </div>
+                <span class="text-[10px] text-[#58a6ff]/60 shrink-0 mt-1">ver →</span>
+              </div>
+              <div class="glass rounded-xl px-4 py-3 flex items-start gap-3">
+                <span class="text-base mt-0.5">📋</span>
+                <div>
+                  <p class="text-sm font-medium">Lewis Hamilton assinou com SKY Motorsport</p>
+                  <p class="text-xs text-white/35 mt-1">Contrato de 2 anos no Endurance Championship.</p>
+                </div>
+              </div>
+              <div class="glass rounded-xl px-4 py-3 flex items-start gap-3">
+                <span class="text-base mt-0.5">❌</span>
+                <div>
+                  <p class="text-sm font-medium text-red-400">Valtteri Bottas recusou extensão com Alfa Romeo</p>
+                  <p class="text-xs text-white/35 mt-1">Piloto permanece livre no mercado para 2026.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <div class="flex items-center gap-3 mb-3">
+              <div class="h-px flex-1 bg-white/5"></div>
+              <span class="text-[10px] uppercase tracking-widest text-white/20 font-semibold">Semana 3</span>
+              <div class="h-px flex-1 bg-white/5"></div>
+            </div>
+            <div class="space-y-2">
+              <div class="glass rounded-xl px-4 py-3 flex items-start gap-3">
+                <span class="text-base mt-0.5">🎓</span>
+                <div>
+                  <p class="text-sm font-medium text-[#d2a8ff]">Theo Pourchaire assinou primeiro contrato profissional</p>
+                  <p class="text-xs text-white/35 mt-1">Rookie de 21 anos começa na BMW M2 Cup.</p>
+                </div>
+              </div>
+              <div class="glass rounded-xl px-4 py-3 flex items-start gap-3">
+                <span class="text-base mt-0.5">⬆️</span>
+                <div>
+                  <p class="text-sm font-medium text-green-400">Prema Racing confirmada no Endurance Championship 2026</p>
+                </div>
+              </div>
+              <div class="glass rounded-xl px-4 py-3 flex items-start gap-3 hover:bg-white/[0.04] transition cursor-pointer" onclick="openModal()">
+                <span class="text-base mt-0.5">💼</span>
+                <div class="flex-1">
+                  <p class="text-sm font-medium text-[#58a6ff]">McLaren GT enviou proposta para você</p>
+                  <p class="text-xs text-white/35 mt-1">Proposta N2 para GT4 · R$ 680K/ano.</p>
+                </div>
+                <span class="text-[10px] text-[#58a6ff]/60 shrink-0 mt-1">ver →</span>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <div class="flex items-center gap-3 mb-3">
+              <div class="h-px flex-1 bg-white/5"></div>
+              <span class="text-[10px] uppercase tracking-widest text-white/20 font-semibold">Semana 2</span>
+              <div class="h-px flex-1 bg-white/5"></div>
+            </div>
+            <div class="space-y-2">
+              <div class="glass rounded-xl px-4 py-3 flex items-start gap-3 opacity-60">
+                <span class="text-base mt-0.5">📋</span>
+                <div><p class="text-sm font-medium">Max Verstappen renova com Red Bull Racing — 3 anos</p></div>
+              </div>
+              <div class="glass rounded-xl px-4 py-3 flex items-start gap-3 opacity-60">
+                <span class="text-base mt-0.5">📋</span>
+                <div><p class="text-sm font-medium">Carlos Sainz Jr. assina com Ferrari AF Corse</p></div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- ══════════════════════════════ MODAL: PROPOSTAS ══════════════════ -->
+  <div id="modal-propostas" class="modal-bg" onclick="if(event.target===this)closeModal()">
+    <div class="max-w-2xl w-full mx-4 relative">
+
+      <!-- Botão fechar -->
+      <button class="absolute -top-10 right-0 text-white/40 hover:text-white text-sm font-semibold flex items-center gap-1.5 transition" onclick="closeModal()">
+        Fechar ✕
+      </button>
+
+      <div class="bg-[#0D1420] border border-white/10 rounded-3xl overflow-hidden shadow-[0_30px_80px_rgba(0,0,0,0.5)]">
+
+        <!-- Modal Header -->
+        <div class="px-7 pt-6 pb-4 border-b border-white/5 flex items-center justify-between">
+          <div>
+            <p class="text-[10px] uppercase tracking-widest text-white/30 mb-1">Propostas</p>
+            <h2 class="text-xl font-bold">Escolha seu próximo time</h2>
+          </div>
+          <div class="flex items-center gap-2">
+            <button onclick="prevProposal()" class="w-8 h-8 rounded-lg bg-white/5 hover:bg-white/10 transition flex items-center justify-center text-sm text-white/50">←</button>
+            <span class="text-xs text-white/30 font-semibold" id="proposal-counter">1 / 2</span>
+            <button onclick="nextProposal()" class="w-8 h-8 rounded-lg bg-white/5 hover:bg-white/10 transition flex items-center justify-center text-sm text-white/50">→</button>
+          </div>
+        </div>
+
+        <!-- Proposta 1 -->
+        <div id="proposal-0" class="modal-pager active p-7">
+          <div class="flex items-center gap-4 mb-6">
+            <div class="w-14 h-14 rounded-2xl flex items-center justify-center text-2xl font-bold shadow-inner" style="background:#E73F47">F</div>
+            <div>
+              <h3 class="text-xl font-bold">Ferrari AF Corse</h3>
+              <p class="text-sm text-white/40">GT3 Championship</p>
+            </div>
+            <span class="ml-auto bg-[#ffd700]/15 text-[#ffd700] text-[10px] font-bold px-2.5 py-1.5 rounded-full uppercase tracking-wide">⭐ Piloto N1</span>
+          </div>
+
+          <div class="grid grid-cols-2 gap-3 mb-6">
+            <div class="glass rounded-xl p-4">
+              <p class="text-[10px] uppercase tracking-widest text-white/30 mb-2">Salário/ano</p>
+              <p class="text-2xl font-bold text-green-400">R$ 1.2M</p>
+            </div>
+            <div class="glass rounded-xl p-4">
+              <p class="text-[10px] uppercase tracking-widest text-white/30 mb-2">Duração</p>
+              <p class="text-2xl font-bold">2 anos</p>
+            </div>
+            <div class="glass rounded-xl p-4">
+              <p class="text-[10px] uppercase tracking-widest text-white/30 mb-2">Companheiro</p>
+              <p class="text-sm font-semibold">Charles Leclerc</p>
+              <p class="text-xs text-white/30">Piloto N2</p>
+            </div>
+            <div class="glass rounded-xl p-4">
+              <p class="text-[10px] uppercase tracking-widest text-white/30 mb-2">Performance Carro</p>
+              <div class="mt-2 h-2 rounded-full bg-white/5 overflow-hidden">
+                <div class="h-full rounded-full" style="width:87%;background:#E73F47"></div>
+              </div>
+              <span class="text-xs text-white/40 mt-1 block">87 / 100</span>
+            </div>
+          </div>
+
+          <div class="flex gap-3">
+            <button class="flex-1 bg-[#58a6ff] text-[#0A0F1C] font-bold py-3.5 rounded-2xl text-sm hover:bg-blue-400 transition hover:scale-105">✅ Aceitar Proposta</button>
+            <button class="flex-1 bg-white/[0.04] border border-white/8 text-white/50 font-bold py-3.5 rounded-2xl text-sm hover:bg-white/[0.08] transition">❌ Recusar</button>
+          </div>
+        </div>
+
+        <!-- Proposta 2 -->
+        <div id="proposal-1" class="modal-pager p-7">
+          <div class="flex items-center gap-4 mb-6">
+            <div class="w-14 h-14 rounded-2xl flex items-center justify-center text-2xl font-bold shadow-inner" style="background:#FF8000">M</div>
+            <div>
+              <h3 class="text-xl font-bold">McLaren GT</h3>
+              <p class="text-sm text-white/40">GT4 Series</p>
+            </div>
+            <span class="ml-auto bg-white/8 text-white/40 text-[10px] font-bold px-2.5 py-1.5 rounded-full uppercase tracking-wide">Piloto N2</span>
+          </div>
+
+          <div class="grid grid-cols-2 gap-3 mb-6">
+            <div class="glass rounded-xl p-4">
+              <p class="text-[10px] uppercase tracking-widest text-white/30 mb-2">Salário/ano</p>
+              <p class="text-2xl font-bold">R$ 680K</p>
+            </div>
+            <div class="glass rounded-xl p-4">
+              <p class="text-[10px] uppercase tracking-widest text-white/30 mb-2">Duração</p>
+              <p class="text-2xl font-bold">1 ano</p>
+            </div>
+            <div class="glass rounded-xl p-4">
+              <p class="text-[10px] uppercase tracking-widest text-white/30 mb-2">Companheiro</p>
+              <p class="text-sm font-semibold text-white/30 italic">Vaga em aberto</p>
+            </div>
+            <div class="glass rounded-xl p-4">
+              <p class="text-[10px] uppercase tracking-widest text-white/30 mb-2">Performance Carro</p>
+              <div class="mt-2 h-2 rounded-full bg-white/5 overflow-hidden">
+                <div class="h-full rounded-full" style="width:72%;background:#FF8000"></div>
+              </div>
+              <span class="text-xs text-white/40 mt-1 block">72 / 100</span>
+            </div>
+          </div>
+
+          <div class="flex gap-3">
+            <button class="flex-1 bg-[#58a6ff] text-[#0A0F1C] font-bold py-3.5 rounded-2xl text-sm hover:bg-blue-400 transition hover:scale-105">✅ Aceitar Proposta</button>
+            <button class="flex-1 bg-white/[0.04] border border-white/8 text-white/50 font-bold py-3.5 rounded-2xl text-sm hover:bg-white/[0.08] transition">❌ Recusar</button>
+          </div>
+        </div>
+
+        <!-- Pager dots -->
+        <div class="flex justify-center gap-2 pb-5">
+          <div id="dot-0" class="w-2 h-2 rounded-full bg-[#58a6ff] transition-all"></div>
+          <div id="dot-1" class="w-2 h-2 rounded-full bg-white/15 transition-all"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ─── Category Grid ───────────────────
+    function selectCat(el, id) {
+      document.querySelectorAll('.cat-pill').forEach(p => p.classList.remove('active'));
+      document.querySelectorAll('.grid-cat').forEach(g => g.classList.add('hidden'));
+      el.classList.add('active');
+      document.getElementById('grid-' + id).classList.remove('hidden');
+    }
+
+    // ─── Modal ───────────────────────────
+    let currentProposal = 0;
+    const totalProposals = 2;
+
+    function openModal() {
+      currentProposal = 0;
+      updateProposalView();
+      document.getElementById('modal-propostas').classList.add('open');
+    }
+
+    function closeModal() {
+      document.getElementById('modal-propostas').classList.remove('open');
+    }
+
+    function nextProposal() {
+      currentProposal = (currentProposal + 1) % totalProposals;
+      updateProposalView();
+    }
+
+    function prevProposal() {
+      currentProposal = (currentProposal - 1 + totalProposals) % totalProposals;
+      updateProposalView();
+    }
+
+    function updateProposalView() {
+      document.querySelectorAll('.modal-pager').forEach((el, i) => {
+        el.classList.toggle('active', i === currentProposal);
+      });
+      document.querySelectorAll('[id^="dot-"]').forEach((el, i) => {
+        el.style.background = i === currentProposal ? '#58a6ff' : 'rgba(255,255,255,0.15)';
+      });
+      document.getElementById('proposal-counter').textContent = `${currentProposal + 1} / ${totalProposals}`;
+    }
+  </script>
+
+</body>
+</html>

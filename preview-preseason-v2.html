@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <title>Pré-Temporada V2 – Inbox de Propostas</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap');
+    body { font-family: 'Space Grotesk', sans-serif; background: #0A0F1C; color: #E6EDF3; height: 100vh; overflow: hidden; display: flex; flex-direction: column; }
+    .glass { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.07); }
+    ::-webkit-scrollbar { width: 5px; }
+    ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 8px; }
+    .tab-btn { padding: 8px 20px; border-radius: 99px; font-size: 13px; font-weight: 600; transition: all 0.2s; border: 1px solid transparent; cursor: pointer; }
+    .tab-btn.active { background: rgba(88,166,255,0.12); border-color: rgba(88,166,255,0.3); color: #58a6ff; }
+    .tab-btn:not(.active) { color: rgba(255,255,255,0.4); }
+    .tab-btn:not(.active):hover { color: rgba(255,255,255,0.7); background: rgba(255,255,255,0.04); }
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+    .stat-bar { height: 6px; border-radius: 99px; background: rgba(255,255,255,0.06); overflow: hidden; }
+    .stat-bar-fill { height: 100%; border-radius: 99px; background: #58a6ff; }
+  </style>
+</head>
+<body>
+
+  <!-- TOP BAR -->
+  <div class="shrink-0 border-b border-white/5 px-8 py-5 flex items-center justify-between">
+    <div class="flex items-center gap-6">
+      <div>
+        <p class="text-[10px] uppercase tracking-[0.22em] text-[#58a6ff]">Pré-Temporada · Mercado 2026</p>
+        <h1 class="text-xl font-bold mt-1">Gerenciamento de Carreira</h1>
+      </div>
+      <!-- Progress inline -->
+      <div class="hidden lg:flex items-center gap-3 bg-white/[0.03] border border-white/8 px-4 py-2 rounded-full">
+        <span class="text-sm font-bold">Semana 4</span>
+        <div class="w-32 stat-bar">
+          <div class="stat-bar-fill" style="width:50%"></div>
+        </div>
+        <span class="text-xs text-white/40">50%</span>
+      </div>
+    </div>
+
+    <div class="flex items-center gap-3">
+      <div class="relative">
+        <span class="text-xs text-white/50 border border-white/10 bg-white/[0.03] px-3 py-2 rounded-lg">12 vagas no grid</span>
+      </div>
+      <button class="bg-[#58a6ff] text-[#0A0F1C] font-bold px-6 py-2.5 rounded-xl text-sm shadow-[0_0_20px_rgba(88,166,255,0.3)] hover:scale-105 transition-all">
+        ⏭ Avançar Semana
+      </button>
+    </div>
+  </div>
+
+  <!-- TABS NAV -->
+  <div class="shrink-0 px-8 py-3 border-b border-white/5 flex items-center gap-2">
+    <button class="tab-btn active" onclick="switchTab('propostas')">💼 Propostas <span class="ml-1 text-[10px] bg-[#58a6ff]/20 text-[#58a6ff] px-1.5 py-0.5 rounded-full">2</span></button>
+    <button class="tab-btn" onclick="switchTab('noticias')">📰 Notícias do Mercado</button>
+    <button class="tab-btn" onclick="switchTab('grid')">🏎️ Grid 2026</button>
+  </div>
+
+  <!-- CONTEÚDO -->
+  <main class="flex-1 overflow-y-auto px-8 py-6">
+
+    <!-- TAB: Propostas -->
+    <div id="tab-propostas" class="tab-content active max-w-3xl mx-auto space-y-5">
+
+      <div class="rounded-2xl bg-[#58a6ff]/[0.05] border border-[#58a6ff]/15 px-5 py-4 flex items-center gap-3">
+        <span class="text-2xl">💼</span>
+        <div>
+          <p class="text-sm font-bold text-[#58a6ff]">Você tem 2 propostas pendentes</p>
+          <p class="text-xs text-white/40">Resolva antes de avançar para a fase final da pré-temporada.</p>
+        </div>
+      </div>
+
+      <!-- Proposta Grid: Comparação lado-a-lado -->
+      <div class="grid md:grid-cols-2 gap-4">
+
+        <!-- Proposta 1 – Melhor -->
+        <div class="rounded-2xl border border-[#58a6ff]/25 bg-[#58a6ff]/[0.04] p-6 relative overflow-hidden">
+          <div class="absolute top-3 right-3 text-[10px] bg-[#ffd700]/15 text-[#ffd700] px-2 py-1 rounded-full font-bold">⭐ MELHOR OFERTA</div>
+          <div class="flex items-center gap-3 mb-5">
+            <div class="w-10 h-10 rounded-xl flex items-center justify-center text-lg font-bold" style="background:#E73F47">F</div>
+            <div>
+              <p class="font-bold">Ferrari AF Corse</p>
+              <p class="text-xs text-white/40">GT3 Championship · N1</p>
+            </div>
+          </div>
+
+          <div class="space-y-3 mb-5">
+            <div class="flex justify-between items-center py-2 border-b border-white/5">
+              <span class="text-xs text-white/40">Salário anual</span>
+              <span class="font-semibold text-green-400">R$ 1.200.000</span>
+            </div>
+            <div class="flex justify-between items-center py-2 border-b border-white/5">
+              <span class="text-xs text-white/40">Duração</span>
+              <span class="font-semibold">2 anos</span>
+            </div>
+            <div class="flex justify-between items-center py-2 border-b border-white/5">
+              <span class="text-xs text-white/40">Companheiro</span>
+              <span class="font-semibold">C. Leclerc</span>
+            </div>
+            <div>
+              <div class="flex justify-between text-xs mb-1.5">
+                <span class="text-white/40">Performance do carro</span>
+                <span>87/100</span>
+              </div>
+              <div class="stat-bar">
+                <div class="stat-bar-fill" style="width:87%;background:#E73F47"></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="flex gap-2">
+            <button class="flex-1 bg-[#58a6ff] text-[#0A0F1C] font-bold py-2.5 rounded-xl text-sm hover:bg-blue-400 transition">✅ Aceitar</button>
+            <button class="flex-1 bg-white/5 text-white/50 font-bold py-2.5 rounded-xl text-sm hover:bg-white/10 transition border border-white/8">❌ Recusar</button>
+          </div>
+        </div>
+
+        <!-- Proposta 2 -->
+        <div class="rounded-2xl border border-white/8 bg-white/[0.02] p-6">
+          <div class="flex items-center gap-3 mb-5">
+            <div class="w-10 h-10 rounded-xl flex items-center justify-center text-lg font-bold" style="background:#FF8000">M</div>
+            <div>
+              <p class="font-bold">McLaren GT</p>
+              <p class="text-xs text-white/40">GT4 Series · N2</p>
+            </div>
+          </div>
+
+          <div class="space-y-3 mb-5">
+            <div class="flex justify-between items-center py-2 border-b border-white/5">
+              <span class="text-xs text-white/40">Salário anual</span>
+              <span class="font-semibold">R$ 680.000</span>
+            </div>
+            <div class="flex justify-between items-center py-2 border-b border-white/5">
+              <span class="text-xs text-white/40">Duração</span>
+              <span class="font-semibold">1 ano</span>
+            </div>
+            <div class="flex justify-between items-center py-2 border-b border-white/5">
+              <span class="text-xs text-white/40">Companheiro</span>
+              <span class="font-semibold text-white/40 italic">Vaga em aberto</span>
+            </div>
+            <div>
+              <div class="flex justify-between text-xs mb-1.5">
+                <span class="text-white/40">Performance do carro</span>
+                <span>72/100</span>
+              </div>
+              <div class="stat-bar">
+                <div class="stat-bar-fill" style="width:72%;background:#FF8000"></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="flex gap-2">
+            <button class="flex-1 bg-[#58a6ff] text-[#0A0F1C] font-bold py-2.5 rounded-xl text-sm hover:bg-blue-400 transition">✅ Aceitar</button>
+            <button class="flex-1 bg-white/5 text-white/50 font-bold py-2.5 rounded-xl text-sm hover:bg-white/10 transition border border-white/8">❌ Recusar</button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- TAB: Notícias -->
+    <div id="tab-noticias" class="tab-content max-w-2xl mx-auto space-y-6">
+      <div>
+        <div class="flex items-center gap-3 mb-3">
+          <div class="h-px flex-1 bg-white/5"></div>
+          <span class="text-[10px] uppercase tracking-widest text-white/25 font-semibold">Semana 4</span>
+          <div class="h-px flex-1 bg-white/5"></div>
+        </div>
+        <div class="space-y-2">
+          <div class="glass rounded-xl px-4 py-3 flex items-start gap-3"><span>💼</span><div><p class="text-sm font-medium text-[#58a6ff]">Ferrari AF Corse enviou proposta para você</p><p class="text-xs text-white/40 mt-1">Proposta N1 pra GT3. R$ 1.2M/ano por 2 anos.</p></div></div>
+          <div class="glass rounded-xl px-4 py-3 flex items-start gap-3"><span>📋</span><div><p class="text-sm font-medium">Lewis Hamilton assinou com SKY Motorsport</p><p class="text-xs text-white/40 mt-1">Contrato de 2 anos no Endurance Championship.</p></div></div>
+          <div class="glass rounded-xl px-4 py-3 flex items-start gap-3"><span>❌</span><div><p class="text-sm font-medium text-red-400">Valtteri Bottas recusou proposta da Alfa Romeo</p></div></div>
+        </div>
+      </div>
+      <div>
+        <div class="flex items-center gap-3 mb-3">
+          <div class="h-px flex-1 bg-white/5"></div>
+          <span class="text-[10px] uppercase tracking-widest text-white/25 font-semibold">Semana 3</span>
+          <div class="h-px flex-1 bg-white/5"></div>
+        </div>
+        <div class="space-y-2">
+          <div class="glass rounded-xl px-4 py-3 flex items-start gap-3"><span>🎓</span><div><p class="text-sm font-medium text-[#d2a8ff]">Theo Pourchaire assinou primeiro contrato profissional</p><p class="text-xs text-white/40 mt-1">Rookie francês na BMW M2 Cup.</p></div></div>
+          <div class="glass rounded-xl px-4 py-3 flex items-start gap-3"><span>⬆️</span><div><p class="text-sm font-medium text-green-400">Prema Racing sobe para o Endurance Championship</p></div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB: Grid -->
+    <div id="tab-grid" class="tab-content max-w-3xl mx-auto">
+      <p class="text-center text-white/30 py-20 text-sm">Grid 2026 em formação... (será populado conforme o mercado avança)</p>
+    </div>
+
+  </main>
+
+  <script>
+    function switchTab(id) {
+      document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+      document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+      document.getElementById('tab-' + id).classList.add('active');
+      event.currentTarget.classList.add('active');
+    }
+  </script>
+</body>
+</html>

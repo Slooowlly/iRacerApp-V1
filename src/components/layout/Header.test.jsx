@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
+import { invoke } from "@tauri-apps/api/core";
 import Header from "./Header";
 
 const mockSimulateRace = vi.fn();
@@ -11,12 +12,19 @@ vi.mock("../../stores/useCareerStore", () => ({
   default: (selector) => selector(mockState),
 }));
 
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: vi.fn(),
+}));
+
 describe("Header", () => {
   beforeEach(() => {
     mockSimulateRace.mockReset();
     mockStartCalendarAdvance.mockReset();
     mockCloseRaceBriefing.mockReset();
+    invoke.mockReset();
+    invoke.mockResolvedValue([]);
     mockState = {
+      careerId: "career-1",
       playerTeam: {
         nome: "Equipe Teste",
         cor_primaria: "#58a6ff",
@@ -26,6 +34,7 @@ describe("Header", () => {
         numero: 1,
         ano: 2026,
         total_rodadas: 12,
+        rodada_atual: 3,
       },
       nextRace: {
         id: "race-1",
@@ -84,10 +93,10 @@ describe("Header", () => {
     render(<Header activeTab="standings" onTabChange={vi.fn()} />);
 
     expect(screen.queryByText("Clima")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /avancar calendario/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /voltar/i })).toBeInTheDocument();
   });
 
-  it("shows a back button to the left of the temporal card only while the briefing is open", () => {
+  it("shows a back button inside the temporal card while the briefing is open", () => {
     mockState.showRaceBriefing = true;
 
     render(<Header activeTab="standings" onTabChange={vi.fn()} />);
@@ -95,13 +104,32 @@ describe("Header", () => {
     const temporalLabel = screen.getByText(/data 18\/03\/2026/i);
     const temporalCard = temporalLabel.closest(".rounded-2xl");
     expect(temporalCard).not.toBeNull();
-    expect(within(temporalCard).queryByRole("button", { name: /voltar/i })).not.toBeInTheDocument();
 
-    const backButton = screen.getByRole("button", { name: /voltar/i });
-    expect(backButton.parentElement).toBe(temporalCard.parentElement);
-    expect(backButton.parentElement?.firstElementChild).toBe(backButton);
+    const backButton = within(temporalCard).getByRole("button", { name: /voltar/i });
     fireEvent.click(backButton);
 
     expect(mockCloseRaceBriefing).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows a celebratory season-finished banner when the championship ends", async () => {
+    mockState.nextRace = null;
+    mockState.season = {
+      numero: 1,
+      ano: 2026,
+      total_rodadas: 12,
+      rodada_atual: 13,
+    };
+    invoke.mockResolvedValue([
+      { id: "P001", nome: "Thomas Baker", posicao_campeonato: 1 },
+      { id: "P002", nome: "R. Silva", posicao_campeonato: 2 },
+    ]);
+
+    render(<Header activeTab="standings" onTabChange={vi.fn()} />);
+
+    expect(await screen.findByText("Temporada Encerrada")).toBeInTheDocument();
+    expect(screen.getByText("Thomas Baker")).toBeInTheDocument();
+    expect(screen.getByText(/ano 2026/i)).toBeInTheDocument();
+    expect(screen.queryByText(/temporada 1/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/sem corrida pendente/i)).not.toBeInTheDocument();
   });
 });

@@ -44,7 +44,9 @@
       "Bash(sed -n '1485,1505p' src/commands/career.rs)",
       "Bash(grep -E \"FAILED|ok$|running [0-9]|test commands\")",
       "Bash(grep -v \"^\\\\s*-->\\\\|^\\\\s*|\\\\|^\\\\s*=\\\\|^$\")",
-      "Bash(grep -E \"FAILED|ok$|running [0-9]\")"
+      "Bash(grep -E \"FAILED|ok$|running [0-9]\")",
+      "Bash(grep -n \"driver_season_results_archive\\\\|archive_driver_season\\\\|ultimos_resultados.*clear\\\\|recent_results_archive\" src-tauri/src/db/migrations.rs src-tauri/src/evolution/pipeline.rs src-tauri/src/db/queries/*.rs)",
+      "Bash(grep -n \"fn reset_driver_season_stats\" src-tauri/src/db/queries/*.rs)"
     ]
   }
 }

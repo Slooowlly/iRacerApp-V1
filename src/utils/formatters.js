@@ -40,6 +40,12 @@ export function formatNextRaceCountdown(daysUntilNextEvent) {
   return `Proxima corrida em ${months} meses`;
 }
 
+export function formatSurfaceSeasonLabel(seasonLike) {
+  const year = seasonLike?.ano ?? seasonLike?.year ?? null;
+  if (year == null) return "-";
+  return `Ano ${year}`;
+}
+
 export function formatDateTime(isoString) {
   if (!isoString) return "-";
   const date = new Date(isoString);
@@ -81,6 +87,35 @@ export function categoryLabel(id) {
 
 export function formatCategoryName(id) {
   return categoryLabel(id);
+}
+
+export function getCategoryTier(id) {
+  const tiers = {
+    mazda_rookie: 1,
+    toyota_rookie: 1,
+    mazda_amador: 2,
+    toyota_amador: 2,
+    bmw_m2: 3,
+    production_challenger: 3,
+    gt4: 4,
+    gt3: 5,
+    endurance: 6,
+  };
+  return tiers[id] || 0;
+}
+
+export function formatLicenseLevel(level) {
+  if (level === null || level === undefined || level < 0) return "Sem licença";
+  
+  const levels = {
+    0: "Amadora",
+    1: "Pro",
+    2: "Super Pro",
+    3: "Elite",
+    4: "Super Elite"
+  };
+  
+  return levels[level] || "Sem licença";
 }
 
 export function formatLapTime(ms) {
@@ -137,27 +172,28 @@ export function formatSeasonPhase(value) {
 
 export function formatAttributeName(value) {
   const labels = {
-    skill: "skill",
-    consistencia: "consistencia",
-    racecraft: "racecraft",
-    defesa: "defesa",
-    ritmo_classificacao: "quali",
-    gestao_pneus: "pneus",
-    adaptabilidade: "adaptabilidade",
-    mentalidade: "mentalidade",
-    confianca: "confianca",
-    smoothness: "smoothness",
-    experiencia: "experiencia",
-    fitness: "fitness",
-    fator_chuva: "chuva",
-    habilidade_largada: "largada",
-    agressividade: "agressividade",
-    aggression: "agressividade",
-    midia: "midia",
-    desenvolvimento: "desenvolvimento",
+    skill: "Skill",
+    consistencia: "Consistência",
+    racecraft: "Racecraft",
+    defesa: "Defesa",
+    ritmo_classificacao: "Quali",
+    gestao_pneus: "Pneus",
+    adaptabilidade: "Adaptabilidade",
+    mentalidade: "Mentalidade",
+    confianca: "Confiança",
+    smoothness: "Smoothness",
+    experiencia: "Experiência",
+    fitness: "Fitness",
+    fator_chuva: "Chuva",
+    habilidade_largada: "Largada",
+    agressividade: "Agressividade",
+    aggression: "Agressividade",
+    midia: "Mídia",
+    desenvolvimento: "Desenvolvimento",
   };
 
-  return labels[value] || value;
+  const formatted = labels[value] || value;
+  return formatted.charAt(0).toUpperCase() + formatted.slice(1);
 }
 
 const FLAG_CODE_BY_EMOJI = {

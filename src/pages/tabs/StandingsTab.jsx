@@ -7,6 +7,19 @@ import TrophyBadge from "../../components/standings/TrophyBadge";
 import FlagIcon from "../../components/ui/FlagIcon";
 import GlassCard from "../../components/ui/GlassCard";
 import useCareerStore from "../../stores/useCareerStore";
+import { categoryLabel } from "../../utils/formatters";
+
+const ALL_CATEGORIES = [
+  "mazda_rookie",
+  "toyota_rookie",
+  "mazda_amador",
+  "toyota_amador",
+  "bmw_m2",
+  "production_challenger",
+  "gt4",
+  "gt3",
+  "endurance",
+];
 
 const STANDARD_POINTS = {
   1: 25,
@@ -25,10 +38,28 @@ function StandingsTab() {
   const careerId = useCareerStore((state) => state.careerId);
   const playerTeam = useCareerStore((state) => state.playerTeam);
   const season = useCareerStore((state) => state.season);
+  const [viewCategory, setViewCategory] = useState(() => playerTeam?.categoria ?? ALL_CATEGORIES[0]);
   const [driverStandings, setDriverStandings] = useState([]);
   const [teamStandings, setTeamStandings] = useState([]);
   const [previousChampionId, setPreviousChampionId] = useState(null);
   const [selectedDriverId, setSelectedDriverId] = useState(null);
+  const [hoveredDriverId, setHoveredDriverId] = useState(null);
+
+  const categoryIndex = ALL_CATEGORIES.indexOf(viewCategory);
+  function goUpCategory() {
+    if (categoryIndex < ALL_CATEGORIES.length - 1) {
+      setViewCategory(ALL_CATEGORIES[categoryIndex + 1]);
+    }
+  }
+  function goDownCategory() {
+    if (categoryIndex > 0) {
+      setViewCategory(ALL_CATEGORIES[categoryIndex - 1]);
+    }
+  }
+  const activeDriverId = hoveredDriverId ?? selectedDriverId;
+  const activeDriver = driverStandings.find((d) => d.id === activeDriverId) ?? null;
+  const selectedTeamId = activeDriver?.equipe_id ?? null;
+  const selectedTeamColor = activeDriver?.equipe_cor ?? null;
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -36,7 +67,7 @@ function StandingsTab() {
     let mounted = true;
 
     async function fetchStandings() {
-      if (!careerId || !playerTeam?.categoria) {
+      if (!careerId || !viewCategory) {
         setLoading(false);
         return;
       }
@@ -48,15 +79,15 @@ function StandingsTab() {
         const [drivers, teams, previousChampions] = await Promise.all([
           invoke("get_drivers_by_category", {
             careerId,
-            category: playerTeam.categoria,
+            category: viewCategory,
           }),
           invoke("get_teams_standings", {
             careerId,
-            category: playerTeam.categoria,
+            category: viewCategory,
           }),
           invoke("get_previous_champions", {
             careerId,
-            category: playerTeam.categoria,
+            category: viewCategory,
           }),
         ]);
 
@@ -85,14 +116,19 @@ function StandingsTab() {
     return () => {
       mounted = false;
     };
-  }, [careerId, playerTeam?.categoria, season?.ano, season?.rodada_atual]);
+  }, [careerId, viewCategory, season?.ano, season?.rodada_atual]);
 
-  const totalRodadas = season?.total_rodadas || 0;
-  const completedRounds = Math.max(0, (season?.rodada_atual || 1) - 1);
+  const totalRodadas = driverStandings.length > 0
+    ? Math.max(...driverStandings.map((d) => (d.results ?? []).length))
+    : (season?.total_rodadas || 0);
+  const completedRounds = viewCategory === playerTeam?.categoria
+    ? Math.max(0, (season?.rodada_atual || 1) - 1)
+    : totalRodadas;
   const positionDeltaMap = useMemo(
     () => buildPositionDeltaMap(driverStandings, completedRounds),
     [driverStandings, completedRounds],
   );
+
 
   if (loading) {
     return (
@@ -122,9 +158,29 @@ function StandingsTab() {
         <GlassCard hover={false} className="overflow-hidden rounded-[28px]">
           <div className="flex items-center justify-between gap-4">
             <div>
-              <p className="text-[11px] uppercase tracking-[0.22em] text-accent-primary">
-                Campeonato
-              </p>
+              <div className="flex items-center gap-2">
+                <div className="flex flex-col">
+                  <button
+                    onClick={goUpCategory}
+                    disabled={categoryIndex === ALL_CATEGORIES.length - 1}
+                    className="text-[10px] leading-[1.1] transition-colors disabled:cursor-default disabled:opacity-20 text-text-muted hover:enabled:text-text-primary"
+                    title="Categoria superior"
+                  >
+                    ▲
+                  </button>
+                  <button
+                    onClick={goDownCategory}
+                    disabled={categoryIndex === 0}
+                    className="text-[10px] leading-[1.1] transition-colors disabled:cursor-default disabled:opacity-20 text-text-muted hover:enabled:text-text-primary"
+                    title="Categoria inferior"
+                  >
+                    ▼
+                  </button>
+                </div>
+                <p className="text-[11px] uppercase tracking-[0.22em] text-accent-primary">
+                  {categoryLabel(viewCategory)}
+                </p>
+              </div>
               <h2 className="mt-2 text-2xl font-semibold text-text-primary">
                 Classificacao de pilotos
               </h2>
@@ -133,7 +189,7 @@ function StandingsTab() {
           </div>
 
           <div className="mt-6 overflow-x-auto">
-            <table className="w-full min-w-[980px] table-fixed">
+            <table className="w-full table-fixed" style={{ minWidth: 506 + totalRodadas * 68 }}>
               <colgroup>
                 <col style={{ width: "62px" }} />
                 <col style={{ width: "34px" }} />
@@ -172,29 +228,42 @@ function StandingsTab() {
               </thead>
               <tbody>
                 {driverStandings.map((driver, index) => {
-                  const isSelected = selectedDriverId === driver.id;
+                  const isInSelectedTeam =
+                    selectedTeamId != null && driver.equipe_id === selectedTeamId;
+                  const teamColor = selectedTeamColor;
 
                   return (
                     <tr
                       key={driver.id}
                       role="button"
                       tabIndex={0}
-                      onClick={() => setSelectedDriverId(driver.id)}
+                      onMouseEnter={() => setHoveredDriverId(driver.id)}
+                      onMouseLeave={() => setHoveredDriverId(null)}
+                      onClick={() =>
+                        setSelectedDriverId((prev) => (prev === driver.id ? null : driver.id))
+                      }
                       onKeyDown={(event) => {
                         if (event.key === "Enter" || event.key === " ") {
                           event.preventDefault();
-                          setSelectedDriverId(driver.id);
+                          setSelectedDriverId((prev) => (prev === driver.id ? null : driver.id));
                         }
                       }}
                       className={[
                         "cursor-pointer border-b border-white/5 transition-glass",
-                        isSelected
-                          ? "bg-white/[0.08] shadow-[inset_3px_0_0_0_rgba(88,166,255,1)]"
-                          : "",
-                        driver.is_jogador
+                        !isInSelectedTeam && driver.is_jogador
                           ? "bg-accent-primary/8 hover:bg-accent-primary/15"
-                          : "hover:bg-white/5 focus-visible:bg-white/5",
+                          : !isInSelectedTeam
+                            ? "hover:bg-white/5 focus-visible:bg-white/5"
+                            : "",
                       ].join(" ")}
+                      style={
+                        isInSelectedTeam && teamColor
+                          ? {
+                              backgroundColor: `${teamColor}22`,
+                              boxShadow: `inset 3px 0 0 0 ${teamColor}`,
+                            }
+                          : undefined
+                      }
                     >
                       <td className="py-3 pr-0.5 text-sm font-semibold">
                         <div className="flex items-center gap-1">
@@ -276,7 +345,7 @@ function StandingsTab() {
 
           <div className="mt-6 space-y-2">
             {(() => {
-              const { promotionCount, relegationCount } = getZoneCutoffs(playerTeam?.categoria);
+              const { promotionCount, relegationCount } = getZoneCutoffs(viewCategory);
               const total = teamStandings.length;
               const items = [];
               teamStandings.forEach((team, index) => {

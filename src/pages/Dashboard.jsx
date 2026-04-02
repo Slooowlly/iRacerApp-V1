@@ -21,7 +21,7 @@ function Dashboard() {
   const endOfSeasonResult = useCareerStore((state) => state.endOfSeasonResult);
   const showPreseason = useCareerStore((state) => state.showPreseason);
   const showRaceBriefing = useCareerStore((state) => state.showRaceBriefing);
-  const [activeTab, setActiveTab] = useState("news");
+  const [activeTab, setActiveTab] = useState("standings");
 
   if (!isLoaded) {
     return <Navigate to="/menu" replace />;
@@ -43,7 +43,7 @@ function Dashboard() {
 
   if (showResult && lastRaceResult) {
     return (
-      <MainLayout activeTab={activeTab} onTabChange={setActiveTab}>
+      <MainLayout activeTab={activeTab} onTabChange={setActiveTab} hideHeader>
         <RaceResultView result={lastRaceResult} onDismiss={dismissResult} />
       </MainLayout>
     );
@@ -51,17 +51,13 @@ function Dashboard() {
 
   if (showEndOfSeason && endOfSeasonResult) {
     return (
-      <MainLayout activeTab={activeTab} onTabChange={setActiveTab}>
-        <EndOfSeasonView />
-      </MainLayout>
+      <EndOfSeasonView />
     );
   }
 
   if (showPreseason) {
     return (
-      <MainLayout activeTab={activeTab} onTabChange={setActiveTab}>
-        <PreSeasonView />
-      </MainLayout>
+      <PreSeasonView />
     );
   }
 

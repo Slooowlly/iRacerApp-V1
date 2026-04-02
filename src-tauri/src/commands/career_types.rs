@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::commands::race_history::{RoundResult, TrophyInfo};
 use crate::event_interest::EventInterestSummary;
+use crate::evolution::pipeline::EndOfSeasonResult;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateCareerInput {
@@ -54,6 +55,23 @@ pub struct CareerData {
     pub next_race_briefing: Option<NextRaceBriefingSummary>,
     pub total_drivers: usize,
     pub total_teams: usize,
+    #[serde(default)]
+    pub resume_context: Option<CareerResumeContext>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CareerResumeView {
+    Dashboard,
+    EndOfSeason,
+    Preseason,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CareerResumeContext {
+    pub active_view: CareerResumeView,
+    #[serde(default)]
+    pub end_of_season_result: Option<EndOfSeasonResult>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -119,11 +137,18 @@ pub struct RaceSummary {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContractWarningInfo {
+    pub temporada_fim: i32,
+    pub equipe_nome: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NextRaceBriefingSummary {
     pub track_history: Option<TrackHistorySummary>,
     pub primary_rival: Option<PrimaryRivalSummary>,
     #[serde(default)]
     pub weekend_stories: Vec<BriefingStorySummary>,
+    pub contract_warning: Option<ContractWarningInfo>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -523,6 +548,8 @@ pub struct TeamStanding {
     pub piloto_1_nome: Option<String>,
     pub piloto_2_nome: Option<String>,
     pub trofeus: Vec<TrophyInfo>,
+    pub classe: Option<String>,
+    pub temp_posicao: i32,
 }
 
 #[derive(Debug, Serialize)]

@@ -212,6 +212,25 @@ pub fn count_pending_races_in_phase(
     Ok(count)
 }
 
+pub fn get_next_any_race_in_phase(
+    conn: &Connection,
+    season_id: &str,
+    phase: &SeasonPhase,
+) -> Result<Option<CalendarEntry>, DbError> {
+    let mut stmt = conn.prepare(
+        "SELECT * FROM calendar
+         WHERE COALESCE(season_id, temporada_id) = ?1
+           AND season_phase = ?2
+           AND status = 'Pendente'
+         ORDER BY week_of_year ASC, data ASC
+         LIMIT 1",
+    )?;
+    let entry = stmt
+        .query_row(params![season_id, phase.as_str()], calendar_from_row)
+        .optional()?;
+    Ok(entry)
+}
+
 /// Monta SeasonTemporalSummary combinando as funções existentes.
 /// current_phase é passado pelo chamador (já carregou a Season).
 pub fn get_season_temporal_summary(
@@ -223,12 +242,24 @@ pub fn get_season_temporal_summary(
     let effective_week = get_current_effective_week(conn, season_id)?;
     let next_player_event = get_next_race(conn, season_id, player_category)?;
     let pending_in_phase = count_pending_races_in_phase(conn, season_id, current_phase)?;
+
+    // Se nÃ£o hÃ¡ mais eventos do jogador mas hÃ¡ corridas pendentes na fase,
+    // buscamos o prÃ³ximo evento genÃ©rico para que o calendÃ¡rio nÃ£o trave.
+    let next_any_event = if next_player_event.is_none() && pending_in_phase > 0 {
+        get_next_any_race_in_phase(conn, season_id, current_phase)?
+    } else {
+        None
+    };
+
     let current_display_date =
         resolve_current_display_date(conn, season_id, effective_week, next_player_event.as_ref())?;
+
     let next_event_display_date = next_player_event
         .as_ref()
+        .or(next_any_event.as_ref())
         .map(|entry| entry.display_date.clone())
         .filter(|value| !value.is_empty());
+
     let days_until_next_event = next_event_display_date
         .as_deref()
         .and_then(|next_date| days_between_display_dates(&current_display_date, next_date));

@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <title>Pré-Temporada – Estrutura 3: Layout com Tabs no Centro</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap');
+    * { box-sizing: border-box; }
+    body { font-family: 'Space Grotesk', sans-serif; background: #0A0F1C; color: #E6EDF3; height: 100vh; overflow: hidden; display: flex; flex-direction: column; }
+    .glass { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.07); }
+    ::-webkit-scrollbar { width: 5px; }
+    ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.07); border-radius: 8px; }
+
+    .main-tab { padding: 12px 24px; font-weight: 700; color: rgba(255,255,255,0.4); border-bottom: 2px solid transparent; transition: 0.2s; }
+    .main-tab:hover { color: white; }
+    .main-tab.active { color: #58a6ff; border-bottom: 2px solid #58a6ff; }
+  </style>
+</head>
+<body>
+
+  <header class="shrink-0 px-6 py-4 border-b border-white/5 flex justify-between items-center bg-[#0A0F1C]">
+    <div>
+      <p class="text-[10px] uppercase tracking-[0.22em] text-[#58a6ff] font-semibold">Semana 4 / 8 • Mercado</p>
+      <div class="flex gap-6 mt-1">
+        <button class="main-tab active text-lg">Visão do Grid</button>
+        <button class="main-tab text-lg">Notícias do Paddock</button>
+      </div>
+    </div>
+    <button class="bg-[#58a6ff] text-[#0A0F1C] font-bold px-6 py-2.5 rounded-xl text-sm justify-self-end">⏭ Avançar</button>
+  </header>
+
+  <div class="flex flex-1 overflow-hidden">
+    <!-- ESQUERDA: Propostas -->
+    <aside class="w-[280px] shrink-0 border-r border-white/5 overflow-y-auto p-5 flex flex-col gap-4 bg-[#0A0F1C]">
+      <p class="text-[10px] uppercase tracking-[0.2em] text-[#58a6ff] font-semibold">Ação Necessária</p>
+      
+      <!-- Proposta simplificada -->
+      <div class="glass rounded-xl p-4 border-[#58a6ff]/30 bg-[#58a6ff]/5 relative overflow-hidden">
+        <div class="absolute right-0 top-0 w-10 h-10 bg-[#E73F47]/20 flex items-center justify-center rounded-bl-xl text-xs font-bold text-[#E73F47]">GT3</div>
+        <p class="font-bold mb-1">Ferrari AF Corse</p>
+        <p class="text-xs text-white/50 mb-3">R$ 1.2M • 2 anos</p>
+        <div class="flex gap-2">
+          <button class="bg-[#58a6ff] text-[#0A0F1C] flex-1 py-1.5 rounded text-xs font-bold">Aceitar</button>
+          <button class="glass flex-1 py-1.5 rounded text-xs">Aguardar</button>
+        </div>
+      </div>
+      
+      <div class="glass rounded-xl p-4 relative overflow-hidden">
+        <div class="absolute right-0 top-0 w-10 h-10 bg-[#FF8000]/20 flex items-center justify-center rounded-bl-xl text-xs font-bold text-[#FF8000]">GT4</div>
+        <p class="font-bold mb-1">McLaren GT</p>
+        <p class="text-xs text-white/50 mb-3">R$ 680K • 1 ano</p>
+        <div class="flex gap-2">
+          <button class="bg-[#58a6ff] text-[#0A0F1C] flex-1 py-1.5 rounded text-xs font-bold">Aceitar</button>
+          <button class="glass flex-1 py-1.5 rounded text-xs">Aguardar</button>
+        </div>
+      </div>
+    </aside>
+
+    <!-- CENTRO: Todo o conteúdo dependendo da Tab -->
+    <main class="flex-1 overflow-y-auto bg-[#0A0F1C]">
+      <!-- Subfiltro -->
+      <div class="px-6 py-2 border-b border-white/5 flex gap-4 text-xs font-semibold text-white/40">
+        <span class="text-white py-2 cursor-pointer border-b border-white">Todas</span>
+        <span class="py-2 cursor-pointer hover:text-white">Endurance</span>
+        <span class="py-2 cursor-pointer hover:text-white">GT3</span>
+        <span class="py-2 cursor-pointer hover:text-white">GT4</span>
+        <span class="py-2 cursor-pointer hover:text-white">BMW M2</span>
+      </div>
+
+      <div class="p-6 max-w-4xl">
+        <h2 class="text-xl font-bold mb-4">Grade de Pilotos</h2>
+        <!-- Design de Grid centralizado, lista simples -->
+        <div class="space-y-2">
+           <div class="glass rounded-lg px-4 py-3 flex items-center gap-4">
+             <div class="w-1.5 h-6 bg-[#E73F47] rounded-full"></div>
+             <p class="w-40 font-bold text-sm">Charles Leclerc</p>
+             <p class="flex-1 text-xs text-white/50">Ferrari AF Corse • N1</p>
+             <span class="text-xs bg-green-500/20 text-green-400 px-2 rounded">Garantido</span>
+           </div>
+           <div class="glass rounded-lg px-4 py-3 flex items-center gap-4">
+             <div class="w-1.5 h-6 bg-[#00D2BE] rounded-full"></div>
+             <p class="w-40 font-bold text-sm">George Russell</p>
+             <p class="flex-1 text-xs text-white/50">Mercedes-AMG • N1</p>
+             <span class="text-xs bg-green-500/20 text-green-400 px-2 rounded">Garantido</span>
+           </div>
+           <div class="glass border-dashed border-white/20 rounded-lg px-4 py-3 flex items-center gap-4 bg-white/5">
+             <div class="w-1.5 h-6 bg-white/10 rounded-full"></div>
+             <p class="w-40 font-bold text-sm text-white/30">Piloto Indefinido</p>
+             <p class="flex-1 text-xs text-white/50">McLaren GT • N2</p>
+             <span class="text-xs bg-white/10 text-white/50 px-2 rounded">Em Aberto</span>
+           </div>
+        </div>
+      </div>
+    </main>
+  </div>
+</body>
+</html>

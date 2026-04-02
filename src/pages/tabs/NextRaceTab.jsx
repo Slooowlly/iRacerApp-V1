@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
 import GlassButton from "../../components/ui/GlassButton";
@@ -295,406 +295,275 @@ function NextRaceTab() {
   }
 
   return (
-    <div className="relative space-y-5">
-      <LoadingOverlay
-        open={isSimulating}
-        title="Simulando corrida"
-        message="Classificacao, corrida e atualizacao do campeonato em andamento."
-      />
+    <div className="relative min-h-[calc(100vh-100px)]">
+      {/* Background glass effect specific to this dashboard */}
+      <div className="fixed inset-0 z-0 overflow-hidden pointer-events-none opacity-60">
+        <div className="absolute inset-x-0 -top-40 h-[600px] bg-[url('https://images.unsplash.com/photo-1541443131876-44b03de101c5?auto=format&fit=crop&q=80')] bg-cover opacity-15 filter blur-[30px] mix-blend-screen transform scale-110"></div>
+        <div className="absolute inset-0 bg-gradient-to-b from-transparent via-[#06090e]/80 to-[#06090e]"></div>
+      </div>
 
-      <GlassCard hover={false} className="rounded-[28px]">
-        <div className="flex items-start justify-between gap-6">
-          <div className="flex-1 min-w-0">
-            <p className="text-[10px] uppercase tracking-[0.22em] text-accent-primary">
-              Sala de estrategia
+      <div className="relative z-10 space-y-6">
+        <LoadingOverlay
+          open={isSimulating}
+          title="Simulando corrida"
+          message="Classificacao, corrida e atualizacao do campeonato em andamento."
+        />
+
+        {/* HEADER COM BOTÕES */}
+        <header className="flex flex-col md:flex-row justify-between items-start md:items-end mb-4">
+          <div>
+            <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-[#58a6ff] mb-2">
+              <span className="mr-2">🏁</span>Sala de Estratégia
             </p>
-            <h3 className="mt-2 text-2xl font-semibold text-text-primary">
-              Escolha o proximo passo
-            </h3>
-            {exportNotice ? <p className="mt-2 text-sm text-accent-primary">{exportNotice}</p> : null}
-
-            <div className="mt-4 grid gap-3 sm:grid-cols-3">
-              {briefing.goals.map((goal) => (
-                <GoalCard key={goal.label} label={goal.label} value={goal.value} />
-              ))}
+            <h1 className="text-[2.5rem] font-extrabold text-white leading-none">{nextRace.track_name}</h1>
+            <div className="flex flex-wrap items-center gap-3 mt-3">
+              <span className="border border-white/10 bg-white/5 px-3 py-1.5 rounded-lg text-xs font-bold text-white">
+                Etapa {nextRace.rodada} de {season?.total_rodadas ?? "?"}
+              </span>
+              <span className="text-sm font-medium text-gray-400 capitalize">
+                {briefing.eventDateShort} • {briefing.timePeriodHighlight}
+              </span>
             </div>
           </div>
 
-          <div className="flex flex-shrink-0 flex-col gap-3 pt-9">
-            <GlassButton
-              variant="primary"
-              disabled={isSimulating || !nextRace}
-              className="min-w-48"
+          <div className="flex flex-col sm:flex-row items-center gap-4 mt-6 md:mt-0 w-full sm:w-auto">
+            <button
               onClick={handleSimulate}
+              disabled={isSimulating || !nextRace}
+              className="w-full sm:w-auto px-5 py-2 border border-white/10 bg-white/5 hover:bg-white/10 text-gray-300 font-semibold rounded-lg transition text-xs flex justify-center items-center gap-1.5 opacity-80 hover:opacity-100 disabled:opacity-50"
             >
-              {isSimulating ? "Simulando..." : "Simular corrida"}
-            </GlassButton>
-            <GlassButton variant="secondary" className="min-w-48" onClick={handleExport}>
-              Exportar
-            </GlassButton>
+              {isSimulating ? "Simulando..." : "Simular Corrida"}
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4 text-[#58a6ff]">
+                <path fillRule="evenodd" d="M14.615 1.595a.75.75 0 01.359.852L12.982 9.75h7.268a.75.75 0 01.548 1.262l-10.5 11.25a.75.75 0 01-1.272-.71l1.992-7.302H3.75a.75.75 0 01-.548-1.262l10.5-11.25a.75.75 0 01.913-.143z" clipRule="evenodd" />
+              </svg>
+            </button>
+            <button
+              onClick={handleExport}
+              className="w-full sm:w-auto px-10 py-3.5 bg-[#58a6ff] hover:bg-blue-400 text-[#06090e] font-black uppercase rounded-xl transition text-base shadow-[0_0_20px_rgba(88,166,255,0.4)] flex justify-center items-center gap-2"
+            >
+              Exportar Dados
+            </button>
           </div>
-        </div>
-      </GlassCard>
+        </header>
 
-      <div className="grid gap-5 xl:grid-cols-[1.08fr_0.92fr]">
-        <div className="space-y-5">
-          <GlassCard
-            hover={false}
-            className="relative overflow-hidden rounded-[30px] border-white/8 bg-[linear-gradient(145deg,rgba(7,15,27,0.96)_0%,rgba(11,24,42,0.93)_54%,rgba(18,23,34,0.92)_100%)] p-5"
-          >
-            <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(88,166,255,0.22),transparent_24%),radial-gradient(circle_at_bottom_left,rgba(255,183,77,0.12),transparent_22%)]" />
-            <div className="relative">
-              <p className="text-[10px] uppercase tracking-[0.22em] text-accent-primary">
-                Resumo do evento
+        {exportNotice && <p className="text-right text-sm text-[#58a6ff]">{exportNotice}</p>}
+        {error && <p className="text-right text-sm text-red-500">{error}</p>}
+
+        {/* GRID PRINCIPAL (4-4-4) */}
+        <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-stretch pb-10">
+          
+          {/* 1) NARRATIVA DA ETAPA */}
+          <div className="xl:col-span-4 flex flex-col gap-5 xl:h-[650px]">
+            {/* Condições Compactas */}
+            <div className="bg-[#161b22]/40 backdrop-blur-[24px] border border-white/5 shadow-[0_8px_32px_rgba(0,0,0,0.2)] rounded-3xl p-5 flex justify-between items-center bg-gradient-to-r from-black/40 to-transparent">
+              <div className="flex items-center gap-4">
+                <div className="text-4xl">{briefing.weatherIcon}</div>
+                <div>
+                  <p className="text-[10px] uppercase tracking-widest text-[#58a6ff] font-bold">Condição de Pista</p>
+                  <p className="text-xl font-bold text-white">
+                    {briefing.weatherSummary} <span className="text-xs text-gray-400">{briefing.trackTemperatureLabel}</span>
+                  </p>
+                </div>
+              </div>
+              <div className="text-right">
+                <p className="text-[10px] uppercase tracking-widest text-gray-500 font-bold">Público</p>
+                <p className="text-xl font-bold text-white">{formatAudience(briefing.audienceEstimate)}</p>
+              </div>
+            </div>
+
+            {/* Narrativa Expandida */}
+            <div className="bg-[#161b22]/40 backdrop-blur-[24px] border border-white/5 shadow-[0_8px_32px_rgba(0,0,0,0.2)] rounded-3xl p-6 flex-1 flex flex-col relative overflow-hidden">
+              <div className="absolute -right-10 -top-10 h-40 w-40 rounded-full bg-[radial-gradient(circle,rgba(240,195,107,0.1),transparent_65%)] pointer-events-none"></div>
+              <p className="text-[11px] uppercase tracking-[0.2em] text-[#f5c76d] mb-4 font-bold relative z-10 flex items-center">
+                <span className="mr-2 text-sm">📰</span>Narrativa da Etapa
               </p>
 
-              <div className="mt-4 flex flex-col gap-5 border-b border-white/8 pb-5 md:flex-row md:items-start md:justify-between">
-                <div>
-                  <div className="mt-2 flex items-center gap-3">
-                    <p className="text-[40px] font-semibold leading-none tracking-[-0.06em] text-text-primary">
-                      {briefing.eventDateShort}
-                    </p>
-                    <p className="text-[12px] uppercase tracking-[0.14em] text-text-secondary">
-                      Etapa {nextRace.rodada} de {season?.total_rodadas ?? "?"}
-                    </p>
-                  </div>
-                  <p className="mt-3 text-[22px] font-semibold tracking-[-0.03em] text-text-primary">
-                    {nextRace.track_name}
-                  </p>
-                </div>
-
-                <div className="text-left md:text-right">
-                  <p className="text-[11px] uppercase tracking-[0.14em] text-text-secondary">
-                    Horario local
-                  </p>
-                  <p className="mt-2 text-[28px] font-semibold tracking-[-0.04em] text-text-primary">
-                    {nextRace.horario}
-                  </p>
-                  <p className="mt-2 text-[12px] uppercase tracking-[0.08em] text-text-secondary">
-                    {briefing.timePeriodPrefix}
-                    <strong className="ml-1 text-[14px] tracking-[0.12em] text-text-primary">
-                      {briefing.timePeriodHighlight}
-                    </strong>
-                  </p>
-                </div>
-              </div>
-
-              <div className="mt-5 grid gap-3 md:grid-cols-3">
-                <EventSummaryBox
-                  label="Publico"
-                  value={formatAudience(briefing.audienceEstimate)}
-                  meta={briefing.audienceRankLabel}
-                />
-                <EventSummaryBox
-                  label={briefing.broadcastLabel}
-                  value={briefing.broadcastValue}
-                  featured={briefing.broadcastLabel === "Cobertura"}
-                />
-                <EventSummaryBox
-                  label="Historico"
-                  value={briefing.historyValue}
-                  meta={briefing.historyMeta}
-                />
-              </div>
-            </div>
-          </GlassCard>
-
-          <GlassCard hover={false} className="rounded-[28px] border-white/8 bg-black/15 p-5">
-            <p className="text-[10px] uppercase tracking-[0.22em] text-accent-primary">
-              Previa da corrida
-            </p>
-
-            <div className="relative mt-4 overflow-hidden rounded-[26px] border border-white/8 bg-[linear-gradient(115deg,rgba(255,123,114,0.08),transparent_30%),linear-gradient(180deg,rgba(255,255,255,0.04),rgba(255,255,255,0.02))] px-5 py-5">
-              <div className="pointer-events-none absolute -right-8 -top-8 h-36 w-36 rounded-full bg-[radial-gradient(circle,rgba(240,195,107,0.16),transparent_65%)]" />
-              <div className="relative">
-                <p className="text-[11px] uppercase tracking-[0.24em] text-accent-gold">
-                  Chamada da etapa
-                </p>
-                <h3 className="mt-3 max-w-4xl text-[32px] font-semibold leading-[1.05] tracking-[-0.05em] text-text-primary">
-                  {briefing.headline}
-                </h3>
-                <p className="mt-4 max-w-3xl text-[15px] leading-7 text-text-primary">
+              <div className="flex-1 overflow-y-auto custom-scrollbar pr-2 relative z-10 flex flex-col">
+                <h3 className="text-2xl font-bold text-white leading-snug mb-4">{briefing.headline}</h3>
+                <p className="text-[15px] text-gray-300 leading-relaxed mb-4">
                   {briefing.paragraphs[0] ?? briefing.attendanceNarrative}
                 </p>
-              </div>
-            </div>
+                <p className="text-[15px] text-gray-300 leading-relaxed mb-6">
+                  {briefing.paragraphs[1] || briefing.actionHint}
+                </p>
 
-            <div className="mt-4 grid gap-4 lg:grid-cols-2">
-              <BriefingPreviewPanel
-                title="O que esta em jogo"
-                body={briefing.paragraphs[1] ?? briefing.paragraphs[0] ?? briefing.actionHint}
-              />
-              <BriefingPreviewPanel
-                title="Leitura do paddock"
-                accentLabel={briefing.teamVoiceLabel}
-                accentColor={playerTeam?.cor_primaria}
-                body={briefing.quote}
-                support={briefing.paddockSupport}
-              />
-            </div>
-          </GlassCard>
-
-          <GlassCard hover={false} className="rounded-[24px] border-white/8 bg-black/15 p-5">
-            <p className="text-[10px] uppercase tracking-[0.22em] text-accent-primary">Condicoes</p>
-            <div className="mt-4 space-y-3">
-              <ConditionReportRow
-                badge={briefing.weatherIcon}
-                label="Tempo"
-                value={briefing.weatherSummary}
-                meta={briefing.weatherNarrative}
-              />
-              <ConditionReportRow
-                badge="🌡"
-                label="Temperatura"
-                value={briefing.trackTemperatureLabel}
-                meta={briefing.temperatureNarrative}
-              />
-              <ConditionReportRow
-                badge="📻"
-                label="Leitura do box"
-                value={briefing.trackConditionLabel}
-                meta={briefing.boxNarrative}
-              />
-            </div>
-          </GlassCard>
-
-        </div>
-
-        <div className="space-y-5">
-          <GlassCard hover={false} className="rounded-[28px]">
-            <SectionTitle
-              eyebrow="Sobre o grid"
-              title="Favoritos ao podio"
-              meta={
-                isLoadingBriefing
-                  ? "Montando analise..."
-                  : `${briefing.favorites.length} pilotos em destaque`
-              }
-            />
-
-            {isLoadingBriefing ? (
-              <p className="mt-5 text-sm text-text-secondary">
-                Montando leitura de forma e ritmo do grid.
-              </p>
-            ) : briefingError ? (
-              <p className="mt-5 text-sm text-status-red">{briefingError}</p>
-            ) : (
-              <div className="mt-5 overflow-hidden rounded-[24px] border border-white/8">
-                <div className="grid gap-3 bg-accent-primary/8 px-4 py-3 text-[11px] uppercase tracking-[0.16em] text-text-secondary md:grid-cols-[72px_0.95fr_0.85fr_1.35fr]">
-                  <div>Pos.</div>
-                  <div>Piloto</div>
-                  <div>Forma recente</div>
-                  <div>Expectativa</div>
+                {/* Leitura de Box Expandida */}
+                <div className="bg-black/30 border border-white/5 p-4 rounded-2xl relative mt-auto">
+                  <div className="absolute top-2 right-4 text-[#58a6ff] opacity-20 pointer-events-none">
+                    <span className="text-6xl font-serif leading-none h-[40px] block overflow-hidden">”</span>
+                  </div>
+                  <p className="text-[10px] uppercase tracking-[0.15em] text-[#58a6ff] mb-2 font-bold">Voz da Equipe</p>
+                  <p className="text-sm italic text-gray-200 leading-relaxed">"{briefing.quote}"</p>
+                  <p className="text-xs font-semibold text-gray-400 mt-3 text-right">
+                    -{" "}
+                    <span style={briefing.teamColor ? { color: getReadableTeamColor(briefing.teamColor) } : undefined}>
+                      {briefing.teamVoiceLabel}
+                    </span>
+                  </p>
                 </div>
-                {briefing.favorites.map((driver, index) => (
-                  <FavoriteRow key={driver.id} driver={driver} index={index} />
-                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* 2) METAS HORIZONTAIS E FAVORITOS */}
+          <div className="xl:col-span-4 flex flex-col gap-5 xl:h-[650px]">
+            {/* Aviso de contrato expirando */}
+            {nextRaceBriefing?.contract_warning != null &&
+              Math.max(0, (season?.total_rodadas ?? 0) - (nextRace?.rodada ?? 0)) <= 1 && (
+              <div className="bg-amber-900/30 border border-amber-500/40 rounded-2xl px-4 py-3 flex items-start gap-3">
+                <span className="text-amber-400 text-base leading-none mt-0.5">⚠</span>
+                <div>
+                  <p className="text-[10px] uppercase tracking-[0.15em] text-amber-400 font-bold mb-0.5">Contrato expirando</p>
+                  <p className="text-xs text-amber-100 leading-relaxed">
+                    Seu contrato com <span className="font-semibold">{nextRaceBriefing.contract_warning.equipe_nome}</span> encerra ao fim desta temporada.
+                  </p>
+                </div>
               </div>
             )}
-          </GlassCard>
 
-          <GlassCard hover={false} className="rounded-[28px]">
-            <SectionTitle
-              eyebrow="Campeonato"
-              title="Tabela de pilotos"
-              meta={`Etapa ${nextRace.rodada} de ${season?.total_rodadas ?? "?"}`}
-            />
-
-            {briefing.championshipTable.length > 0 ? (
-              <div className="mt-5 rounded-[22px] border border-white/8 bg-white/[0.03] p-3">
-                <table
-                  aria-label="Tabela do campeonato"
-                  className="w-full table-fixed border-separate border-spacing-y-1.5"
-                >
-                  <thead>
-                    <tr className="text-[10px] uppercase tracking-[0.18em] text-text-secondary">
-                      <th className="w-9 px-2 text-left font-medium">#</th>
-                      <th className="px-2 text-left font-medium">Piloto</th>
-                      <th className="w-[46px] px-2 text-right font-medium">Pts</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {briefing.championshipTable.map((driver) => (
-                      <ChampionshipTableRow key={driver.id} driver={driver} />
-                    ))}
-                  </tbody>
-                </table>
+            {/* Metas */}
+            <div className="grid grid-cols-3 gap-3">
+              <div className="bg-[#161b22]/40 backdrop-blur-[24px] border border-white/5 shadow-[0_8px_32px_rgba(0,0,0,0.2)] rounded-2xl p-4 text-center flex flex-col justify-start items-center">
+                <span className="text-2xl mb-1.5 block leading-none">👥</span>
+                <p className="text-[9px] uppercase font-bold text-gray-500 tracking-wider">Meta Equipe</p>
+                <p className="text-[10px] text-white font-semibold mt-1 leading-tight">
+                  {briefing.goals[0]?.value}
+                </p>
               </div>
-            ) : (
-              <p className="mt-5 text-sm text-text-secondary">
-                Classificacao do campeonato indisponivel no momento.
-              </p>
-            )}
-          </GlassCard>
+              <div className="bg-[#161b22]/40 backdrop-blur-[24px] border border-white/5 shadow-[0_8px_32px_rgba(0,0,0,0.2)] rounded-2xl p-4 text-center flex flex-col justify-start items-center">
+                <span className="text-xl mb-1.5 block leading-none">👤</span>
+                <p className="text-[9px] uppercase font-bold text-gray-500 tracking-wider">Meta Pessoal</p>
+                <p className="text-[10px] text-white font-semibold mt-1 leading-tight">
+                  {briefing.goals[1]?.value}
+                </p>
+              </div>
+              <div className="bg-[#161b22]/40 backdrop-blur-[24px] border border-white/5 shadow-[0_8px_32px_rgba(0,0,0,0.2)] rounded-2xl p-4 text-center flex flex-col justify-start items-center">
+                <span className="text-xl mb-1.5 block leading-none">🏆</span>
+                <p className="text-[9px] uppercase font-bold text-gray-500 tracking-wider">Meta Título</p>
+                <p className="text-[10px] text-white font-semibold mt-1 leading-tight">
+                  {briefing.goals[2]?.value}
+                </p>
+              </div>
+            </div>
+
+            {/* Favoritos ao Pódio */}
+            <div className="bg-[#161b22]/40 backdrop-blur-[24px] border border-white/5 shadow-[0_8px_32px_rgba(0,0,0,0.2)] rounded-3xl p-6 flex-1 flex flex-col min-h-0">
+              <p className="text-[12px] font-bold uppercase tracking-[0.2em] text-[#58a6ff] mb-5">Os 5 Favoritos ao Pódio</p>
+
+              <div className="space-y-4 flex-1 overflow-y-auto custom-scrollbar pr-1">
+                {isLoadingBriefing ? (
+                  <p className="text-sm text-gray-400">Montando analise...</p>
+                ) : (
+                  briefing.favorites.map((driver, index) => {
+                    let medalTone = getFavoriteMedalTone(index);
+                    const isJogador = driver.is_jogador;
+
+                    return (
+                      <div
+                        key={driver.id}
+                        className={`border rounded-2xl p-4 flex flex-col xl:flex-row gap-3 xl:gap-0 justify-between xl:items-center transition hover:bg-white/5 ${
+                          isJogador ? "bg-[#58a6ff]/10 border-[#58a6ff]/30" : "bg-black/20 border-white/5"
+                        }`}
+                      >
+                        <div className="flex items-center gap-4">
+                          <span className={`font-black w-8 text-center text-[30px] ${isJogador ? "text-[#58a6ff]" : medalTone}`}>
+                            {index + 1}
+                          </span>
+                          <div>
+                            <p className="text-base font-bold text-white leading-none mb-1.5">{driver.nome}</p>
+                            <p
+                              className="text-[11px] font-bold uppercase"
+                              style={{ color: getReadableTeamColor(driver.equipe_cor) }}
+                            >
+                              {driver.equipe_nome}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex gap-1.5 justify-end xl:ml-0 overflow-x-auto custom-scrollbar pb-1 xl:pb-0">
+                          {driver.formChips.map((chip, chipIdx) => {
+                            let customStyle = "bg-gray-500/10 text-gray-400 border-gray-500/30";
+                            if (chip.label === "P1") customStyle = "bg-[#f5c76d]/10 text-[#f5c76d] border-[#f5c76d]/30";
+                            else if (chip.label === "P2") customStyle = "bg-[#d8dfef]/10 text-[#d8dfef] border-[#d8dfef]/30";
+                            else if (chip.label === "P3") customStyle = "bg-[#cf8d63]/10 text-[#cf8d63] border-[#cf8d63]/30";
+                            else if (chip.label.includes("DNF")) customStyle = "bg-red-500/10 text-red-500 border-red-500/30";
+                            else if (chip.label.startsWith("P") && parseInt(chip.label.substring(1)) <= 6)
+                              customStyle = "bg-[#58a6ff]/10 text-[#58a6ff] border-[#58a6ff]/30";
+
+                            return (
+                              <span
+                                key={chipIdx}
+                                className={`border px-2 py-1 rounded text-[10px] whitespace-nowrap font-bold ${customStyle}`}
+                              >
+                                {chip.label}
+                              </span>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* 3) TABELA CAMPEONATO */}
+          <div className="xl:col-span-4 h-[500px] xl:h-[650px]">
+            <div className="bg-[#161b22]/40 backdrop-blur-[24px] border border-white/5 shadow-[0_8px_32px_rgba(0,0,0,0.2)] rounded-3xl p-6 h-full flex flex-col relative overflow-hidden">
+              <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-[#58a6ff] mb-4">Tabela Geral do Campeonato</p>
+              
+              {briefing.championshipTable.length === 0 ? (
+                <p className="text-sm text-gray-400">Classificação indisponível no momento.</p>
+              ) : (
+                <div className="flex-1 overflow-y-auto custom-scrollbar -mx-2 px-2 pb-2">
+                  <table className="w-full text-sm">
+                    <thead className="sticky top-0 bg-[#06090ebd] backdrop-blur z-20 text-[9px] text-gray-500 uppercase font-bold text-left border-b border-white/10">
+                      <tr>
+                        <th className="py-2 px-3 text-center w-8">#</th>
+                        <th className="py-2 px-1">Piloto</th>
+                        <th className="py-2 px-3 text-right">Pts</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {briefing.championshipTable.map((driver) => {
+                        const isPlayer = driver.is_jogador;
+                        return (
+                          <tr
+                            key={driver.id}
+                            className={`border-b ${isPlayer ? "border-[#58a6ff]/40 bg-[#58a6ff]/10" : "border-white/5 hover:bg-white/5"}`}
+                          >
+                            <td className={`py-3 px-3 text-center ${isPlayer ? "font-extrabold text-[#58a6ff]" : "font-bold text-white"}`}>
+                              {driver.posicao_campeonato}
+                            </td>
+                            <td className={`py-3 px-1 ${isPlayer ? "text-white font-bold" : "text-white font-medium"}`}>
+                              {driver.nome_completo ?? driver.nome}
+                            </td>
+                            <td className={`py-3 px-3 text-right ${isPlayer ? "font-extrabold text-[#58a6ff]" : "font-bold text-white"}`}>
+                              {driver.pontos}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+          
         </div>
       </div>
-
-      {error ? (
-        <div className="rounded-2xl border border-status-red/30 bg-status-red/10 px-4 py-4 text-sm text-status-red">
-          <p>Erro ao simular: {error}</p>
-        </div>
-      ) : null}
     </div>
   );
 }
 
-function EventSummaryBox({ label, value, meta, featured = false }) {
-  return (
-    <div className="rounded-[18px] bg-white/[0.08] px-4 py-4 text-center">
-      <p className="flex items-center justify-center gap-2 text-[11px] uppercase tracking-[0.14em] text-text-secondary">
-        {label}
-      </p>
-      <p
-        className={[
-          "mt-2 font-semibold tracking-[-0.04em] text-text-primary",
-          featured ? "text-[30px]" : "text-[24px]",
-        ].join(" ")}
-      >
-        {value}
-      </p>
-      {meta ? <p className="mt-2 text-[13px] leading-5 text-text-primary">{meta}</p> : null}
-    </div>
-  );
+function getFavoriteMedalTone(index) {
+  if (index === 0) return "text-[#f5c76d]";
+  if (index === 1) return "text-[#d8dfef]";
+  if (index === 2) return "text-[#cf8d63]";
+  return "text-gray-500";
 }
 
-function ConditionReportRow({ badge, label, value, meta }) {
-  return (
-    <div className="grid gap-3 rounded-[18px] border border-white/8 bg-white/[0.05] p-4 sm:grid-cols-[72px_1fr] sm:items-center">
-      <div className="flex h-14 w-14 items-center justify-center rounded-[16px] bg-accent-primary/12 text-[28px] leading-none text-accent-primary">
-        {badge}
-      </div>
-      <div>
-        <p className="text-[11px] uppercase tracking-[0.18em] text-text-secondary">{label}</p>
-        <p className="mt-1 text-[21px] font-semibold tracking-[-0.03em] text-text-primary">
-          {value}
-        </p>
-        <p className="mt-1 text-sm leading-6 text-text-primary">{meta}</p>
-      </div>
-    </div>
-  );
-}
-
-function GoalCard({ label, value }) {
-  return (
-    <div className="rounded-[20px] border border-white/8 bg-white/[0.04] px-4 py-4">
-      <p className="text-[10px] uppercase tracking-[0.18em] text-text-secondary">{label}</p>
-      <p className="mt-2 text-sm font-semibold leading-6 text-text-primary">{value}</p>
-    </div>
-  );
-}
-
-function BriefingPreviewPanel({ title, accentLabel, accentColor, body, support }) {
-  return (
-    <div className="rounded-[20px] border border-white/8 bg-white/[0.03] p-4">
-      <p className="text-[11px] uppercase tracking-[0.16em] text-text-secondary">{title}</p>
-      {accentLabel ? (
-        <p className="mt-3 text-[12px] font-semibold uppercase tracking-[0.12em]" style={{ color: getReadableTeamColor(accentColor) }}>
-          {accentLabel}
-        </p>
-      ) : null}
-      <p className="mt-3 text-[14px] leading-7 text-text-primary">{body}</p>
-      {support ? <p className="mt-3 text-[14px] leading-7 text-text-primary">{support}</p> : null}
-    </div>
-  );
-}
-
-function SectionTitle({ eyebrow, title, meta }) {
-  return (
-    <div className="flex items-center justify-between gap-4">
-      <div>
-        <p className="text-[10px] uppercase tracking-[0.22em] text-accent-primary">{eyebrow}</p>
-        <h3 className="mt-2 text-2xl font-semibold text-text-primary">{title}</h3>
-      </div>
-      {meta ? <p className="text-right text-xs text-text-secondary">{meta}</p> : null}
-    </div>
-  );
-}
-
-
-function FavoriteRow({ driver, index }) {
-  const medalTone = getFavoritePositionTone(index);
-
-  return (
-    <div className="grid gap-3 border-t border-white/8 bg-white/[0.03] px-4 py-4 md:grid-cols-[72px_0.95fr_0.85fr_1.35fr] md:items-center">
-      <div className={`text-[28px] font-extrabold tracking-[-0.05em] ${medalTone}`}>
-        {index + 1}
-      </div>
-
-      <div className="min-w-0">
-        <p className="truncate text-base font-semibold text-text-primary">{driver.nome}</p>
-        <p
-          className="mt-1 text-[12px] uppercase tracking-[0.12em]"
-          style={{ color: getReadableTeamColor(driver.equipe_cor) }}
-        >
-          {driver.equipe_nome}
-        </p>
-      </div>
-
-      <div className="flex flex-wrap gap-1.5">
-        {driver.formChips.map((chip, chipIndex) => (
-          <span
-            key={`${driver.id}-chip-${chipIndex}`}
-            className={["rounded-full border px-2.5 py-1 text-[11px] font-semibold", chip.tone].join(" ")}
-          >
-            {chip.label}
-          </span>
-        ))}
-      </div>
-
-      <div>
-        <p className="text-[13px] leading-5 text-text-primary">{driver.expectation}</p>
-      </div>
-    </div>
-  );
-}
-
-function ChampionshipTableRow({ driver }) {
-  const isPlayer = driver.is_jogador;
-  const positionTone =
-    driver.posicao_campeonato === 1
-      ? "text-accent-gold"
-      : driver.posicao_campeonato === 2
-        ? "text-accent-primary"
-        : driver.posicao_campeonato === 3
-          ? "text-[#d7c6ff]"
-          : "text-text-secondary";
-
-  return (
-    <tr>
-      <td
-        className={[
-          "rounded-l-[16px] px-3 py-2.5 text-[13px] font-semibold",
-          isPlayer
-            ? "border-y border-l border-accent-primary/20 bg-accent-primary/10"
-            : "bg-white/[0.04]",
-          positionTone,
-        ].join(" ")}
-      >
-        {driver.posicao_campeonato}
-      </td>
-      <td
-        className={[
-          "px-2 py-2.5 text-[13px]",
-          isPlayer
-            ? "border-y border-accent-primary/20 bg-accent-primary/10 font-semibold text-text-primary"
-            : "bg-white/[0.04] text-text-primary",
-        ].join(" ")}
-      >
-        <span className="block truncate">{driver.nome_completo ?? driver.nome}</span>
-      </td>
-      <td
-        className={[
-          "rounded-r-[16px] px-3 py-2.5 text-right text-[13px] font-semibold text-text-primary",
-          isPlayer
-            ? "border-y border-r border-accent-primary/20 bg-accent-primary/10"
-            : "bg-white/[0.04]",
-        ].join(" ")}
-      >
-        {driver.pontos}
-      </td>
-    </tr>
-  );
-}
 
 function buildBriefingContext({
   player,
@@ -846,6 +715,7 @@ function buildBriefingContext({
     progressLabel: `${currentRound}/${totalRounds}`,
     quote: editorialCopy.quote,
     teamVoiceLabel: playerTeam?.nome ?? "Equipe do jogador",
+    teamColor: playerTeam?.cor_primaria ?? null,
     paddockSupport: editorialCopy.paddockSupport ?? attendanceNarrative,
     attendanceNarrative,
     weatherIcon: buildWeatherIcon(nextRace?.clima),

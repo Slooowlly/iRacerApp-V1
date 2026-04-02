@@ -1,6 +1,10 @@
 import GlassButton from "./GlassButton";
 import GlassCard from "./GlassCard";
-import { difficultyLabel, formatDateTime } from "../../utils/formatters";
+import {
+  difficultyLabel,
+  formatDateTime,
+  formatSurfaceSeasonLabel,
+} from "../../utils/formatters";
 
 const difficultyAccent = {
   facil: "border-status-green/30",
@@ -28,9 +32,7 @@ function SaveCard({ save, onLoad, onDelete, loading = false }) {
               <p className="text-[10px] uppercase tracking-[0.18em] text-text-muted">
                 Temporada
               </p>
-              <p className="mt-2 text-sm text-text-primary">
-                Temporada {save.season} • Ano {save.year}
-              </p>
+              <p className="mt-2 text-sm text-text-primary">{formatSurfaceSeasonLabel(save)}</p>
             </div>
             <div className="glass-light rounded-2xl p-4">
               <p className="text-[10px] uppercase tracking-[0.18em] text-text-muted">
@@ -41,9 +43,9 @@ function SaveCard({ save, onLoad, onDelete, loading = false }) {
           </div>
 
           <div className="flex flex-wrap gap-4 text-sm text-text-secondary">
-            <span>Último jogo: {formatDateTime(save.last_played)}</span>
+            <span>Ultimo jogo: {formatDateTime(save.last_played)}</span>
             <span>Criado: {formatDateTime(save.created)}</span>
-            <span>{save.total_races} corridas no calendário</span>
+            <span>{save.total_races} corridas no calendario</span>
           </div>
         </div>
 

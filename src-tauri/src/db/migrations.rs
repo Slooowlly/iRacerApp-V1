@@ -4,7 +4,7 @@ use crate::db::connection::DbError;
 
 // ── Versão atual do schema ────────────────────────────────────────────────────
 
-const CURRENT_VERSION: u32 = 14;
+const CURRENT_VERSION: u32 = 15;
 
 // ── API pública ───────────────────────────────────────────────────────────────
 
@@ -24,6 +24,7 @@ pub fn run_all(conn: &Connection) -> Result<(), DbError> {
     migrate_v12(conn)?;
     migrate_v13(conn)?;
     migrate_v14(conn)?;
+    migrate_v15(conn)?;
     set_schema_version(conn, CURRENT_VERSION)?;
     Ok(())
 }
@@ -86,6 +87,10 @@ pub fn run_pending(conn: &Connection) -> Result<(), DbError> {
     if version < 14 {
         migrate_v14(conn)?;
         set_schema_version(conn, 14)?;
+    }
+    if version < 15 {
+        migrate_v15(conn)?;
+        set_schema_version(conn, 15)?;
     }
     Ok(())
 }
@@ -799,6 +804,33 @@ fn migrate_v14(conn: &Connection) -> Result<(), DbError> {
         ensure_column(conn, "race_results", "damage_origin_segment", "TEXT")?;
     }
 
+    Ok(())
+}
+
+fn migrate_v15(conn: &Connection) -> Result<(), DbError> {
+    conn.execute_batch(
+        "
+        DROP TABLE IF EXISTS driver_season_results_archive;
+
+        CREATE TABLE IF NOT EXISTS driver_season_archive (
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            piloto_id           TEXT    NOT NULL,
+            season_number       INTEGER NOT NULL,
+            ano                 INTEGER NOT NULL,
+            nome                TEXT    NOT NULL,
+            categoria           TEXT    NOT NULL DEFAULT '',
+            posicao_campeonato  INTEGER,
+            pontos              REAL,
+            snapshot_json       TEXT    NOT NULL,
+            archived_at         TEXT    NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(piloto_id, season_number)
+        );
+        CREATE INDEX IF NOT EXISTS idx_driver_season_archive_piloto
+            ON driver_season_archive(piloto_id);
+        CREATE INDEX IF NOT EXISTS idx_driver_season_archive_season
+            ON driver_season_archive(season_number, categoria);
+        ",
+    )?;
     Ok(())
 }
 

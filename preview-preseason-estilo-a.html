@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <title>Pré-Temporada – Estilo A: Neon Grid</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap');
+    * { box-sizing: border-box; }
+
+    :root {
+      --accent: #00F5A0;
+      --accent2: #00D9F5;
+      --surface: #060B14;
+      --surface2: rgba(0,245,160,0.04);
+      --border: rgba(0,245,160,0.12);
+      --border-subtle: rgba(255,255,255,0.05);
+    }
+
+    body {
+      font-family: 'Space Grotesk', sans-serif;
+      background: var(--surface);
+      color: #C8FFE8;
+      height: 100vh;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      /* Subtle grid pattern */
+      background-image:
+        linear-gradient(rgba(0,245,160,0.025) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0,245,160,0.025) 1px, transparent 1px);
+      background-size: 40px 40px;
+    }
+
+    .panel { background: rgba(6,11,20,0.92); border: 1px solid var(--border); }
+    .panel-subtle { background: rgba(0,245,160,0.02); border: 1px solid var(--border-subtle); }
+
+    /* Neon glow effects */
+    .glow-green { box-shadow: 0 0 20px rgba(0,245,160,0.2); }
+    .text-accent { color: var(--accent); }
+    .text-accent2 { color: var(--accent2); }
+
+    .cat-tab {
+      display: flex; align-items: center; gap: 6px;
+      padding: 6px 14px; border-radius: 6px;
+      font-size: 11px; font-weight: 600; cursor: pointer;
+      border: 1px solid transparent; transition: all 0.15s;
+      color: rgba(200,255,232,0.3); font-family: 'JetBrains Mono', monospace;
+      text-transform: uppercase; letter-spacing: 0.08em;
+    }
+    .cat-tab:hover { color: var(--accent); background: rgba(0,245,160,0.05); border-color: rgba(0,245,160,0.15); }
+    .cat-tab.active { background: rgba(0,245,160,0.08); border-color: rgba(0,245,160,0.4); color: var(--accent); box-shadow: 0 0 12px rgba(0,245,160,0.1); }
+    .cat-tab .dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+    .cat-divider { width: 1px; height: 16px; background: rgba(0,245,160,0.1); flex-shrink: 0; margin: 0 4px; }
+
+    .grid-slot { display: flex; align-items: center; gap: 9px; padding: 6px 8px; border-radius: 4px; transition: background 0.12s; }
+    .grid-slot:hover { background: rgba(0,245,160,0.04); }
+    .grid-slot .bar { width: 2px; height: 24px; flex-shrink: 0; }
+    .slot-empty .driver-name { color: rgba(200,255,232,0.18); font-style: normal; }
+    .slot-empty .bar { background: rgba(0,245,160,0.1) !important; }
+
+    .news-item { display: none; }
+    .news-item.active { display: flex; }
+    .cat-section { display: none; }
+    .cat-section.active { display: block; }
+
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-thumb { background: rgba(0,245,160,0.15); border-radius: 4px; }
+
+    /* Mono font for numbers */
+    .mono { font-family: 'JetBrains Mono', monospace; }
+
+    .accept-btn {
+      flex: 1; background: var(--accent); color: #060B14;
+      font-size: 11px; font-weight: 700; padding: 8px;
+      border-radius: 6px; transition: all 0.15s; text-transform: uppercase; letter-spacing: 0.05em;
+    }
+    .accept-btn:hover { background: #00ffab; box-shadow: 0 0 15px rgba(0,245,160,0.4); }
+    .reject-btn {
+      flex: 1; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08);
+      color: rgba(200,255,232,0.35); font-size: 11px; font-weight: 700; padding: 8px;
+      border-radius: 6px; transition: all 0.15s; text-transform: uppercase; letter-spacing: 0.05em;
+    }
+    .reject-btn:hover { background: rgba(255,80,80,0.08); border-color: rgba(255,80,80,0.2); color: #ff6b6b; }
+
+    /* Horizontal separator labels */
+    .week-label { font-family: 'JetBrains Mono', monospace; font-size: 9px; color: rgba(0,245,160,0.3); text-transform: uppercase; letter-spacing: 0.18em; }
+  </style>
+</head>
+<body>
+
+  <header class="shrink-0 px-8 py-4 border-b flex items-center justify-between gap-6" style="border-color:rgba(0,245,160,0.1); background:rgba(6,11,20,0.98);">
+    <div class="flex items-center gap-5">
+      <div>
+        <p class="text-[10px] font-bold uppercase tracking-[0.3em] mono" style="color:rgba(0,245,160,0.5)">// PRÉ-TEMPORADA</p>
+        <h1 class="text-xl font-bold tracking-tight mt-1 text-accent">Mercado de Transferências</h1>
+      </div>
+      <div class="panel rounded-lg px-4 py-2.5 flex items-center gap-4">
+        <div>
+          <p class="mono text-[9px] uppercase tracking-widest" style="color:rgba(0,245,160,0.3)">Semana</p>
+          <p class="text-lg font-bold mono text-accent leading-none mt-0.5">04 <span class="text-xs" style="color:rgba(0,245,160,0.35)">/ 08</span></p>
+        </div>
+        <div class="w-px h-8" style="background:rgba(0,245,160,0.1)"></div>
+        <div>
+          <p class="mono text-[9px] uppercase tracking-widest" style="color:rgba(0,245,160,0.3)">Data</p>
+          <p class="text-sm font-semibold mono leading-none mt-0.5">22/01/2026</p>
+        </div>
+        <div class="flex flex-col gap-1.5 w-24">
+          <div class="h-px overflow-hidden" style="background:rgba(0,245,160,0.1)">
+            <div class="h-full" style="width:50%;background:var(--accent);"></div>
+          </div>
+          <p class="mono text-[8px]" style="color:rgba(0,245,160,0.25)">MERCADO → HIERARQUIA</p>
+        </div>
+      </div>
+    </div>
+    <button class="font-bold px-6 py-2.5 rounded-lg text-sm mono uppercase tracking-widest text-[#060B14] glow-green transition-all hover:scale-105" style="background:var(--accent)">
+      ⏭ AVANÇAR
+    </button>
+  </header>
+
+  <div class="shrink-0 px-8 py-2.5 border-b overflow-x-auto" style="background:rgba(6,11,20,0.98);border-color:rgba(0,245,160,0.08);">
+    <div class="flex items-center gap-1 min-w-max">
+      <button class="cat-tab active" onclick="selectCat(this,'all')" data-cat="all"><span class="dot" style="background:rgba(0,245,160,0.5)"></span>ALL</button>
+      <div class="cat-divider"></div>
+      <button class="cat-tab" onclick="selectCat(this,'mazda')" data-cat="mazda"><span class="dot" style="background:#C8102E"></span>MAZDA</button>
+      <button class="cat-tab" onclick="selectCat(this,'toyota')" data-cat="toyota"><span class="dot" style="background:#EB0A1E"></span>TOYOTA</button>
+      <button class="cat-tab" onclick="selectCat(this,'bmw')" data-cat="bmw"><span class="dot" style="background:#6B4FBB"></span>BMW M2</button>
+      <button class="cat-tab" onclick="selectCat(this,'production')" data-cat="production"><span class="dot" style="background:#1DB954"></span>PROD</button>
+      <div class="cat-divider"></div>
+      <button class="cat-tab" onclick="selectCat(this,'gt4')" data-cat="gt4"><span class="dot" style="background:#FF8000"></span>GT4</button>
+      <button class="cat-tab" onclick="selectCat(this,'gt3')" data-cat="gt3"><span class="dot" style="background:#E73F47"></span>GT3</button>
+      <button class="cat-tab" onclick="selectCat(this,'endurance')" data-cat="endurance"><span class="dot" style="background:#3671C6"></span>LMP2</button>
+    </div>
+  </div>
+
+  <div class="flex flex-1 overflow-hidden">
+
+    <!-- Left: Grid -->
+    <aside class="w-[290px] shrink-0 border-r overflow-y-auto p-4 flex flex-col gap-3" style="border-color:rgba(0,245,160,0.08); background:rgba(6,11,20,0.96);">
+      <p class="mono text-[9px] uppercase tracking-[0.25em] shrink-0" style="color:rgba(0,245,160,0.35)">// GRID_2026.STATUS</p>
+
+      <div id="grid-all" class="cat-section active space-y-3">
+        <div class="panel rounded-lg overflow-hidden">
+          <div class="flex items-center justify-between px-3 py-2 border-b" style="border-color:rgba(0,245,160,0.08)">
+            <span class="mono text-[9px] uppercase tracking-widest" style="color:#E73F47">GT3</span>
+            <span class="mono text-[9px] font-bold text-accent">5/12</span>
+          </div>
+          <div class="p-1.5 space-y-0.5">
+            <div class="grid-slot"><div class="bar" style="background:#E73F47"></div><div class="flex-1 min-w-0"><p class="text-[11px] font-semibold truncate">C. Leclerc</p><p class="mono text-[9px]" style="color:rgba(0,245,160,0.3)">FER · N1</p></div><span class="mono text-[8px] px-1 py-0.5 rounded" style="background:rgba(0,245,160,0.08);color:var(--accent)">OK</span></div>
+            <div class="grid-slot"><div class="bar" style="background:#E73F47"></div><div class="flex-1 min-w-0"><p class="text-[11px] font-semibold truncate">C. Sainz Jr.</p><p class="mono text-[9px]" style="color:rgba(0,245,160,0.3)">FER · N2</p></div><span class="mono text-[8px] px-1 py-0.5 rounded" style="background:rgba(0,245,160,0.08);color:var(--accent)">OK</span></div>
+            <div class="grid-slot"><div class="bar" style="background:#00D2BE"></div><div class="flex-1 min-w-0"><p class="text-[11px] font-semibold truncate">G. Russell</p><p class="mono text-[9px]" style="color:rgba(0,245,160,0.3)">MER · N1</p></div><span class="mono text-[8px] px-1 py-0.5 rounded" style="background:rgba(0,245,160,0.08);color:var(--accent)">OK</span></div>
+            <div class="grid-slot"><div class="bar" style="background:#00D2BE"></div><div class="flex-1 min-w-0"><p class="text-[11px] font-semibold truncate">K. Antonelli</p><p class="mono text-[9px]" style="color:rgba(0,245,160,0.3)">MER · N2</p></div><span class="mono text-[8px] px-1 py-0.5 rounded" style="background:rgba(0,245,160,0.08);color:var(--accent)">OK</span></div>
+            <div class="grid-slot"><div class="bar" style="background:#FF8000"></div><div class="flex-1 min-w-0"><p class="text-[11px] font-semibold truncate">L. Norris</p><p class="mono text-[9px]" style="color:rgba(0,245,160,0.3)">MCL · N1</p></div><span class="mono text-[8px] px-1 py-0.5 rounded" style="background:rgba(0,245,160,0.08);color:var(--accent)">OK</span></div>
+            <div class="grid-slot slot-empty"><div class="bar"></div><div class="flex-1 min-w-0"><p class="text-[11px] driver-name mono">-- ABERTA --</p><p class="mono text-[9px]" style="color:rgba(0,245,160,0.2)">MCL · N2</p></div><span class="mono text-[8px] px-1 py-0.5 rounded" style="background:rgba(0,245,160,0.06);color:var(--accent2)">💼</span></div>
+          </div>
+        </div>
+        <div class="panel rounded-lg overflow-hidden">
+          <div class="flex items-center justify-between px-3 py-2 border-b" style="border-color:rgba(0,245,160,0.08)">
+            <span class="mono text-[9px] uppercase tracking-widest" style="color:#3671C6">END</span>
+            <span class="mono text-[9px] font-bold text-accent">2/8</span>
+          </div>
+          <div class="p-1.5 space-y-0.5">
+            <div class="grid-slot"><div class="bar" style="background:#3671C6"></div><div class="flex-1 min-w-0"><p class="text-[11px] font-semibold truncate">M. Verstappen</p><p class="mono text-[9px]" style="color:rgba(0,245,160,0.3)">RBR · N1</p></div><span class="mono text-[8px] px-1 py-0.5 rounded" style="background:rgba(0,245,160,0.08);color:var(--accent)">OK</span></div>
+            <div class="grid-slot slot-empty"><div class="bar"></div><div class="flex-1 min-w-0"><p class="text-[11px] driver-name mono">-- ABERTA --</p><p class="mono text-[9px]" style="color:rgba(0,245,160,0.2)">SKY · N1</p></div></div>
+          </div>
+        </div>
+      </div>
+
+      <div id="grid-gt3" class="cat-section panel rounded-lg overflow-hidden">
+        <div class="flex items-center justify-between px-3 py-2 border-b" style="border-color:rgba(0,245,160,0.08)"><span class="mono text-[9px] uppercase tracking-widest" style="color:#E73F47">GT3_CHAMPIONSHIP</span><span class="mono text-[9px] font-bold text-accent">5/12</span></div>
+        <div class="p-1.5 space-y-0.5">
+          <div class="grid-slot"><div class="bar" style="background:#E73F47"></div><div class="flex-1 min-w-0"><p class="text-[11px] font-semibold">C. Leclerc</p><p class="mono text-[9px]" style="color:rgba(0,245,160,0.3)">Ferrari · N1 · CTR_LONGO</p></div><span class="mono text-[8px] px-1 py-0.5 rounded" style="background:rgba(0,245,160,0.08);color:var(--accent)">OK</span></div>
+          <div class="grid-slot"><div class="bar" style="background:#E73F47"></div><div class="flex-1 min-w-0"><p class="text-[11px] font-semibold">C. Sainz Jr.</p><p class="mono text-[9px]" style="color:rgba(0,245,160,0.3)">Ferrari · N2 · CTR_LONGO</p></div><span class="mono text-[8px] px-1 py-0.5 rounded" style="background:rgba(0,245,160,0.08);color:var(--accent)">OK</span></div>
+          <div class="grid-slot slot-empty"><div class="bar"></div><div class="flex-1 min-w-0"><p class="text-[11px] driver-name mono">-- ABERTA --</p><p class="mono text-[9px]" style="color:rgba(0,245,160,0.2)">McLaren · N2</p></div><span class="mono text-[8px] px-1 py-0.5 rounded" style="background:rgba(0,245,160,0.06);color:var(--accent2)">💼</span></div>
+          <div class="grid-slot slot-empty"><div class="bar"></div><div class="flex-1 min-w-0"><p class="text-[11px] driver-name mono">-- ABERTA --</p><p class="mono text-[9px]" style="color:rgba(0,245,160,0.2)">Alpine · N1</p></div></div>
+        </div>
+      </div>
+      <div id="grid-endurance" class="cat-section panel rounded-lg overflow-hidden"><div class="flex items-center justify-between px-3 py-2 border-b" style="border-color:rgba(0,245,160,0.08)"><span class="mono text-[9px] uppercase tracking-widest" style="color:#3671C6">ENDURANCE</span><span class="mono text-[9px] font-bold text-accent">2/8</span></div><div class="p-1.5 space-y-0.5"><div class="grid-slot"><div class="bar" style="background:#3671C6"></div><div class="flex-1 min-w-0"><p class="text-[11px] font-semibold">M. Verstappen</p><p class="mono text-[9px]" style="color:rgba(0,245,160,0.3)">Red Bull · N1</p></div><span class="mono text-[8px] px-1 py-0.5 rounded" style="background:rgba(0,245,160,0.08);color:var(--accent)">OK</span></div><div class="grid-slot slot-empty"><div class="bar"></div><div class="flex-1 min-w-0"><p class="text-[11px] driver-name mono">-- ABERTA --</p><p class="mono text-[9px]" style="color:rgba(0,245,160,0.2)">SKY · N1</p></div></div></div></div>
+      <div id="grid-gt4" class="cat-section panel rounded-lg overflow-hidden"><div class="flex items-center justify-between px-3 py-2 border-b" style="border-color:rgba(0,245,160,0.08)"><span class="mono text-[9px] uppercase tracking-widest" style="color:#FF8000">GT4_SERIES</span><span class="mono text-[9px] font-bold text-accent">1/10</span></div><div class="p-1.5 space-y-0.5"><div class="grid-slot"><div class="bar" style="background:#9B0000"></div><div class="flex-1 min-w-0"><p class="text-[11px] font-semibold">O. Bearman</p><p class="mono text-[9px]" style="color:rgba(0,245,160,0.3)">Prema · N1</p></div><span class="mono text-[8px] px-1 py-0.5 rounded" style="background:rgba(0,245,160,0.08);color:var(--accent)">OK</span></div><div class="grid-slot slot-empty"><div class="bar"></div><div class="flex-1 min-w-0"><p class="text-[11px] driver-name mono">-- ABERTA --</p><p class="mono text-[9px]" style="color:rgba(0,245,160,0.2)">Prema · N2</p></div></div></div></div>
+      <div id="grid-bmw" class="cat-section panel rounded-lg overflow-hidden"><div class="flex items-center justify-between px-3 py-2 border-b" style="border-color:rgba(0,245,160,0.08)"><span class="mono text-[9px] uppercase tracking-widest" style="color:#6B4FBB">BMW_M2</span><span class="mono text-[9px] font-bold text-accent">1/16</span></div><div class="p-1.5 space-y-0.5"><div class="grid-slot"><div class="bar" style="background:#6B4FBB"></div><div class="flex-1 min-w-0"><p class="text-[11px] font-semibold">T. Pourchaire</p><p class="mono text-[9px]" style="color:rgba(0,245,160,0.3)">ART · N1 · ROOKIE</p></div><span class="mono text-[8px] px-1 py-0.5 rounded" style="background:rgba(0,245,160,0.08);color:var(--accent)">OK</span></div><div class="grid-slot slot-empty"><div class="bar"></div><div class="flex-1 min-w-0"><p class="text-[11px] driver-name mono">15x ABERTA</p></div></div></div></div>
+      <div id="grid-mazda" class="cat-section panel rounded-lg p-5 text-center"><p class="mono text-[10px]" style="color:rgba(0,245,160,0.2)">// SEM_DADOS</p></div>
+      <div id="grid-toyota" class="cat-section panel rounded-lg p-5 text-center"><p class="mono text-[10px]" style="color:rgba(0,245,160,0.2)">// SEM_DADOS</p></div>
+      <div id="grid-production" class="cat-section panel rounded-lg p-5 text-center"><p class="mono text-[10px]" style="color:rgba(0,245,160,0.2)">// SEM_DADOS</p></div>
+    </aside>
+
+    <!-- Center: News -->
+    <main class="flex-1 overflow-y-auto px-6 py-5 border-r" style="border-color:rgba(0,245,160,0.08);">
+      <p class="mono text-[9px] uppercase tracking-[0.28em] mb-5" style="color:rgba(0,245,160,0.3)">// FEED_PADDOCK.LOG</p>
+      <div class="max-w-xl space-y-5">
+        <div>
+          <div class="flex items-center gap-3 mb-3"><div class="h-px flex-1" style="background:rgba(0,245,160,0.08)"></div><span class="week-label">W04 · 22/01/2026</span><div class="h-px flex-1" style="background:rgba(0,245,160,0.08)"></div></div>
+          <div class="space-y-2">
+            <div class="panel rounded-lg px-4 py-3 items-start gap-3 news-item active" data-cats="all,gt3"><span class="mt-0.5">💼</span><div><p class="text-sm font-medium text-accent2">Ferrari AF Corse enviou proposta para você</p><p class="mono text-[10px] mt-1" style="color:rgba(200,255,232,0.3)">N1 · GT3 · R$1.2M/ANO · 2Y</p></div></div>
+            <div class="panel rounded-lg px-4 py-3 items-start gap-3 news-item active" data-cats="all,endurance"><span class="mt-0.5">📋</span><div><p class="text-sm font-medium">Lewis Hamilton assinou com SKY Motorsport</p><p class="mono text-[10px] mt-1" style="color:rgba(200,255,232,0.3)">ENDURANCE · 2Y</p></div></div>
+            <div class="panel rounded-lg px-4 py-3 items-start gap-3 news-item active" data-cats="all,gt3"><span class="mt-0.5">❌</span><div><p class="text-sm font-medium" style="color:#ff6b6b">Bottas recusou extensão com Alfa Romeo</p><p class="mono text-[10px] mt-1" style="color:rgba(200,255,232,0.3)">GT3 · LIVRE_NO_MERCADO</p></div></div>
+          </div>
+        </div>
+        <div>
+          <div class="flex items-center gap-3 mb-3"><div class="h-px flex-1" style="background:rgba(0,245,160,0.08)"></div><span class="week-label">W03 · 15/01/2026</span><div class="h-px flex-1" style="background:rgba(0,245,160,0.08)"></div></div>
+          <div class="space-y-2">
+            <div class="panel rounded-lg px-4 py-3 items-start gap-3 news-item active" data-cats="all,bmw"><span class="mt-0.5">🎓</span><div><p class="text-sm font-medium" style="color:#d2a8ff">Pourchaire assinou primeiro contrato profissional</p><p class="mono text-[10px] mt-1" style="color:rgba(200,255,232,0.3)">BMW_M2 · ART · ROOKIE</p></div></div>
+            <div class="panel rounded-lg px-4 py-3 items-start gap-3 news-item active" data-cats="all,endurance"><span class="mt-0.5">⬆️</span><div><p class="text-sm font-medium text-accent">Prema Racing confirmada no Endurance 2026</p><p class="mono text-[10px] mt-1" style="color:rgba(200,255,232,0.3)">PROMOÇÃO · GT3→LMP2</p></div></div>
+            <div class="panel rounded-lg px-4 py-3 items-start gap-3 news-item active" data-cats="all,gt4"><span class="mt-0.5">💼</span><div><p class="text-sm font-medium text-accent2">McLaren GT enviou proposta</p><p class="mono text-[10px] mt-1" style="color:rgba(200,255,232,0.3)">N2 · GT4 · R$680K/ANO · 1Y</p></div></div>
+          </div>
+        </div>
+        <div id="news-empty" class="hidden panel rounded-lg p-10 text-center"><p class="mono text-[10px]" style="color:rgba(0,245,160,0.2)">// NENHUM_EVENTO_NESSA_CATEGORIA</p></div>
+      </div>
+    </main>
+
+    <!-- Right: Proposals -->
+    <aside class="w-[270px] shrink-0 overflow-y-auto p-4 flex flex-col gap-3" style="background:rgba(6,11,20,0.97);">
+      <div class="flex items-center gap-2">
+        <span class="relative flex h-2 w-2"><span style="animation:ping 1.4s ease-out infinite;position:absolute;inset:0;border-radius:50%;background:var(--accent);opacity:0.7;"></span><span style="position:relative;width:8px;height:8px;border-radius:50%;background:var(--accent);display:block;"></span></span>
+        <p class="mono text-[9px] uppercase tracking-[0.25em] text-accent">PROP_PENDENTES</p>
+        <span class="mono text-[9px] px-1.5 py-0.5 rounded font-bold ml-auto" style="background:rgba(0,245,160,0.1);color:var(--accent)">2</span>
+      </div>
+      <div class="panel rounded-xl p-4" style="border-color:rgba(0,245,160,0.2);">
+        <div class="flex items-center gap-2.5 mb-3">
+          <div class="w-8 h-8 rounded-lg flex items-center justify-center text-sm font-bold shrink-0" style="background:#E73F47">F</div>
+          <div class="flex-1 min-w-0"><p class="text-sm font-bold truncate">Ferrari AF Corse</p><p class="mono text-[9px]" style="color:rgba(0,245,160,0.3)">GT3_CHAMP</p></div>
+          <span class="mono text-[9px] px-1.5 py-0.5 rounded font-bold" style="background:rgba(255,215,0,0.12);color:#ffd700">N1</span>
+        </div>
+        <div class="grid grid-cols-2 gap-1.5 mb-3">
+          <div class="panel-subtle rounded-lg px-2 py-1.5"><p class="mono text-[8px] mb-0.5" style="color:rgba(0,245,160,0.3)">SALÁRIO</p><p class="mono text-xs font-bold text-accent">R$1.2M</p></div>
+          <div class="panel-subtle rounded-lg px-2 py-1.5"><p class="mono text-[8px] mb-0.5" style="color:rgba(0,245,160,0.3)">DURAÇÃO</p><p class="mono text-xs font-bold">2_ANOS</p></div>
+          <div class="panel-subtle rounded-lg px-2 py-1.5"><p class="mono text-[8px] mb-0.5" style="color:rgba(0,245,160,0.3)">TEAM_MATE</p><p class="mono text-xs font-bold">LECLERC</p></div>
+          <div class="panel-subtle rounded-lg px-2 py-1.5"><p class="mono text-[8px] mb-1" style="color:rgba(0,245,160,0.3)">CARRO</p><div class="h-1 rounded-full overflow-hidden" style="background:rgba(255,255,255,0.06)"><div class="h-full rounded-full" style="width:87%;background:#E73F47"></div></div><p class="mono text-[8px] mt-1" style="color:rgba(0,245,160,0.3)">87PT</p></div>
+        </div>
+        <div class="flex gap-1.5"><button class="accept-btn">✓ ACEITAR</button><button class="reject-btn">✕ RECUSAR</button></div>
+      </div>
+      <div class="panel rounded-xl p-4">
+        <div class="flex items-center gap-2.5 mb-3">
+          <div class="w-8 h-8 rounded-lg flex items-center justify-center text-sm font-bold shrink-0" style="background:#FF8000">M</div>
+          <div class="flex-1 min-w-0"><p class="text-sm font-bold truncate">McLaren GT</p><p class="mono text-[9px]" style="color:rgba(0,245,160,0.3)">GT4_SERIES</p></div>
+          <span class="mono text-[9px] px-1.5 py-0.5 rounded font-bold" style="background:rgba(255,255,255,0.06);color:rgba(200,255,232,0.3)">N2</span>
+        </div>
+        <div class="grid grid-cols-2 gap-1.5 mb-3">
+          <div class="panel-subtle rounded-lg px-2 py-1.5"><p class="mono text-[8px] mb-0.5" style="color:rgba(0,245,160,0.3)">SALÁRIO</p><p class="mono text-xs font-bold">R$680K</p></div>
+          <div class="panel-subtle rounded-lg px-2 py-1.5"><p class="mono text-[8px] mb-0.5" style="color:rgba(0,245,160,0.3)">DURAÇÃO</p><p class="mono text-xs font-bold">1_ANO</p></div>
+          <div class="panel-subtle rounded-lg px-2 py-1.5"><p class="mono text-[8px] mb-0.5" style="color:rgba(0,245,160,0.3)">TEAM_MATE</p><p class="mono text-xs font-bold" style="color:rgba(200,255,232,0.3)">ABERTO</p></div>
+          <div class="panel-subtle rounded-lg px-2 py-1.5"><p class="mono text-[8px] mb-1" style="color:rgba(0,245,160,0.3)">CARRO</p><div class="h-1 rounded-full overflow-hidden" style="background:rgba(255,255,255,0.06)"><div class="h-full rounded-full" style="width:72%;background:#FF8000"></div></div><p class="mono text-[8px] mt-1" style="color:rgba(0,245,160,0.3)">72PT</p></div>
+        </div>
+        <div class="flex gap-1.5"><button class="accept-btn">✓ ACEITAR</button><button class="reject-btn">✕ RECUSAR</button></div>
+      </div>
+    </aside>
+  </div>
+
+  <style>@keyframes ping { 0% { transform:scale(1);opacity:0.8; } 80%,100% { transform:scale(2.2);opacity:0; } }</style>
+  <script>
+    function selectCat(el, cat) {
+      document.querySelectorAll('.cat-tab').forEach(t => t.classList.remove('active'));
+      el.classList.add('active');
+      document.querySelectorAll('.cat-section').forEach(s => s.classList.remove('active'));
+      document.getElementById('grid-' + cat).classList.add('active');
+      let c = 0;
+      document.querySelectorAll('.news-item').forEach(i => {
+        const show = i.getAttribute('data-cats').split(',').includes(cat);
+        i.classList.toggle('active', show);
+        if (show) c++;
+      });
+      document.getElementById('news-empty').classList.toggle('hidden', c > 0);
+    }
+  </script>
+</body>
+</html>

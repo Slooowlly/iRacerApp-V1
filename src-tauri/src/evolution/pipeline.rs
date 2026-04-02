@@ -19,8 +19,8 @@ use crate::evolution::motivation::{
 use crate::evolution::retirement::{check_retirement, process_retirement};
 use crate::evolution::rookies::{classify_rookie, generate_rookies};
 use crate::evolution::season_transition::{
-    create_and_persist_new_season, reset_driver_season_stats, reset_team_season_stats,
-    seed_new_calendar, update_meta_for_new_season,
+    archive_driver_season, create_and_persist_new_season, reset_driver_season_stats,
+    reset_team_season_stats, seed_new_calendar, update_meta_for_new_season,
 };
 use crate::evolution::standings::build_and_persist_standings;
 use crate::generators::ids::{next_ids, IdType};
@@ -69,6 +69,9 @@ pub fn run_end_of_season(
         )?;
 
     let rookies_generated = process_rookie_phase(conn, existing_names, &mut rng)?;
+
+    archive_driver_season(conn, season, &standings_by_driver)
+        .map_err(|e| format!("Falha ao arquivar temporada dos pilotos: {e}"))?;
 
     let promotion_result = run_promotion_relegation(conn, season.numero, &mut rng)
         .map_err(|e| format!("Erro na promocao/rebaixamento: {e}"))?;

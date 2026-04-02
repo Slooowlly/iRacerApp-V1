@@ -133,11 +133,11 @@ const championshipParagraphPools = {
   ),
   chase: combineVariants(
     [
-      ({ playerStanding, gapToLeader }) => `Você ocupa a ${playerStanding.posição_campeonato}ª colocação e entra nesta etapa ${gapToLeader} pontos atras da liderança.`,
-      ({ playerStanding, gapToLeader }) => `A ${playerStanding.posição_campeonato}ª posição ainda mantem a disputa aberta, mas os ${gapToLeader} pontos de diferenca cobram agressividade limpa.`,
-      ({ playerStanding, gapToLeader }) => `Você abre a rodada na ${playerStanding.posição_campeonato}ª colocação, com ${gapToLeader} pontos separando a campanha da ponta.`,
-      ({ playerStanding, gapToLeader }) => `A leitura do campeonato coloca você na ${playerStanding.posição_campeonato}ª colocação e a ${gapToLeader} pontos do lider.`,
-      ({ playerStanding, gapToLeader }) => `Entrar nesta etapa na ${playerStanding.posição_campeonato}ª posição e com ${gapToLeader} pontos de desvantagem mantem a conta do título viva, mas apertada.`,
+      ({ playerStanding, gapToLeader }) => `Você ocupa a ${playerStanding.posicao_campeonato}ª colocação e entra nesta etapa ${gapToLeader} pontos atras da liderança.`,
+      ({ playerStanding, gapToLeader }) => `A ${playerStanding.posicao_campeonato}ª posição ainda mantem a disputa aberta, mas os ${gapToLeader} pontos de diferenca cobram agressividade limpa.`,
+      ({ playerStanding, gapToLeader }) => `Você abre a rodada na ${playerStanding.posicao_campeonato}ª colocação, com ${gapToLeader} pontos separando a campanha da ponta.`,
+      ({ playerStanding, gapToLeader }) => `A leitura do campeonato coloca você na ${playerStanding.posicao_campeonato}ª colocação e a ${gapToLeader} pontos do lider.`,
+      ({ playerStanding, gapToLeader }) => `Entrar nesta etapa na ${playerStanding.posicao_campeonato}ª posição e com ${gapToLeader} pontos de desvantagem mantem a conta do título viva, mas apertada.`,
     ],
     [
       () => "Cada resultado limpo agora pesa diretamente na luta pelo título.",
@@ -159,11 +159,11 @@ const championshipParagraphPools = {
   ),
   outsider: combineVariants(
     [
-      ({ playerStanding, gapToLeader }) => `Você ocupa a ${playerStanding.posição_campeonato}ª colocação e entra nesta etapa ${gapToLeader} pontos atras da liderança.`,
-      ({ playerStanding, gapToLeader }) => `A ${playerStanding.posição_campeonato}ª colocação e a distância de ${gapToLeader} pontos mudam a escala da ambição para esta rodada.`,
-      ({ playerStanding, gapToLeader }) => `Você abre a etapa na ${playerStanding.posição_campeonato}ª posição, com ${gapToLeader} pontos de desvantagem para a ponta.`,
-      ({ playerStanding, gapToLeader }) => `O recorte do campeonato coloca você longe da liderança: ${playerStanding.posição_campeonato}ª colocação e ${gapToLeader} pontos de margem.`,
-      ({ playerStanding, gapToLeader }) => `Entrar nesta rodada a ${gapToLeader} pontos do topo e na ${playerStanding.posição_campeonato}ª colocação exige uma leitura mais realista da campanha.`,
+      ({ playerStanding, gapToLeader }) => `Você ocupa a ${playerStanding.posicao_campeonato}ª colocação e entra nesta etapa ${gapToLeader} pontos atras da liderança.`,
+      ({ playerStanding, gapToLeader }) => `A ${playerStanding.posicao_campeonato}ª colocação e a distância de ${gapToLeader} pontos mudam a escala da ambição para esta rodada.`,
+      ({ playerStanding, gapToLeader }) => `Você abre a etapa na ${playerStanding.posicao_campeonato}ª posição, com ${gapToLeader} pontos de desvantagem para a ponta.`,
+      ({ playerStanding, gapToLeader }) => `O recorte do campeonato coloca você longe da liderança: ${playerStanding.posicao_campeonato}ª colocação e ${gapToLeader} pontos de margem.`,
+      ({ playerStanding, gapToLeader }) => `Entrar nesta rodada a ${gapToLeader} pontos do topo e na ${playerStanding.posicao_campeonato}ª colocação exige uma leitura mais realista da campanha.`,
     ],
     [
       () => "O foco realista agora e somar forte, recuperar confianca e evitar que a reta final escape de vez do controle.",
@@ -308,11 +308,11 @@ const quotePools = {
   ),
   outsider: combineVariants(
     [
-      ({ teamName }) => `"${teamName} quer uma rodada limpa, madura`,
-      ({ teamName }) => `"${teamName} sabe que a tabela já não permite fantasia`,
-      ({ teamName }) => `"${teamName} olha para esta etapa como chance de reconstrução esportiva`,
-      ({ teamName }) => `"${teamName} precisa voltar a produzir um fim de semana respeitavel`,
-      ({ teamName }) => `"${teamName} entra na rodada pensando mais em consistencia do que em bravata`,
+      () => `"Nossa equipe quer uma rodada limpa, madura`,
+      () => `"Nossa equipe sabe que a tabela já não permite fantasia`,
+      () => `"Nossa equipe olha para esta etapa como chance de reconstrução esportiva`,
+      () => `"Nossa equipe precisa voltar a produzir um fim de semana respeitavel`,
+      () => `"Nossa equipe entra na rodada pensando mais em consistencia do que em bravata`,
     ],
     [
       () => "e forte o bastante para recolocar a campanha em trilho competitivo.\"",
@@ -321,11 +321,11 @@ const quotePools = {
   ),
   survival: combineVariants(
     [
-      ({ teamName }) => `"${teamName} espera um fim de semana forte`,
-      ({ teamName }) => `"${teamName} entra na etapa precisando de uma resposta clara`,
-      ({ teamName }) => `"${teamName} quer recuperar tracao competitiva nesta rodada`,
-      ({ teamName }) => `"${teamName} sabe que esta e uma corrida importante para reorganizar a campanha`,
-      ({ teamName }) => `"${teamName} trata a etapa como ponto de retomada`,
+      () => `"Nossa equipe espera um fim de semana forte`,
+      () => `"Nossa equipe entra na etapa precisando de uma resposta clara`,
+      () => `"Nossa equipe quer recuperar tracao competitiva nesta rodada`,
+      () => `"Nossa equipe sabe que esta e uma corrida importante para reorganizar a campanha`,
+      () => `"Nossa equipe trata a etapa como ponto de retomada`,
     ],
     [
       () => "para recolocar a campanha no rumo certo.\"",
@@ -559,7 +559,7 @@ export function classifyChampionshipState({
     return "survival";
   }
 
-  if (playerStanding.posição_campeonato === 1 || outlook?.titleFight === "leader") {
+  if (playerStanding.posicao_campeonato === 1 || outlook?.titleFight === "leader") {
     return "leader";
   }
 

@@ -9,7 +9,19 @@ vi.mock("../stores/useCareerStore", () => ({
 }));
 
 vi.mock("../components/layout/MainLayout", () => ({
-  default: ({ children }) => <div data-testid="main-layout">{children}</div>,
+  default: ({ children, activeTab, hideHeader = false }) => (
+    <div
+      data-testid="main-layout"
+      data-active-tab={activeTab}
+      data-hide-header={hideHeader ? "true" : "false"}
+    >
+      {children}
+    </div>
+  ),
+}));
+
+vi.mock("../components/race/RaceResultView", () => ({
+  default: () => <div>Classificacao final</div>,
 }));
 
 vi.mock("./tabs/NextRaceTab", () => ({
@@ -35,5 +47,24 @@ describe("Dashboard", () => {
 
     expect(screen.getByTestId("main-layout")).toBeInTheDocument();
     expect(screen.getByText("Briefing pre-corrida")).toBeInTheDocument();
+  });
+
+  it("starts on the drivers tab when loading a save", () => {
+    mockState.showRaceBriefing = false;
+
+    render(<Dashboard />);
+
+    expect(screen.getByTestId("main-layout")).toHaveAttribute("data-active-tab", "standings");
+  });
+
+  it("hides the main header while showing the final classification screen", () => {
+    mockState.showRaceBriefing = false;
+    mockState.showResult = true;
+    mockState.lastRaceResult = { track_name: "Interlagos", race_results: [] };
+
+    render(<Dashboard />);
+
+    expect(screen.getByTestId("main-layout")).toHaveAttribute("data-hide-header", "true");
+    expect(screen.getByText("Classificacao final")).toBeInTheDocument();
   });
 });

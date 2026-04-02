@@ -8,6 +8,42 @@ import LoadingOverlay from "../components/ui/LoadingOverlay";
 import SaveCard from "../components/ui/SaveCard";
 import useCareerStore from "../stores/useCareerStore";
 
+function DeleteSaveConfirmModal({ careerId, onConfirm, onCancel, deleting = false }) {
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center px-4">
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onCancel} />
+      <GlassCard
+        hover={false}
+        className="glass-strong relative w-full max-w-md rounded-[28px] border-white/12 p-6 sm:p-7"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="delete-save-title"
+      >
+        <p className="text-[11px] uppercase tracking-[0.24em] text-status-red">Excluir carreira</p>
+        <h2 id="delete-save-title" className="mt-3 text-2xl font-semibold text-text-primary">
+          Tem certeza que deseja deletar este save?
+        </h2>
+        <p className="mt-3 text-sm leading-7 text-text-secondary">
+          O save <span className="font-semibold text-text-primary">{careerId}</span> será removido
+          em definitivo. Essa ação não pode ser desfeita.
+        </p>
+
+        <div
+          data-testid="delete-save-actions"
+          className="mt-6 flex flex-col items-center justify-center gap-3 sm:flex-row"
+        >
+          <GlassButton variant="secondary" disabled={deleting} onClick={onCancel}>
+            Cancelar
+          </GlassButton>
+          <GlassButton variant="danger" disabled={deleting} onClick={onConfirm}>
+            {deleting ? "Deletando..." : "Confirmar exclusão"}
+          </GlassButton>
+        </div>
+      </GlassCard>
+    </div>
+  );
+}
+
 function LoadSave() {
   const navigate = useNavigate();
   const loadCareer = useCareerStore((state) => state.loadCareer);
@@ -15,6 +51,7 @@ function LoadSave() {
   const [loading, setLoading] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState("Buscando saves...");
   const [error, setError] = useState("");
+  const [pendingDeleteCareerId, setPendingDeleteCareerId] = useState(null);
 
   useEffect(() => {
     loadSaves();
@@ -32,7 +69,7 @@ function LoadSave() {
       setError(
         typeof invokeError === "string"
           ? invokeError
-          : "Nao foi possivel carregar a lista de saves.",
+          : "Não foi possível carregar a lista de saves.",
       );
     } finally {
       setLoading(false);
@@ -51,17 +88,22 @@ function LoadSave() {
       setError(
         typeof invokeError === "string"
           ? invokeError
-          : "Nao foi possivel abrir a carreira selecionada.",
+          : "Não foi possível abrir a carreira selecionada.",
       );
     } finally {
       setLoading(false);
     }
   }
 
-  async function handleDelete(careerId) {
-    const confirmed = window.confirm(`Tem certeza que deseja deletar ${careerId}?`);
-    if (!confirmed) return;
+  function handleDeleteRequest(careerId) {
+    setPendingDeleteCareerId(careerId);
+  }
 
+  async function handleDeleteConfirm() {
+    if (!pendingDeleteCareerId) return;
+
+    const careerId = pendingDeleteCareerId;
+    setPendingDeleteCareerId(null);
     setLoading(true);
     setLoadingMessage("Deletando save...");
     setError("");
@@ -73,15 +115,28 @@ function LoadSave() {
       setError(
         typeof invokeError === "string"
           ? invokeError
-          : "Nao foi possivel deletar a carreira selecionada.",
+          : "Não foi possível deletar a carreira selecionada.",
       );
       setLoading(false);
     }
   }
 
+  function handleDeleteCancel() {
+    setPendingDeleteCareerId(null);
+  }
+
   return (
     <div className="app-shell px-4 py-6 text-text-primary sm:px-6 lg:px-10">
       <div className="app-backdrop" />
+
+      {pendingDeleteCareerId ? (
+        <DeleteSaveConfirmModal
+          careerId={pendingDeleteCareerId}
+          deleting={loading}
+          onCancel={handleDeleteCancel}
+          onConfirm={handleDeleteConfirm}
+        />
+      ) : null}
 
       <div className="relative mx-auto flex min-h-[calc(100vh-3rem)] max-w-7xl items-center justify-center">
         <div className="wizard-panel glass w-full overflow-hidden rounded-[32px] p-5 shadow-[0_30px_80px_rgba(0,0,0,0.42)] sm:p-8 lg:p-10">
@@ -143,7 +198,7 @@ function LoadSave() {
                     save={save}
                     loading={loading}
                     onLoad={handleLoad}
-                    onDelete={handleDelete}
+                    onDelete={handleDeleteRequest}
                   />
                 ))
               )}

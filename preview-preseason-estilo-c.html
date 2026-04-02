@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <title>Pré-Temporada – Estilo C: Minimal Ice</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+    * { box-sizing: border-box; }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background: #08101E;
+      color: #D4DDF0;
+      height: 100vh; overflow: hidden; display: flex; flex-direction: column;
+    }
+
+    /* Subtle blurred orbs in background */
+    body::before {
+      content: '';
+      position: fixed;
+      top: -200px; left: -200px;
+      width: 600px; height: 600px;
+      background: radial-gradient(circle, rgba(100,160,255,0.04) 0%, transparent 70%);
+      pointer-events: none;
+    }
+
+    .panel { background: rgba(255,255,255,0.025); border: 1px solid rgba(255,255,255,0.065); backdrop-filter: blur(8px); }
+    .panel-blue { background: rgba(100,160,255,0.05); border: 1px solid rgba(100,160,255,0.15); }
+
+    .cat-tab {
+      display: flex; align-items: center; gap: 6px;
+      padding: 6px 14px; border-radius: 8px;
+      font-size: 12px; font-weight: 500; cursor: pointer;
+      border: 1px solid transparent; transition: all 0.15s;
+      color: rgba(212,221,240,0.3);
+    }
+    .cat-tab:hover { color: rgba(212,221,240,0.65); background: rgba(255,255,255,0.04); }
+    .cat-tab.active { background: rgba(100,160,255,0.08); border-color: rgba(100,160,255,0.25); color: #7EB3FF; }
+    .cat-tab .dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+    .cat-divider { width: 1px; height: 16px; background: rgba(255,255,255,0.06); flex-shrink: 0; margin: 0 3px; }
+
+    .grid-slot { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 7px; transition: background 0.12s; }
+    .grid-slot:hover { background: rgba(255,255,255,0.03); }
+    .grid-slot .bar { width: 2px; height: 24px; border-radius: 2px; flex-shrink: 0; opacity: 0.8; }
+    .slot-empty .driver-name { color: rgba(212,221,240,0.18); }
+    .slot-empty .bar { background: rgba(255,255,255,0.07) !important; }
+
+    .news-item { display: none; }
+    .news-item.active { display: flex; }
+    .cat-section { display: none; }
+    .cat-section.active { display: block; }
+
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.07); border-radius: 4px; }
+
+    @keyframes ping { 0% { transform: scale(1); opacity: 0.8; } 80%,100% { transform: scale(2.2); opacity: 0; } }
+    .ping { animation: ping 1.4s ease-out infinite; }
+
+    .perf-bar { height: 3px; border-radius: 2px; background: rgba(255,255,255,0.06); overflow: hidden; }
+
+    /* Refined button */
+    .btn-accept { flex: 1; background: rgba(126,179,255,0.12); border: 1px solid rgba(126,179,255,0.3); color: #7EB3FF; font-size: 11px; font-weight: 600; padding: 8px; border-radius: 9px; transition: all 0.15s; }
+    .btn-accept:hover { background: rgba(126,179,255,0.2); }
+    .btn-reject { flex: 1; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.07); color: rgba(212,221,240,0.3); font-size: 11px; font-weight: 500; padding: 8px; border-radius: 9px; transition: all 0.15s; }
+    .btn-reject:hover { background: rgba(255,80,80,0.06); border-color: rgba(255,80,80,0.15); color: #ff9999; }
+  </style>
+</head>
+<body>
+
+  <header class="shrink-0 px-8 py-4 border-b flex items-center justify-between gap-6" style="border-color:rgba(255,255,255,0.05); background:rgba(8,16,30,0.98);">
+    <div class="flex items-center gap-5">
+      <div>
+        <p class="text-[10px] font-medium uppercase tracking-[0.24em]" style="color:rgba(126,179,255,0.5)">Pré-Temporada</p>
+        <h1 class="text-xl font-semibold tracking-tight mt-1" style="color:#E8EFF8">Mercado de Transferências</h1>
+      </div>
+      <div class="panel rounded-xl px-4 py-2.5 flex items-center gap-4">
+        <div>
+          <p class="text-[9px] uppercase tracking-widest font-medium" style="color:rgba(126,179,255,0.4)">Semana</p>
+          <p class="text-lg font-semibold leading-none mt-0.5" style="color:#7EB3FF">4 <span class="text-xs font-normal" style="color:rgba(212,221,240,0.2)">/ 8</span></p>
+        </div>
+        <div class="w-px h-7" style="background:rgba(255,255,255,0.06)"></div>
+        <div>
+          <p class="text-[9px] uppercase tracking-widest font-medium" style="color:rgba(126,179,255,0.4)">Data</p>
+          <p class="text-sm font-medium leading-none mt-0.5" style="color:#D4DDF0">22/01/2026</p>
+        </div>
+        <div class="flex flex-col gap-1.5 w-20">
+          <div class="h-1 rounded-full overflow-hidden" style="background:rgba(255,255,255,0.05)">
+            <div class="h-full rounded-full" style="width:50%;background:#7EB3FF;"></div>
+          </div>
+          <p class="text-[9px]" style="color:rgba(126,179,255,0.3)">Mercado → Hierarquia</p>
+        </div>
+      </div>
+    </div>
+    <button class="font-semibold px-6 py-2.5 rounded-xl text-sm transition-all hover:scale-105 hover:opacity-90" style="background:rgba(126,179,255,0.12);border:1px solid rgba(126,179,255,0.3);color:#7EB3FF">
+      ⏭ Avançar Semana
+    </button>
+  </header>
+
+  <div class="shrink-0 px-8 py-2 border-b overflow-x-auto" style="background:rgba(8,16,30,0.98);border-color:rgba(255,255,255,0.04);">
+    <div class="flex items-center gap-1 min-w-max">
+      <button class="cat-tab active" onclick="selectCat(this,'all')" data-cat="all"><span class="dot" style="background:rgba(126,179,255,0.6)"></span>Todas</button>
+      <div class="cat-divider"></div>
+      <button class="cat-tab" onclick="selectCat(this,'mazda')" data-cat="mazda"><span class="dot" style="background:#C8102E"></span>Mazda</button>
+      <button class="cat-tab" onclick="selectCat(this,'toyota')" data-cat="toyota"><span class="dot" style="background:#EB0A1E"></span>Toyota</button>
+      <button class="cat-tab" onclick="selectCat(this,'bmw')" data-cat="bmw"><span class="dot" style="background:#6B4FBB"></span>BMW M2</button>
+      <button class="cat-tab" onclick="selectCat(this,'production')" data-cat="production"><span class="dot" style="background:#1DB954"></span>Production</button>
+      <div class="cat-divider"></div>
+      <button class="cat-tab" onclick="selectCat(this,'gt4')" data-cat="gt4"><span class="dot" style="background:#FF8000"></span>GT4</button>
+      <button class="cat-tab" onclick="selectCat(this,'gt3')" data-cat="gt3"><span class="dot" style="background:#E73F47"></span>GT3</button>
+      <button class="cat-tab" onclick="selectCat(this,'endurance')" data-cat="endurance"><span class="dot" style="background:#3671C6"></span>Endurance</button>
+    </div>
+  </div>
+
+  <div class="flex flex-1 overflow-hidden">
+
+    <!-- Left: Grid -->
+    <aside class="w-[285px] shrink-0 border-r overflow-y-auto p-4 flex flex-col gap-3" style="border-color:rgba(255,255,255,0.04);">
+      <p class="text-[10px] font-medium uppercase tracking-[0.2em] shrink-0" style="color:rgba(126,179,255,0.35)">Grid em Construção</p>
+
+      <div id="grid-all" class="cat-section active space-y-3">
+        <div class="panel rounded-xl overflow-hidden">
+          <div class="flex items-center justify-between px-3 py-2 border-b" style="border-color:rgba(255,255,255,0.05)">
+            <span class="text-[9px] font-semibold uppercase tracking-widest" style="color:#E73F47">GT3</span>
+            <span class="text-[9px] font-semibold" style="color:#7EB3FF">5/12</span>
+          </div>
+          <div class="p-1.5 space-y-0.5">
+            <div class="grid-slot"><div class="bar" style="background:#E73F47"></div><div class="flex-1 min-w-0"><p class="text-[11px] font-medium truncate">Charles Leclerc</p><p class="text-[9px]" style="color:rgba(212,221,240,0.3)">Ferrari · N1</p></div><span class="text-[8px] px-1 py-0.5 rounded font-medium" style="background:rgba(126,179,255,0.08);color:#7EB3FF">✓</span></div>
+            <div class="grid-slot"><div class="bar" style="background:#E73F47"></div><div class="flex-1 min-w-0"><p class="text-[11px] font-medium truncate">Carlos Sainz Jr.</p><p class="text-[9px]" style="color:rgba(212,221,240,0.3)">Ferrari · N2</p></div><span class="text-[8px] px-1 py-0.5 rounded font-medium" style="background:rgba(126,179,255,0.08);color:#7EB3FF">✓</span></div>
+            <div class="grid-slot"><div class="bar" style="background:#00D2BE"></div><div class="flex-1 min-w-0"><p class="text-[11px] font-medium truncate">George Russell</p><p class="text-[9px]" style="color:rgba(212,221,240,0.3)">Mercedes · N1</p></div><span class="text-[8px] px-1 py-0.5 rounded font-medium" style="background:rgba(126,179,255,0.08);color:#7EB3FF">✓</span></div>
+            <div class="grid-slot"><div class="bar" style="background:#FF8000"></div><div class="flex-1 min-w-0"><p class="text-[11px] font-medium truncate">Lando Norris</p><p class="text-[9px]" style="color:rgba(212,221,240,0.3)">McLaren · N1</p></div><span class="text-[8px] px-1 py-0.5 rounded font-medium" style="background:rgba(126,179,255,0.08);color:#7EB3FF">✓</span></div>
+            <div class="grid-slot slot-empty"><div class="bar"></div><div class="flex-1 min-w-0"><p class="text-[11px] driver-name">Vaga em aberto</p><p class="text-[9px]" style="color:rgba(212,221,240,0.2)">McLaren · N2</p></div><span class="text-[8px] px-1 py-0.5 rounded" style="background:rgba(126,179,255,0.07);color:#7EB3FF">💼</span></div>
+          </div>
+        </div>
+        <div class="panel rounded-xl overflow-hidden">
+          <div class="flex items-center justify-between px-3 py-2 border-b" style="border-color:rgba(255,255,255,0.05)">
+            <span class="text-[9px] font-semibold uppercase tracking-widest" style="color:#3671C6">Endurance</span>
+            <span class="text-[9px] font-semibold" style="color:#7EB3FF">2/8</span>
+          </div>
+          <div class="p-1.5 space-y-0.5">
+            <div class="grid-slot"><div class="bar" style="background:#3671C6"></div><div class="flex-1 min-w-0"><p class="text-[11px] font-medium truncate">Max Verstappen</p><p class="text-[9px]" style="color:rgba(212,221,240,0.3)">Red Bull · N1</p></div><span class="text-[8px] px-1 py-0.5 rounded font-medium" style="background:rgba(126,179,255,0.08);color:#7EB3FF">✓</span></div>
+            <div class="grid-slot slot-empty"><div class="bar"></div><div class="flex-1 min-w-0"><p class="text-[11px] driver-name">Vaga em aberto</p><p class="text-[9px]" style="color:rgba(212,221,240,0.2)">SKY · N1</p></div></div>
+          </div>
+        </div>
+      </div>
+
+      <div id="grid-gt3" class="cat-section panel rounded-xl overflow-hidden"><div class="flex items-center justify-between px-3 py-2 border-b" style="border-color:rgba(255,255,255,0.05)"><span class="text-[9px] font-semibold uppercase tracking-widest" style="color:#E73F47">GT3</span><span class="text-[9px] font-semibold" style="color:#7EB3FF">5/12</span></div><div class="p-1.5 space-y-0.5"><div class="grid-slot"><div class="bar" style="background:#E73F47"></div><div class="flex-1 min-w-0"><p class="text-[11px] font-medium">C. Leclerc</p><p class="text-[9px]" style="color:rgba(212,221,240,0.3)">Ferrari · Contrato Longo</p></div><span class="text-[8px] px-1 py-0.5 rounded" style="background:rgba(126,179,255,0.08);color:#7EB3FF">✓</span></div><div class="grid-slot slot-empty"><div class="bar"></div><div class="flex-1 min-w-0"><p class="text-[11px] driver-name">Vaga em aberto</p><p class="text-[9px]" style="color:rgba(212,221,240,0.2)">McLaren · N2</p></div></div></div></div>
+      <div id="grid-endurance" class="cat-section panel rounded-xl overflow-hidden"><div class="flex items-center justify-between px-3 py-2 border-b" style="border-color:rgba(255,255,255,0.05)"><span class="text-[9px] font-semibold uppercase tracking-widest" style="color:#3671C6">Endurance</span><span class="text-[9px] font-semibold" style="color:#7EB3FF">2/8</span></div><div class="p-1.5 space-y-0.5"><div class="grid-slot"><div class="bar" style="background:#3671C6"></div><div class="flex-1 min-w-0"><p class="text-[11px] font-medium">M. Verstappen</p><p class="text-[9px]" style="color:rgba(212,221,240,0.3)">Red Bull · Renovado</p></div><span class="text-[8px] px-1 py-0.5 rounded" style="background:rgba(126,179,255,0.08);color:#7EB3FF">✓</span></div><div class="grid-slot slot-empty"><div class="bar"></div><div class="flex-1 min-w-0"><p class="text-[11px] driver-name">Vaga em aberto</p><p class="text-[9px]" style="color:rgba(212,221,240,0.2)">SKY · N1</p></div></div></div></div>
+      <div id="grid-gt4" class="cat-section panel rounded-xl overflow-hidden"><div class="flex items-center justify-between px-3 py-2 border-b" style="border-color:rgba(255,255,255,0.05)"><span class="text-[9px] font-semibold uppercase tracking-widest" style="color:#FF8000">GT4</span><span class="text-[9px] font-semibold" style="color:#7EB3FF">1/10</span></div><div class="p-1.5 space-y-0.5"><div class="grid-slot"><div class="bar" style="background:#9B0000"></div><div class="flex-1 min-w-0"><p class="text-[11px] font-medium">O. Bearman</p><p class="text-[9px]" style="color:rgba(212,221,240,0.3)">Prema · N1</p></div><span class="text-[8px] px-1 py-0.5 rounded" style="background:rgba(126,179,255,0.08);color:#7EB3FF">✓</span></div></div></div>
+      <div id="grid-bmw" class="cat-section panel rounded-xl overflow-hidden"><div class="flex items-center justify-between px-3 py-2 border-b" style="border-color:rgba(255,255,255,0.05)"><span class="text-[9px] font-semibold uppercase tracking-widest" style="color:#6B4FBB">BMW M2</span><span class="text-[9px] font-semibold" style="color:#7EB3FF">1/16</span></div><div class="p-1.5 space-y-0.5"><div class="grid-slot"><div class="bar" style="background:#6B4FBB"></div><div class="flex-1 min-w-0"><p class="text-[11px] font-medium">T. Pourchaire</p><p class="text-[9px]" style="color:rgba(212,221,240,0.3)">ART · Rookie</p></div><span class="text-[8px] px-1 py-0.5 rounded" style="background:rgba(126,179,255,0.08);color:#7EB3FF">✓</span></div></div></div>
+      <div id="grid-mazda" class="cat-section panel rounded-xl p-5 text-center"><p class="text-xs" style="color:rgba(212,221,240,0.18)">Nenhum piloto confirmado ainda.</p></div>
+      <div id="grid-toyota" class="cat-section panel rounded-xl p-5 text-center"><p class="text-xs" style="color:rgba(212,221,240,0.18)">Nenhum piloto confirmado ainda.</p></div>
+      <div id="grid-production" class="cat-section panel rounded-xl p-5 text-center"><p class="text-xs" style="color:rgba(212,221,240,0.18)">Nenhuma movimentação registrada.</p></div>
+    </aside>
+
+    <!-- Center: News -->
+    <main class="flex-1 overflow-y-auto px-6 py-5 border-r" style="border-color:rgba(255,255,255,0.04);">
+      <p class="text-[10px] font-medium uppercase tracking-[0.2em] mb-5" style="color:rgba(126,179,255,0.3)">Notícias do Mercado</p>
+      <div class="max-w-xl space-y-6">
+        <div>
+          <div class="flex items-center gap-3 mb-3"><div class="h-px flex-1" style="background:rgba(255,255,255,0.04)"></div><span class="text-[10px] font-medium uppercase tracking-widest" style="color:rgba(212,221,240,0.18)">Semana 4 · 22/01/2026</span><div class="h-px flex-1" style="background:rgba(255,255,255,0.04)"></div></div>
+          <div class="space-y-1.5">
+            <div class="panel rounded-xl px-4 py-3 items-start gap-3 hover:bg-white/[0.03] transition news-item active" data-cats="all,gt3"><span class="mt-0.5 text-sm">💼</span><div><p class="text-sm font-medium" style="color:#7EB3FF">Ferrari AF Corse enviou proposta para você</p><p class="text-xs mt-1" style="color:rgba(212,221,240,0.3)">Proposta N1 · GT3 · R$ 1.2M/ano · 2 anos</p></div></div>
+            <div class="panel rounded-xl px-4 py-3 items-start gap-3 hover:bg-white/[0.03] transition news-item active" data-cats="all,endurance"><span class="mt-0.5 text-sm">📋</span><div><p class="text-sm font-medium">Lewis Hamilton assinou com SKY Motorsport</p><p class="text-xs mt-1" style="color:rgba(212,221,240,0.3)">2 anos no Endurance Championship.</p></div></div>
+            <div class="panel rounded-xl px-4 py-3 items-start gap-3 hover:bg-white/[0.03] transition news-item active" data-cats="all,gt3"><span class="mt-0.5 text-sm">❌</span><div><p class="text-sm font-medium" style="color:#f08080">Bottas recusou extensão com Alfa Romeo</p></div></div>
+          </div>
+        </div>
+        <div>
+          <div class="flex items-center gap-3 mb-3"><div class="h-px flex-1" style="background:rgba(255,255,255,0.04)"></div><span class="text-[10px] font-medium uppercase tracking-widest" style="color:rgba(212,221,240,0.18)">Semana 3 · 15/01/2026</span><div class="h-px flex-1" style="background:rgba(255,255,255,0.04)"></div></div>
+          <div class="space-y-1.5">
+            <div class="panel rounded-xl px-4 py-3 items-start gap-3 hover:bg-white/[0.03] transition news-item active" data-cats="all,bmw"><span class="mt-0.5 text-sm">🎓</span><div><p class="text-sm font-medium" style="color:#c4a3ff">Pourchaire assinou primeiro contrato profissional</p><p class="text-xs mt-1" style="color:rgba(212,221,240,0.3)">BMW M2 Cup — ART Grand Prix</p></div></div>
+            <div class="panel rounded-xl px-4 py-3 items-start gap-3 hover:bg-white/[0.03] transition news-item active" data-cats="all,endurance"><span class="mt-0.5 text-sm">⬆️</span><div><p class="text-sm font-medium" style="color:#86efac">Prema Racing confirmada no Endurance 2026</p></div></div>
+            <div class="panel rounded-xl px-4 py-3 items-start gap-3 hover:bg-white/[0.03] transition news-item active" data-cats="all,gt4"><span class="mt-0.5 text-sm">💼</span><div><p class="text-sm font-medium" style="color:#7EB3FF">McLaren GT enviou proposta</p><p class="text-xs mt-1" style="color:rgba(212,221,240,0.3)">Proposta N2 · GT4 · R$ 680K/ano · 1 ano</p></div></div>
+          </div>
+        </div>
+        <div id="news-empty" class="hidden panel rounded-xl p-10 text-center"><p class="text-sm" style="color:rgba(212,221,240,0.18)">Nenhuma notícia para essa categoria.</p></div>
+      </div>
+    </main>
+
+    <!-- Right: Proposals -->
+    <aside class="w-[268px] shrink-0 overflow-y-auto p-4 flex flex-col gap-3" style="background:rgba(8,16,30,0.97);">
+      <div class="flex items-center gap-2">
+        <span class="relative flex h-2 w-2"><span class="ping absolute inset-0 rounded-full" style="background:#7EB3FF;opacity:0.7;"></span><span class="relative block w-2 h-2 rounded-full" style="background:#7EB3FF;"></span></span>
+        <p class="text-[10px] font-medium uppercase tracking-[0.22em]" style="color:#7EB3FF">Propostas Pendentes</p>
+        <span class="text-[9px] px-1.5 py-0.5 rounded-full font-semibold ml-auto" style="background:rgba(126,179,255,0.12);color:#7EB3FF">2</span>
+      </div>
+
+      <!-- Card 1 -->
+      <div class="panel-blue rounded-2xl p-4">
+        <div class="flex items-center gap-2.5 mb-4">
+          <div class="w-9 h-9 rounded-xl flex items-center justify-center text-sm font-bold shrink-0" style="background:#E73F47">F</div>
+          <div class="flex-1 min-w-0">
+            <p class="text-sm font-semibold truncate">Ferrari AF Corse</p>
+            <p class="text-[10px]" style="color:rgba(212,221,240,0.3)">GT3 Championship</p>
+          </div>
+          <span class="text-[9px] px-1.5 py-0.5 rounded-full font-semibold" style="background:rgba(255,215,0,0.12);color:#ffd700">N1</span>
+        </div>
+        <div class="grid grid-cols-2 gap-1.5 mb-4">
+          <div class="panel rounded-lg px-2 py-2"><p class="text-[9px] font-medium mb-1" style="color:rgba(212,221,240,0.25)">Salário</p><p class="text-xs font-semibold" style="color:#86efac">R$ 1.2M</p></div>
+          <div class="panel rounded-lg px-2 py-2"><p class="text-[9px] font-medium mb-1" style="color:rgba(212,221,240,0.25)">Duração</p><p class="text-xs font-semibold">2 anos</p></div>
+          <div class="panel rounded-lg px-2 py-2"><p class="text-[9px] font-medium mb-1" style="color:rgba(212,221,240,0.25)">Companheiro</p><p class="text-xs font-semibold">C. Leclerc</p></div>
+          <div class="panel rounded-lg px-2 py-2"><p class="text-[9px] font-medium mb-1" style="color:rgba(212,221,240,0.25)">Carro</p><div class="perf-bar mt-1"><div class="h-full rounded-full" style="width:87%;background:#E73F47;opacity:0.8"></div></div><p class="text-[9px] mt-0.5" style="color:rgba(212,221,240,0.22)">87pt</p></div>
+        </div>
+        <div class="flex gap-1.5">
+          <button class="btn-accept">✅ Aceitar</button>
+          <button class="btn-reject">❌ Recusar</button>
+        </div>
+      </div>
+
+      <!-- Card 2 -->
+      <div class="panel rounded-2xl p-4">
+        <div class="flex items-center gap-2.5 mb-4">
+          <div class="w-9 h-9 rounded-xl flex items-center justify-center text-sm font-bold shrink-0" style="background:#FF8000">M</div>
+          <div class="flex-1 min-w-0">
+            <p class="text-sm font-semibold truncate">McLaren GT</p>
+            <p class="text-[10px]" style="color:rgba(212,221,240,0.3)">GT4 Series</p>
+          </div>
+          <span class="text-[9px] px-1.5 py-0.5 rounded-full font-semibold" style="background:rgba(255,255,255,0.06);color:rgba(212,221,240,0.3)">N2</span>
+        </div>
+        <div class="grid grid-cols-2 gap-1.5 mb-4">
+          <div class="panel rounded-lg px-2 py-2"><p class="text-[9px] font-medium mb-1" style="color:rgba(212,221,240,0.25)">Salário</p><p class="text-xs font-semibold">R$ 680K</p></div>
+          <div class="panel rounded-lg px-2 py-2"><p class="text-[9px] font-medium mb-1" style="color:rgba(212,221,240,0.25)">Duração</p><p class="text-xs font-semibold">1 ano</p></div>
+          <div class="panel rounded-lg px-2 py-2"><p class="text-[9px] font-medium mb-1" style="color:rgba(212,221,240,0.25)">Companheiro</p><p class="text-xs font-semibold" style="color:rgba(212,221,240,0.25)">Em aberto</p></div>
+          <div class="panel rounded-lg px-2 py-2"><p class="text-[9px] font-medium mb-1" style="color:rgba(212,221,240,0.25)">Carro</p><div class="perf-bar mt-1"><div class="h-full rounded-full" style="width:72%;background:#FF8000;opacity:0.8"></div></div><p class="text-[9px] mt-0.5" style="color:rgba(212,221,240,0.22)">72pt</p></div>
+        </div>
+        <div class="flex gap-1.5">
+          <button class="btn-accept">✅ Aceitar</button>
+          <button class="btn-reject">❌ Recusar</button>
+        </div>
+      </div>
+
+      <!-- Empty state -->
+      <div class="hidden panel rounded-2xl p-6 text-center">
+        <p class="text-2xl mb-2 opacity-20">📋</p>
+        <p class="text-xs" style="color:rgba(212,221,240,0.2)">Nenhuma proposta pendente.</p>
+      </div>
+    </aside>
+  </div>
+
+  <script>
+    function selectCat(el, cat) {
+      document.querySelectorAll('.cat-tab').forEach(t => t.classList.remove('active'));
+      el.classList.add('active');
+      document.querySelectorAll('.cat-section').forEach(s => s.classList.remove('active'));
+      document.getElementById('grid-' + cat).classList.add('active');
+      let c = 0;
+      document.querySelectorAll('.news-item').forEach(i => {
+        const show = i.getAttribute('data-cats').split(',').includes(cat);
+        i.classList.toggle('active', show);
+        if (show) c++;
+      });
+      document.getElementById('news-empty').classList.toggle('hidden', c > 0);
+    }
+  </script>
+</body>
+</html>

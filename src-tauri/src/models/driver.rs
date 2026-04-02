@@ -266,6 +266,7 @@ impl Driver {
     pub fn reset_season_stats(&mut self) {
         self.stats_temporada = DriverSeasonStats::default();
         self.melhor_resultado_temp = None;
+        self.ultimos_resultados = default_recent_results();
     }
 
     pub fn accumulate_career_stats(&mut self) {

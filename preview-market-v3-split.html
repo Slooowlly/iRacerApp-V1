@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>Mercado - V3 Split Panels</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            app: { bg: '#0E0E10', card: '#1C1C1E', 'card-hover': '#2C2C2E', header: '#000000' },
+            text: { primary: '#e6edf3', secondary: '#9ba3ae', muted: '#484f58' },
+            accent: { primary: '#58a6ff', hover: '#79b8ff' },
+            border: { DEFAULT: '#21262d' }
+          },
+          fontFamily: { sans: ['Segoe UI', 'system-ui', 'sans-serif'] }
+        }
+      }
+    }
+  </script>
+</head>
+<body class="bg-app-bg text-text-primary font-sans h-screen flex flex-col overflow-hidden">
+
+  <!-- PADDOCK CONTENT -->
+  <div class="flex-1 overflow-y-auto p-8 flex justify-center">
+    <div class="w-full max-w-[1400px] flex flex-col gap-6">
+
+      <!-- Category Filter Tabs -->
+      <div class="bg-app-card border border-border rounded-2xl p-2 flex justify-center sticky top-0 z-10 w-max mx-auto shadow-lg">
+         <button class="bg-[#21262d] text-text-primary px-8 py-2 rounded-xl text-xs font-semibold shadow-inner">Mazda</button>
+         <button class="text-text-secondary px-8 py-2 rounded-xl text-xs font-semibold hover:bg-white/5 transition-colors">Toyota</button>
+         <button class="text-text-secondary px-8 py-2 rounded-xl text-xs font-semibold hover:bg-white/5 transition-colors">BMW</button>
+         <button class="text-text-secondary px-8 py-2 rounded-xl text-xs font-semibold hover:bg-white/5 transition-colors">Grand Tour</button>
+         <button class="text-text-secondary px-8 py-2 rounded-xl text-xs font-semibold hover:bg-white/5 transition-colors">Endurance</button>
+      </div>
+
+      <!-- Split Screen Content -->
+      <div class="grid grid-cols-2 gap-8 h-[700px]">
+
+         <!-- LEFT: PADDOCK FEED & PROPOSALS -->
+         <div class="bg-app-card border border-border rounded-2xl p-6 flex flex-col">
+            <div class="mb-6 flex justify-between items-center">
+               <div>
+                  <h2 class="text-xs text-accent-primary font-bold uppercase tracking-wider mb-1">MERCADO & NOTÍCIAS</h2>
+                  <h1 class="text-xl font-bold">Movimentações no Paddock</h1>
+               </div>
+               <div class="text-[10px] text-text-secondary">Semana 4 / 8</div>
+            </div>
+
+            <!-- Urgent Proposal Alert -->
+            <div class="bg-accent-primary/10 border border-accent-primary p-4 rounded-xl mb-6">
+               <h3 class="text-xs font-bold text-accent-primary">⚠️ Decisão Pendente</h3>
+               <p class="text-[11px] text-text-secondary mt-1 mb-3">A equipe <b class="text-text-primary">Ferrari AF Corse</b> ofereceu um contrato N1 com vencimento em 7 dias.</p>
+               <div class="flex gap-2">
+                  <button class="bg-accent-primary text-[#0E0E10] px-4 py-1.5 rounded-lg text-[10px] font-bold">Analisar</button>
+                  <button class="bg-app-card text-text-secondary px-4 py-1.5 rounded-lg text-[10px] font-bold border border-border">Recusar Rápido</button>
+               </div>
+            </div>
+
+            <!-- Timeline -->
+            <div class="flex-1 overflow-y-auto pr-2 relative before:absolute before:inset-0 before:ml-2.5 before:-translate-x-px md:before:mx-auto md:before:translate-x-0 before:h-full before:w-0.5 before:bg-gradient-to-b before:from-transparent before:via-border before:to-transparent">
+               
+               <div class="relative flex items-center justify-between md:justify-normal md:odd:flex-row-reverse group is-active py-3">
+                  <div class="flex items-center justify-center w-6 h-6 rounded-full border border-border bg-app-bg text-text-secondary shrink-0 md:order-1 md:group-odd:-translate-x-1/2 md:group-even:translate-x-1/2 shadow">📝</div>
+                  <div class="w-[calc(100%-3rem)] md:w-[calc(50%-1.5rem)] p-3 rounded-lg border border-border bg-app-bg">
+                     <p class="text-[10px] text-text-muted mb-1">2 dias atrás</p>
+                     <p class="text-xs font-semibold text-text-primary">Charles Leclerc assina renovação multi-anual.</p>
+                  </div>
+               </div>
+               
+               <div class="relative flex items-center justify-between md:justify-normal md:odd:flex-row-reverse group is-active py-3">
+                  <div class="flex items-center justify-center w-6 h-6 rounded-full border border-border bg-app-bg text-[#c4a3ff] shrink-0 md:order-1 md:group-odd:-translate-x-1/2 md:group-even:translate-x-1/2 shadow">🎓</div>
+                  <div class="w-[calc(100%-3rem)] md:w-[calc(50%-1.5rem)] p-3 rounded-lg border border-border bg-app-bg">
+                     <p class="text-[10px] text-text-muted mb-1">3 dias atrás</p>
+                     <p class="text-xs font-semibold text-text-primary">Nova promessa Kimi Antonelli promovido para GT3.</p>
+                  </div>
+               </div>
+
+               <div class="relative flex items-center justify-between md:justify-normal md:odd:flex-row-reverse group is-active py-3">
+                  <div class="flex items-center justify-center w-6 h-6 rounded-full border border-border bg-app-bg text-status-red shrink-0 md:order-1 md:group-odd:-translate-x-1/2 md:group-even:translate-x-1/2 shadow">✖</div>
+                  <div class="w-[calc(100%-3rem)] md:w-[calc(50%-1.5rem)] p-3 rounded-lg border border-border bg-app-bg">
+                     <p class="text-[10px] text-text-muted mb-1">Semana Anterior</p>
+                     <p class="text-xs font-semibold text-text-primary">Lewis Hamilton recusa oferta de renovação.</p>
+                  </div>
+               </div>
+            </div>
+         </div>
+
+         <!-- RIGHT: GRID DA TEMPORADA -->
+         <div class="bg-app-card border border-border rounded-2xl p-6 flex flex-col">
+            <div class="mb-5 flex justify-between items-center">
+               <div>
+                  <h2 class="text-xs text-text-secondary font-bold uppercase tracking-wider mb-1">VAGAS E EQUIPES</h2>
+                  <h1 class="text-xl font-bold">Classificação do Grid</h1>
+               </div>
+               <span class="text-xs font-bold text-text-secondary bg-app-bg py-1 px-3 rounded-lg border border-border">12 Vagas Restantes</span>
+            </div>
+
+            <!-- Separator Pills (Cup vs Rookie) -->
+            <div class="flex gap-2 mb-6 border-b border-border pb-4">
+               <button class="bg-border text-text-primary px-4 py-1 rounded-full text-xs font-semibold">Cup</button>
+               <button class="bg-transparent text-text-muted px-4 py-1 rounded-full text-xs font-semibold hover:text-text-secondary">Rookie</button>
+               <button class="bg-transparent text-text-muted px-4 py-1 rounded-full text-xs font-semibold hover:text-text-secondary">Amador</button>
+            </div>
+
+            <div class="flex-1 overflow-y-auto space-y-3 pr-2">
+               
+               <!-- Team Block -->
+               <div class="group bg-app-bg rounded-xl border border-border relative overflow-hidden transition-all hover:border-[#ffd700]/30 hover:shadow-[0_0_15px_rgba(255,215,0,0.05)]">
+                  <div class="absolute left-0 top-0 w-1.5 h-full bg-[#C8102E]"></div>
+                  
+                  <div class="p-4 pl-5 flex justify-between items-center bg-[#C8102E]/[0.02]">
+                     <div>
+                        <div class="flex items-center gap-2 mb-0.5">
+                           <span class="text-[10px] font-bold text-[#ffd700]">1º LUGAR</span>
+                        </div>
+                        <h3 class="text-sm font-bold text-text-primary">Ghost Racing</h3>
+                     </div>
+                  </div>
+
+                  <div class="border-t border-border grid grid-cols-2 divide-x divide-border">
+                     <div class="p-3 bg-app-card/50">
+                        <p class="text-[9px] font-bold text-text-muted mb-1 tracking-wider">PILOTO PRINCIPAL (N1)</p>
+                        <p class="text-xs text-text-primary font-semibold">Roberto Silva</p>
+                     </div>
+                     <div class="p-3 bg-app-bg hover:bg-white/[0.02] cursor-pointer transition-colors">
+                        <p class="text-[9px] font-bold text-text-muted mb-1 tracking-wider">SEGUNDO CARRO (N2)</p>
+                        <p class="text-xs text-text-secondary italic">⭘ Vaga Aberta</p>
+                     </div>
+                  </div>
+               </div>
+
+               <!-- Team Block -->
+               <div class="group bg-app-bg rounded-xl border border-border relative overflow-hidden transition-all hover:border-text-muted">
+                  <div class="absolute left-0 top-0 w-1.5 h-full bg-[#cc0000]"></div>
+                  
+                  <div class="p-4 pl-5 flex justify-between items-center">
+                     <div>
+                        <div class="flex items-center gap-2 mb-0.5">
+                           <span class="text-[10px] font-bold text-text-secondary">2º LUGAR</span>
+                        </div>
+                        <h3 class="text-sm font-bold text-text-primary">Neo Mazdas</h3>
+                     </div>
+                  </div>
+
+                  <div class="border-t border-border grid grid-cols-2 divide-x divide-border">
+                     <div class="p-3 bg-app-bg hover:bg-white/[0.02] cursor-pointer transition-colors">
+                        <p class="text-[9px] font-bold text-text-muted mb-1 tracking-wider">PILOTO PRINCIPAL (N1)</p>
+                        <p class="text-xs text-text-secondary italic">⭘ Vaga Aberta</p>
+                     </div>
+                     <div class="p-3 bg-app-bg hover:bg-white/[0.02] cursor-pointer transition-colors">
+                        <p class="text-[9px] font-bold text-text-muted mb-1 tracking-wider">SEGUNDO CARRO (N2)</p>
+                        <p class="text-xs text-text-secondary italic">⭘ Vaga Aberta</p>
+                     </div>
+                  </div>
+               </div>
+
+            </div>
+         </div>
+
+      </div>
+
+    </div>
+  </div>
+
+</body>
+</html>

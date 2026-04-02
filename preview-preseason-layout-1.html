@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <title>Pré-Temporada – Estrutura 1: Sidebar Clássica</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap');
+    * { box-sizing: border-box; }
+    body { font-family: 'Space Grotesk', sans-serif; background: #0A0F1C; color: #E6EDF3; height: 100vh; overflow: hidden; display: flex; flex-direction: column; }
+    .glass { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.07); }
+    ::-webkit-scrollbar { width: 5px; }
+    ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.07); border-radius: 8px; }
+
+    .cat-tab { display: flex; align-items: center; gap: 7px; padding: 7px 14px; border-radius: 10px; font-size: 11px; font-weight: 600; cursor: pointer; color: rgba(255,255,255,0.3); }
+    .cat-tab.active { background: rgba(88,166,255,0.1); border: 1px solid rgba(88,166,255,0.3); color: #58a6ff; }
+    .cat-tab .dot { width: 7px; height: 7px; border-radius: 50%; }
+    .grid-slot { display: flex; align-items: center; gap: 9px; padding: 7px 8px; border-radius: 9px; }
+    .grid-slot:hover { background: rgba(255,255,255,0.03); }
+    .grid-slot .bar { width: 3px; height: 26px; border-radius: 2px; }
+    .slot-empty .driver-name { color: rgba(255,255,255,0.2); font-style: italic; }
+  </style>
+</head>
+<body>
+
+  <header class="shrink-0 px-6 py-4 border-b border-white/5 flex justify-between items-center bg-[#0A0F1C] z-10">
+    <div>
+      <p class="text-[10px] uppercase tracking-[0.22em] text-[#58a6ff] font-semibold">Semana 4 / 8 • 22/01/2026</p>
+      <h1 class="text-xl font-bold tracking-tight mt-0.5">Mercado de Transferências</h1>
+    </div>
+    <button class="bg-[#58a6ff] text-[#0A0F1C] font-bold px-6 py-2 rounded-xl text-sm">⏭ Avançar Semana</button>
+  </header>
+
+  <div class="flex flex-1 overflow-hidden">
+    <!-- ESQUERDA: Propostas Pessoais -->
+    <aside class="w-[280px] shrink-0 border-r border-white/5 overflow-y-auto p-4 flex flex-col gap-3 bg-[#0A0F1C]">
+      <p class="text-[10px] uppercase tracking-[0.2em] text-[#58a6ff] font-semibold flex items-center gap-2">
+        <span class="w-2 h-2 rounded-full bg-[#58a6ff] animate-pulse"></span> Propostas Pendentes (2)
+      </p>
+      
+      <div class="glass rounded-2xl border border-[#58a6ff]/30 bg-[#58a6ff]/[0.05] p-4">
+        <div class="flex items-center gap-2.5 mb-3">
+          <div class="w-8 h-8 rounded-xl bg-[#E73F47] flex items-center justify-center font-bold">F</div>
+          <div><p class="text-sm font-bold truncate">Ferrari AF</p><p class="text-[10px] text-white/35">GT3 (N1)</p></div>
+        </div>
+        <div class="grid grid-cols-2 gap-1 text-[10px] mb-3">
+          <div class="glass p-1.5 rounded-lg"><p class="text-white/30">Salário</p><p class="font-bold text-green-400">R$ 1.2M</p></div>
+          <div class="glass p-1.5 rounded-lg"><p class="text-white/30">Carro</p><p class="font-bold">87pt</p></div>
+        </div>
+        <div class="flex gap-1.5"><button class="flex-1 bg-[#58a6ff] text-[#0A0F1C] font-bold py-1.5 rounded-lg text-xs">Aceitar</button></div>
+      </div>
+      
+      <div class="glass rounded-2xl p-4">
+        <div class="flex items-center gap-2.5 mb-3">
+          <div class="w-8 h-8 rounded-xl bg-[#FF8000] flex items-center justify-center font-bold">M</div>
+          <div><p class="text-sm font-bold truncate">McLaren GT</p><p class="text-[10px] text-white/35">GT4 (N2)</p></div>
+        </div>
+        <div class="flex gap-1.5"><button class="flex-1 bg-[#58a6ff] text-[#0A0F1C] font-bold py-1.5 rounded-lg text-xs">Aceitar</button></div>
+      </div>
+    </aside>
+
+    <!-- DIREITA: O Mercado (Grid + News) -->
+    <main class="flex-1 flex flex-col min-w-0">
+      
+      <!-- Filtro Header -->
+      <div class="shrink-0 px-6 py-3 border-b border-white/5 flex gap-2 overflow-x-auto">
+        <button class="cat-tab active"><span class="dot" style="background:#58a6ff"></span> Todas</button>
+        <button class="cat-tab glass"><span class="dot" style="background:#E73F47"></span> GT3</button>
+        <button class="cat-tab glass"><span class="dot" style="background:#3671C6"></span> Endurance</button>
+        <button class="cat-tab glass"><span class="dot" style="background:#6B4FBB"></span> BMW M2</button>
+      </div>
+
+      <!-- Split content -->
+      <div class="flex flex-1 overflow-hidden">
+        
+        <div class="flex-1 overflow-y-auto p-6 border-r border-white/5">
+          <p class="text-[10px] uppercase tracking-[0.2em] text-white/20 font-semibold mb-4">Grid em Construção</p>
+          <div class="space-y-4 max-w-lg">
+            <div class="glass rounded-xl overflow-hidden">
+              <div class="flex items-center justify-between px-3 py-2 border-b border-white/5"><span class="text-[9px] font-bold uppercase text-[#E73F47]">GT3 Championship</span></div>
+              <div class="p-1.5 space-y-0.5">
+                <div class="grid-slot"><div class="bar" style="background:#E73F47"></div><div class="flex-1 min-w-0"><p class="text-[11px] font-semibold">Charles Leclerc</p><p class="text-[9px] text-white/30">Ferrari · Contrato Longo</p></div></div>
+                <div class="grid-slot slot-empty"><div class="bar bg-white/10"></div><div class="flex-1 min-w-0"><p class="text-[11px] driver-name">Vaga Aberta</p><p class="text-[9px] text-white/30">McLaren GT</p></div></div>
+              </div>
+            </div>
+            <div class="glass rounded-xl overflow-hidden">
+              <div class="flex items-center justify-between px-3 py-2 border-b border-white/5"><span class="text-[9px] font-bold uppercase text-[#3671C6]">Endurance</span></div>
+              <div class="p-1.5 space-y-0.5">
+                <div class="grid-slot"><div class="bar" style="background:#3671C6"></div><div class="flex-1 min-w-0"><p class="text-[11px] font-semibold">M. Verstappen</p><p class="text-[9px] text-white/30">Red Bull · N1</p></div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="w-[350px] shrink-0 overflow-y-auto p-6">
+          <p class="text-[10px] uppercase tracking-[0.2em] text-white/20 font-semibold mb-4">Feed Paddock</p>
+          <div class="space-y-3">
+            <div class="glass rounded-xl px-4 py-3"><p class="text-sm font-medium">Lewis Hamilton assinou com SKY Motorsport para Endurance.</p></div>
+            <div class="glass rounded-xl px-4 py-3"><p class="text-sm font-medium text-red-400">Bottas recusa renovação e vira agente livre.</p></div>
+          </div>
+        </div>
+
+      </div>
+    </main>
+  </div>
+</body>
+</html>

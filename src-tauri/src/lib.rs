@@ -95,6 +95,7 @@ pub fn run() {
             commands::career_commands::advance_market_week,
             commands::career_commands::get_preseason_state,
             commands::career_commands::finalize_preseason,
+            commands::career_commands::set_career_resume_context,
             commands::career_commands::get_player_proposals,
             commands::career_commands::respond_to_proposal,
             commands::career_commands::get_news,

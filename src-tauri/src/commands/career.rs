@@ -10,9 +10,10 @@ use crate::calendar::{generate_all_calendars_with_year, CalendarEntry};
 use crate::commands::career_detail::build_driver_detail_payload;
 use crate::commands::career_types::{
     BriefingPhraseEntry, BriefingPhraseEntryInput, BriefingPhraseHistory, BriefingStorySummary,
-    CareerData, CreateCareerResult, DriverDetail, DriverSummary, NextRaceBriefingSummary,
-    PrimaryRivalSummary, RaceSummary, SaveInfo, SeasonSummary, TeamStanding, TeamSummary,
-    TrackHistorySummary, VerifyDatabaseResponse,
+    CareerData, CareerResumeContext, CareerResumeView, CreateCareerResult, DriverDetail,
+    ContractWarningInfo, DriverSummary, NextRaceBriefingSummary, PrimaryRivalSummary,
+    RaceSummary, SaveInfo, SeasonSummary, TeamStanding, TeamSummary, TrackHistorySummary,
+    VerifyDatabaseResponse,
 };
 use crate::commands::race_history::{
     build_driver_histories, empty_previous_champions, ConstructorChampion, DriverRaceHistory,
@@ -299,6 +300,7 @@ pub(crate) fn load_career_in_base_dir(
         build_next_race_briefing_summary(&db.conn, &player.id, active_season.numero, race)
             .unwrap_or_else(|_error| empty_next_race_briefing_summary())
     });
+    let resume_context = read_resume_context(&career_dir)?;
 
     Ok(CareerData {
         career_id: career_id.to_string(),
@@ -334,6 +336,7 @@ pub(crate) fn load_career_in_base_dir(
         next_race_briefing: next_race_briefing_summary,
         total_drivers,
         total_teams,
+        resume_context,
     })
 }
 
@@ -651,6 +654,14 @@ pub(crate) fn advance_season_in_base_dir(
         .save()
         .map_err(|e| format!("Falha ao atualizar config do app: {e}"))?;
 
+    write_resume_context(
+        &career_dir,
+        &CareerResumeContext {
+            active_view: CareerResumeView::EndOfSeason,
+            end_of_season_result: Some(result.clone()),
+        },
+    )?;
+
     Ok(result)
 }
 
@@ -894,6 +905,7 @@ pub(crate) fn finalize_preseason_in_base_dir(
     }
 
     delete_preseason_plan(&career_dir)?;
+    delete_resume_context(&career_dir)?;
     meta.last_played = Local::now().format("%Y-%m-%dT%H:%M:%S").to_string();
     write_save_meta(&meta_path, &meta)?;
 
@@ -932,6 +944,105 @@ fn read_save_meta(path: &Path) -> Result<SaveMeta, String> {
         std::fs::read_to_string(path).map_err(|e| format!("Falha ao ler meta.json: {e}"))?;
     serde_json::from_str::<SaveMeta>(&content)
         .map_err(|e| format!("Falha ao parsear meta.json: {e}"))
+}
+
+fn resume_context_path(career_dir: &Path) -> PathBuf {
+    career_dir.join("resume_context.json")
+}
+
+fn read_resume_context(career_dir: &Path) -> Result<Option<CareerResumeContext>, String> {
+    let path = resume_context_path(career_dir);
+    if !path.exists() {
+        return Ok(None);
+    }
+
+    let content = std::fs::read_to_string(&path)
+        .map_err(|e| format!("Falha ao ler resume_context.json: {e}"))?;
+    let context = serde_json::from_str::<CareerResumeContext>(&content)
+        .map_err(|e| format!("Falha ao parsear resume_context.json: {e}"))?;
+    normalize_resume_context(career_dir, context)
+}
+
+fn normalize_resume_context(
+    career_dir: &Path,
+    context: CareerResumeContext,
+) -> Result<Option<CareerResumeContext>, String> {
+    match context.active_view {
+        CareerResumeView::Dashboard => Ok(None),
+        CareerResumeView::EndOfSeason => {
+            if context.end_of_season_result.is_some() {
+                Ok(Some(context))
+            } else if load_preseason_plan(career_dir)?.is_some() {
+                Ok(Some(CareerResumeContext {
+                    active_view: CareerResumeView::Preseason,
+                    end_of_season_result: None,
+                }))
+            } else {
+                Ok(None)
+            }
+        }
+        CareerResumeView::Preseason => {
+            if load_preseason_plan(career_dir)?.is_some() {
+                Ok(Some(CareerResumeContext {
+                    active_view: CareerResumeView::Preseason,
+                    end_of_season_result: None,
+                }))
+            } else {
+                Ok(None)
+            }
+        }
+    }
+}
+
+fn write_resume_context(career_dir: &Path, context: &CareerResumeContext) -> Result<(), String> {
+    let path = resume_context_path(career_dir);
+    let payload = serde_json::to_string_pretty(context)
+        .map_err(|e| format!("Falha ao serializar resume_context.json: {e}"))?;
+    std::fs::write(&path, payload)
+        .map_err(|e| format!("Falha ao gravar resume_context.json: {e}"))
+}
+
+fn delete_resume_context(career_dir: &Path) -> Result<(), String> {
+    let path = resume_context_path(career_dir);
+    if !path.exists() {
+        return Ok(());
+    }
+
+    std::fs::remove_file(&path)
+        .map_err(|e| format!("Falha ao remover resume_context.json: {e}"))
+}
+
+pub(crate) fn persist_resume_context_in_base_dir(
+    base_dir: &Path,
+    career_id: &str,
+    active_view: CareerResumeView,
+    end_of_season_result: Option<EndOfSeasonResult>,
+) -> Result<(), String> {
+    let (_db, career_dir, _) = open_career_resources(base_dir, career_id)?;
+
+    match active_view {
+        CareerResumeView::Dashboard => delete_resume_context(&career_dir),
+        CareerResumeView::EndOfSeason => {
+            let Some(result) = end_of_season_result else {
+                return Err("Estado de fim de temporada requer payload para restauracao.".to_string());
+            };
+
+            write_resume_context(
+                &career_dir,
+                &CareerResumeContext {
+                    active_view,
+                    end_of_season_result: Some(result),
+                },
+            )
+        }
+        CareerResumeView::Preseason => write_resume_context(
+            &career_dir,
+            &CareerResumeContext {
+                active_view,
+                end_of_season_result: None,
+            },
+        ),
+    }
 }
 
 pub(crate) fn get_briefing_phrase_history_in_base_dir(
@@ -1778,6 +1889,8 @@ pub(crate) fn get_teams_standings_in_base_dir(
                         }]
                     })
                     .unwrap_or_default(),
+                classe: team.classe.clone(),
+                temp_posicao: team.temp_posicao,
             }
         })
         .collect();
@@ -1998,6 +2111,7 @@ fn empty_next_race_briefing_summary() -> NextRaceBriefingSummary {
         track_history: Some(empty_track_history_summary()),
         primary_rival: None,
         weekend_stories: Vec::new(),
+        contract_warning: None,
     }
 }
 
@@ -2007,10 +2121,24 @@ fn build_next_race_briefing_summary(
     season_number: i32,
     race: &CalendarEntry,
 ) -> Result<NextRaceBriefingSummary, String> {
+    let contract_warning = contract_queries::get_active_contract_for_pilot(conn, player_id)
+        .map_err(|e| format!("Falha ao buscar contrato do jogador: {e}"))?
+        .and_then(|c| {
+            if c.is_ultimo_ano(season_number) {
+                Some(ContractWarningInfo {
+                    temporada_fim: c.temporada_fim,
+                    equipe_nome: c.equipe_nome,
+                })
+            } else {
+                None
+            }
+        });
+
     Ok(NextRaceBriefingSummary {
         track_history: Some(build_track_history_summary(conn, player_id, &race.track_name)?),
         primary_rival: build_primary_rival_summary(conn, player_id, &race.categoria)?,
         weekend_stories: build_weekend_story_summaries(conn, season_number, &race.categoria, race.rodada)?,
+        contract_warning,
     })
 }
 
@@ -2415,6 +2543,28 @@ mod tests {
         assert!(
             career_json.get("next_race_briefing").is_some(),
             "expected load_career payload to expose next_race_briefing",
+        );
+
+        let _ = fs::remove_dir_all(base_dir);
+    }
+
+    #[test]
+    fn test_load_career_restores_resume_context_snapshot() {
+        let base_dir = create_test_career_dir("load_resume_context");
+        mark_all_races_completed(&base_dir, "career_001");
+
+        let result = advance_season_in_base_dir(&base_dir, "career_001")
+            .expect("advance season should work");
+        let career = load_career_in_base_dir(&base_dir, "career_001").expect("load career");
+        let resume_context = career.resume_context.expect("resume context");
+
+        assert_eq!(resume_context.active_view, CareerResumeView::EndOfSeason);
+        assert_eq!(
+            resume_context
+                .end_of_season_result
+                .as_ref()
+                .map(|snapshot| snapshot.new_year),
+            Some(result.new_year)
         );
 
         let _ = fs::remove_dir_all(base_dir);
@@ -3070,6 +3220,17 @@ mod tests {
             .join("career_001")
             .join("preseason_plan.json")
             .exists());
+        let resume_context = read_resume_context(&config.saves_dir().join("career_001"))
+            .expect("read resume context")
+            .expect("resume context");
+        assert_eq!(resume_context.active_view, CareerResumeView::EndOfSeason);
+        assert_eq!(
+            resume_context
+                .end_of_season_result
+                .as_ref()
+                .map(|snapshot| snapshot.new_year),
+            Some(result.new_year)
+        );
 
         let _ = fs::remove_dir_all(base_dir);
     }
@@ -3103,6 +3264,71 @@ mod tests {
 
         assert_eq!(week.week_number, 1);
         assert!(state.current_week >= 2 || state.is_complete);
+
+        let _ = fs::remove_dir_all(base_dir);
+    }
+
+    #[test]
+    fn test_advance_season_clears_current_standings_results_and_archives_previous_season() {
+        let base_dir = create_test_career_dir("advance_archives_recent_results");
+        let config = AppConfig::load_or_default(&base_dir);
+        let db_path = config.saves_dir().join("career_001").join("career.db");
+        let db = Database::open_existing(&db_path).expect("db");
+
+        let mut player = driver_queries::get_player_driver(&db.conn).expect("player");
+        player.stats_temporada.corridas = 3;
+        player.stats_temporada.pontos = 41.0;
+        player.stats_temporada.vitorias = 1;
+        player.stats_temporada.podios = 2;
+        player.ultimos_resultados = serde_json::json!([
+            { "position": 9, "is_dnf": false },
+            { "position": 5, "is_dnf": false },
+            { "position": 1, "is_dnf": false }
+        ]);
+        driver_queries::update_driver(&db.conn, &player).expect("update player");
+
+        mark_all_races_completed(&base_dir, "career_001");
+        advance_season_in_base_dir(&base_dir, "career_001").expect("advance season");
+
+        let standings =
+            get_drivers_by_category_in_base_dir(&base_dir, "career_001", "mazda_rookie")
+                .expect("driver standings");
+        let snapshot_json: String = db
+            .conn
+            .query_row(
+                "SELECT snapshot_json
+                 FROM driver_season_archive
+                 WHERE piloto_id = ?1 AND season_number = 1",
+                rusqlite::params![&player.id],
+                |row| row.get(0),
+            )
+            .expect("archived season snapshot");
+        let snapshot: serde_json::Value =
+            serde_json::from_str(&snapshot_json).expect("valid snapshot json");
+
+        let refreshed_player = standings
+            .into_iter()
+            .find(|entry| entry.is_jogador)
+            .expect("player standing");
+
+        assert!(
+            refreshed_player.results.iter().all(Option::is_none),
+            "new season standings should not show previous season recent results"
+        );
+        assert_eq!(
+            snapshot["ultimos_resultados"],
+            serde_json::json!([
+                { "position": 9, "is_dnf": false },
+                { "position": 5, "is_dnf": false },
+                { "position": 1, "is_dnf": false }
+            ]),
+            "snapshot should preserve ultimos_resultados from the archived season"
+        );
+        assert_eq!(snapshot["corridas"], 3, "snapshot should preserve corridas");
+        assert!(
+            snapshot["atributos"]["skill"].is_number(),
+            "snapshot should include atributos"
+        );
 
         let _ = fs::remove_dir_all(base_dir);
     }
@@ -3322,10 +3548,22 @@ mod tests {
         let save_dir = config.saves_dir().join("career_001");
         let db_path = save_dir.join("career.db");
         force_complete_preseason_plan(&save_dir);
+        persist_resume_context_in_base_dir(
+            &base_dir,
+            "career_001",
+            CareerResumeView::Preseason,
+            None,
+        )
+        .expect("persist preseason resume context");
 
         finalize_preseason_in_base_dir(&base_dir, "career_001").expect("finalize preseason");
 
         assert!(!save_dir.join("preseason_plan.json").exists());
+        assert!(
+            read_resume_context(&save_dir)
+                .expect("read resume context")
+                .is_none()
+        );
 
         let _ = fs::remove_dir_all(base_dir);
     }

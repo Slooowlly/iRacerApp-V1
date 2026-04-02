@@ -1,10 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-
-import GlassButton from "../ui/GlassButton";
-import GlassCard from "../ui/GlassCard";
 import useCareerStore from "../../stores/useCareerStore";
 import { formatGap, formatLapTime } from "../../utils/formatters";
+
+function weatherLabel(value) {
+  if (value === "HeavyRain") return "Chuva forte";
+  if (value === "Wet") return "Chuva";
+  if (value === "Damp") return "Úmido";
+  return "Seco";
+}
 
 function RaceResultView({ result, onDismiss }) {
   const careerId = useCareerStore((state) => state.careerId);
@@ -12,6 +16,7 @@ function RaceResultView({ result, onDismiss }) {
   const otherCategoriesResult = useCareerStore((state) => state.otherCategoriesResult);
   const [showChampionship, setShowChampionship] = useState(false);
   const [championship, setChampionship] = useState([]);
+  const [teamColors, setTeamColors] = useState({});
   const [loadingChampionship, setLoadingChampionship] = useState(false);
   const [championshipError, setChampionshipError] = useState("");
 
@@ -19,35 +24,36 @@ function RaceResultView({ result, onDismiss }) {
     () => result?.race_results?.find((entry) => entry.is_jogador) ?? null,
     [result],
   );
+  
   const winner = useMemo(
     () => result?.race_results?.find((entry) => entry.finish_position === 1) ?? null,
     [result],
   );
+  
   const poleSitter = useMemo(
     () => result?.qualifying_results?.find((entry) => entry.is_pole) ?? null,
     [result],
   );
+  
   const fastestLap = useMemo(
     () => result?.race_results?.find((entry) => entry.has_fastest_lap) ?? null,
     [result],
   );
+  
   const biggestGainer = useMemo(() => {
     const activeResults = result?.race_results?.filter((entry) => !entry.is_dnf) ?? [];
     if (activeResults.length === 0) return null;
     return activeResults.reduce((best, entry) =>
       entry.positions_gained > best.positions_gained ? entry : best,
-    );
+    activeResults[0]);
   }, [result]);
 
   useEffect(() => {
     let mounted = true;
-
     async function fetchChampionship() {
-      if (!showChampionship || !careerId || !playerTeam?.categoria) return;
-
+      if (!careerId || !playerTeam?.categoria) return;
       setLoadingChampionship(true);
       setChampionshipError("");
-
       try {
         const data = await invoke("get_drivers_by_category", {
           careerId,
@@ -55,316 +61,268 @@ function RaceResultView({ result, onDismiss }) {
         });
         if (mounted) {
           setChampionship(data);
+          
+          const colors = {};
+          data.forEach(d => {
+            if (d.equipe_nome && d.equipe_cor) {
+              colors[d.equipe_nome] = d.equipe_cor;
+            }
+          });
+          setTeamColors(colors);
         }
       } catch (error) {
         if (mounted) {
           setChampionshipError(
-            typeof error === "string"
-              ? error
-              : "Nao foi possivel carregar o campeonato atualizado.",
+            typeof error === "string" ? error : "Não foi possível carregar o campeonato."
           );
         }
       } finally {
-        if (mounted) {
-          setLoadingChampionship(false);
-        }
+        if (mounted) setLoadingChampionship(false);
       }
     }
-
     fetchChampionship();
-    return () => {
-      mounted = false;
-    };
-  }, [showChampionship, careerId, playerTeam?.categoria]);
+    return () => { mounted = false; };
+  }, [careerId, playerTeam?.categoria]);
 
   if (!result) return null;
 
   return (
-    <div className="space-y-6">
-      <GlassCard hover={false} className="glass-strong rounded-[30px] p-8 lg:p-10">
-        <div className="flex flex-col gap-4 border-b border-white/10 pb-6 lg:flex-row lg:items-start lg:justify-between">
-          <div>
-            <p className="text-[11px] uppercase tracking-[0.24em] text-accent-primary">
-              Resultado da corrida
-            </p>
-            <h1 className="mt-3 text-3xl font-semibold tracking-[-0.04em] text-text-primary lg:text-4xl">
-              {result.track_name}
-            </h1>
-            <p className="mt-2 text-sm text-text-secondary">
-              {weatherLabel(result.weather)} • {result.total_laps} voltas
-            </p>
-          </div>
-
-          <div className="glass-light rounded-2xl px-5 py-4 text-sm text-text-secondary">
-            <p className="text-[10px] uppercase tracking-[0.18em] text-text-muted">Vencedor</p>
-            <p className="mt-2 text-lg font-semibold text-text-primary">
-              {winner?.pilot_name ?? "—"}
-            </p>
-            <p className="mt-1">{winner?.team_name ?? "—"}</p>
-          </div>
-        </div>
-
-        <div className="mt-6 grid gap-4 lg:grid-cols-4">
-          <HighlightCard
-            label="Pole position"
-            value={poleSitter?.pilot_name ?? "—"}
-            detail={poleSitter ? formatLapTime(poleSitter.best_lap_time_ms) : "—"}
-          />
-          <HighlightCard
-            label="Volta mais rapida"
-            value={fastestLap?.pilot_name ?? "—"}
-            detail={fastestLap ? formatLapTime(fastestLap.best_lap_time_ms) : "—"}
-          />
-          <HighlightCard
-            label="Maior ganho"
-            value={biggestGainer?.pilot_name ?? "—"}
-            detail={biggestGainer ? deltaLabel(biggestGainer.positions_gained) : "—"}
-          />
-          <HighlightCard
-            label="Seu resultado"
-            value={playerResult ? `P${playerResult.finish_position}` : "—"}
-            detail={
-              playerResult
-                ? `Grid P${playerResult.grid_position} • ${deltaLabel(playerResult.positions_gained)}`
-                : "Sem piloto"
-            }
-          />
-        </div>
-
-        <div className="mt-8 overflow-x-auto">
-          <table className="w-full min-w-[860px]">
-            <thead>
-              <tr className="border-b border-white/10 text-left text-[11px] uppercase tracking-[0.18em] text-text-muted">
-                <th className="py-3 pr-4">Pos</th>
-                <th className="py-3 pr-4">Grid</th>
-                <th className="py-3 pr-4">Piloto</th>
-                <th className="py-3 pr-4">Equipe</th>
-                <th className="py-3 pr-4 text-right">Pts</th>
-                <th className="py-3 pr-4 text-right">+/-</th>
-                <th className="py-3 text-right">Gap</th>
-              </tr>
-            </thead>
-            <tbody>
-              {result.race_results.map((entry) => (
-                <tr
-                  key={entry.pilot_id}
-                  className={[
-                    "border-b border-white/5 transition-glass hover:bg-white/5",
-                    entry.is_jogador ? "bg-accent-primary/10" : "",
-                  ].join(" ")}
-                >
-                  <td className="py-3 pr-4 text-sm font-semibold">
-                    <span className={positionClass(entry.finish_position)}>
-                      {positionPrefix(entry.finish_position)}
-                      {entry.is_dnf ? "DNF" : entry.finish_position}
-                    </span>
-                  </td>
-                  <td className="py-3 pr-4 text-sm text-text-secondary">{entry.grid_position}</td>
-                  <td className="py-3 pr-4">
-                    <div className="flex items-center gap-2">
-                      {entry.has_fastest_lap ? <span title="Volta mais rapida">⚡</span> : null}
-                      <span
-                        className={[
-                          "text-sm",
-                          entry.is_jogador ? "font-semibold text-accent-primary" : "text-text-primary",
-                        ].join(" ")}
-                      >
-                        {entry.is_jogador ? `▶ ${entry.pilot_name} ◀` : entry.pilot_name}
-                      </span>
-                    </div>
-                  </td>
-                  <td className="py-3 pr-4 text-sm text-text-secondary">{entry.team_name}</td>
-                  <td className="py-3 pr-4 text-right font-mono text-sm font-semibold text-text-primary">
-                    {entry.points_earned}
-                  </td>
-                  <td
-                    className={[
-                      "py-3 pr-4 text-right font-mono text-sm font-semibold",
-                      deltaClass(entry.positions_gained),
-                    ].join(" ")}
-                  >
-                    {deltaLabel(entry.positions_gained)}
-                  </td>
-                  <td className="py-3 text-right font-mono text-sm text-text-secondary">
-                    {entry.finish_position === 1 ? formatLapTime(entry.total_race_time_ms) : formatGap(entry.gap_to_winner_ms)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-
-        <div className="mt-8 rounded-[26px] border border-white/10 bg-white/[0.03] px-5 py-5">
-          <button
-            onClick={() => setShowChampionship((current) => !current)}
-            className="text-sm font-semibold text-accent-primary transition-glass hover:text-accent-hover"
-          >
-            {showChampionship ? "▲ Ocultar campeonato" : "▼ Ver campeonato atualizado"}
-          </button>
-
-          {showChampionship ? (
-            <div className="mt-4">
-              {loadingChampionship ? (
-                <p className="text-sm text-text-secondary">Atualizando classificacao da categoria...</p>
-              ) : championshipError ? (
-                <div className="rounded-2xl border border-status-red/30 bg-status-red/10 px-4 py-3 text-sm text-status-red">
-                  {championshipError}
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {championship.slice(0, 10).map((driver) => (
-                    <div
-                      key={driver.id}
-                      className={[
-                        "flex items-center justify-between rounded-2xl border border-white/6 bg-white/[0.03] px-4 py-3",
-                        driver.is_jogador ? "border-accent-primary/30 bg-accent-primary/10" : "",
-                      ].join(" ")}
-                    >
-                      <div className="flex items-center gap-3">
-                        <span className={["w-7 text-center text-sm font-semibold", podiumClass(driver.posicao_campeonato - 1)].join(" ")}>
-                          {driver.posicao_campeonato}
-                        </span>
-                        <div>
-                          <p className={["text-sm", driver.is_jogador ? "font-semibold text-accent-primary" : "text-text-primary"].join(" ")}>
-                            {driver.nome}
-                          </p>
-                          <p className="text-xs text-text-secondary">{driver.equipe_nome ?? "—"}</p>
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <p className="font-mono text-base font-semibold text-text-primary">{driver.pontos}</p>
-                        <p className="text-xs text-text-secondary">{driver.vitorias} vitorias</p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          ) : null}
-        </div>
-
-        {otherCategoriesResult?.total_races_simulated > 0 ? (
-          <div className="mt-8">
-            <OtherCategoriesSection summary={otherCategoriesResult} />
-          </div>
-        ) : null}
-
-        <div className="mt-8 flex justify-end">
-          <GlassButton variant="primary" onClick={onDismiss} className="min-w-48">
-            Continuar
-          </GlassButton>
-        </div>
-      </GlassCard>
-    </div>
-  );
-}
-
-function HighlightCard({ label, value, detail }) {
-  return (
-    <div className="glass-light rounded-2xl p-4">
-      <p className="text-[10px] uppercase tracking-[0.18em] text-text-muted">{label}</p>
-      <p className="mt-3 text-base font-semibold text-text-primary">{value}</p>
-      <p className="mt-1 text-sm text-text-secondary">{detail}</p>
-    </div>
-  );
-}
-
-function OtherCategoriesSection({ summary }) {
-  return (
-    <div className="rounded-[26px] border border-white/10 bg-white/[0.03] px-5 py-5">
-      <div className="flex items-center justify-between gap-4 border-b border-white/10 pb-4">
+    <div className="relative z-10 flex h-[calc(100vh-4rem)] w-full flex-col rounded-[32px] border border-white/5 bg-[#080d14]/40 p-2 animate-fade-in shadow-[0_10px_50px_rgba(0,0,0,0.5)] backdrop-blur-3xl lg:p-4">
+      
+      {/* HEADER */}
+      <header className="flex flex-col lg:flex-row justify-between items-end mb-6 border-b border-white/10 pb-6 shrink-0 px-4 pt-4">
         <div>
-          <p className="text-[10px] uppercase tracking-[0.18em] text-text-muted">
-            Outras categorias
-          </p>
-          <p className="mt-2 text-lg font-semibold text-text-primary">
-            {summary.total_races_simulated} corrida
-            {summary.total_races_simulated > 1 ? "s" : ""} simulada
-            {summary.total_races_simulated > 1 ? "s" : ""}
-          </p>
+          <p className="text-[11px] uppercase font-black text-[#58a6ff] tracking-[0.3em] mb-2 shadow-text">Classificação Final</p>
+          <h1 className="text-4xl lg:text-5xl font-extrabold text-white tracking-tight">{result.track_name}</h1>
+          <p className="text-gray-400 mt-2 font-mono text-sm capitalize">{weatherLabel(result.weather)} • {result.total_laps} Voltas Completadas</p>
         </div>
-        <div className="glass-light rounded-2xl px-4 py-3 text-right">
-          <p className="text-[10px] uppercase tracking-[0.18em] text-text-muted">Categorias</p>
-          <p className="mt-2 text-base font-semibold text-text-primary">
-            {summary.categories_simulated.length}
-          </p>
-        </div>
-      </div>
-
-      <div className="mt-5 space-y-4">
-        {summary.categories_simulated.map((category) => (
-          <div
-            key={category.category_id}
-            className="rounded-2xl border border-white/6 bg-white/[0.03] px-4 py-4"
-          >
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="text-sm font-semibold text-text-primary">{category.category_name}</p>
-                <p className="text-xs text-text-secondary">
-                  {category.races_simulated} corrida
-                  {category.races_simulated > 1 ? "s" : ""} processada
-                  {category.races_simulated > 1 ? "s" : ""}
-                </p>
-              </div>
-            </div>
-
-            <div className="mt-3 space-y-2">
-              {category.results.map((race) => (
-                <div
-                  key={race.race_id}
-                  className="flex flex-col gap-1 rounded-2xl border border-white/5 bg-black/10 px-3 py-3 text-sm md:flex-row md:items-center md:justify-between"
-                >
-                  <span className="text-text-primary">{race.track_name}</span>
-                  <span className="text-text-secondary">
-                    🏆 {race.winner_name} ({race.winner_team})
-                  </span>
-                </div>
-              ))}
-            </div>
+        
+        <div className="mt-6 lg:mt-0 bg-[#0a0f16]/80 border border-white/10 px-6 py-4 rounded-2xl flex items-center gap-6 shadow-xl">
+          <div>
+            <p className="text-[10px] uppercase tracking-widest text-[#58a6ff] font-bold">Seu Desempenho</p>
+            <p className="text-3xl font-black text-white leading-none mt-1 drop-shadow-md">
+              {playerResult ? (playerResult.is_dnf ? "DNF" : `P${playerResult.finish_position}`) : "—"}
+            </p>
           </div>
-        ))}
+          <div className="text-right">
+             <p className={`text-xs font-bold px-2 py-0.5 rounded uppercase tracking-wider shadow-sm ${playerResult && playerResult.positions_gained >= 0 ? 'text-green-400 bg-green-500/10' : 'text-red-400 bg-red-500/10'}`}>
+                {playerResult ? (playerResult.positions_gained > 0 ? `+${playerResult.positions_gained}` : playerResult.positions_gained) : "-"} Var
+             </p>
+             <p className="text-[10px] text-gray-400 mt-1 uppercase tracking-widest font-bold">Grid: {playerResult ? `${playerResult.grid_position}º` : "—"}</p>
+          </div>
+          <div className="h-10 w-[1px] bg-white/10 mx-2"></div>
+          <button onClick={onDismiss} className="px-6 py-3 bg-[#58a6ff] hover:bg-blue-400 text-[#05080c] font-black uppercase tracking-widest rounded-xl transition text-xs shadow-[0_0_20px_rgba(88,166,255,0.2)]">
+            Voltar Aos Boxes
+          </button>
+        </div>
+      </header>
+
+      {/* CONTEÚDO */}
+      <div className="grid grid-cols-12 gap-6 flex-1 min-h-0 px-4 pb-4">
+        
+        {/* Esquerda: Destaques */}
+        <div className="col-span-12 lg:col-span-3 flex flex-col gap-4 overflow-y-auto pr-2 custom-scrollbar">
+            
+            {/* Vencedor */}
+            <div className="relative rounded-2xl p-6 text-center border border-yellow-500/20 bg-yellow-500/5 shadow-inner">
+                <span className="text-yellow-500 text-3xl mb-2 block drop-shadow-[0_0_15px_rgba(234,179,8,0.5)]">🏆</span>
+                <p className="text-[10px] uppercase font-bold text-gray-400 tracking-wider">Vencedor</p>
+                <p className="text-xl font-bold text-white mt-1 relative">{winner?.pilot_name || "—"}</p>
+                <p className="text-[10px] font-black tracking-widest text-yellow-500 uppercase mt-1 opacity-80">{winner?.team_name || "—"}</p>
+            </div>
+            
+            {/* Fastest Lap */}
+            <div className="rounded-2xl p-5 border border-purple-500/20 bg-purple-500/5 shadow-inner flex flex-col justify-center">
+                <p className="text-[10px] uppercase font-bold text-purple-400 tracking-wider">Volta Mais Rápida</p>
+                <div className="flex justify-between items-end mt-1">
+                    <p className="text-lg font-bold text-white truncate max-w-[130px] pr-2">{fastestLap?.pilot_name || "—"}</p>
+                    <p className="text-sm font-mono font-bold text-purple-300 drop-shadow-md">{fastestLap ? formatLapTime(fastestLap.best_lap_time_ms) : "—"}</p>
+                </div>
+            </div>
+
+            {/* Pole Position */}
+            <div className="rounded-2xl p-5 border border-white/10 bg-white/5 shadow-inner flex flex-col justify-center">
+                <p className="text-[10px] uppercase font-bold text-gray-400 tracking-wider">Pole Position</p>
+                <div className="flex justify-between items-end mt-1">
+                    <p className="text-lg font-bold text-white truncate max-w-[130px] pr-2">{poleSitter?.pilot_name || "—"}</p>
+                    <p className="text-sm font-mono text-gray-400">{poleSitter ? formatLapTime(poleSitter.best_lap_time_ms) : "—"}</p>
+                </div>
+            </div>
+
+            {/* Escalada */}
+            <div className="rounded-2xl p-5 border border-green-500/20 bg-green-500/5 shadow-inner flex items-center justify-between">
+                <div>
+                    <p className="text-[10px] uppercase font-bold text-green-400 tracking-wider">Maior Escalada</p>
+                    <p className="text-lg font-bold text-white mt-1 truncate max-w-[120px]">{biggestGainer?.pilot_name || "—"}</p>
+                </div>
+                {biggestGainer && (
+                    <span className="bg-green-500/20 text-green-400 border border-green-500/30 px-3 py-1 rounded font-black text-sm drop-shadow-sm">
+                        {biggestGainer.positions_gained > 0 ? `+${biggestGainer.positions_gained}` : biggestGainer.positions_gained}
+                    </span>
+                )}
+            </div>
+            
+            {/* Outras Categorias Mini-Resumo */}
+            {otherCategoriesResult?.total_races_simulated > 0 && (
+                <div className="mt-auto rounded-2xl border border-white/5 bg-[#05080c] p-4 relative overflow-hidden group">
+                    <p className="text-[10px] uppercase tracking-widest font-bold text-gray-500">Outras Categorias</p>
+                    <p className="mt-1 text-sm font-bold text-[#58a6ff]">
+                        {otherCategoriesResult.total_races_simulated} corrida{otherCategoriesResult.total_races_simulated > 1 ? 's' : ''} processada{otherCategoriesResult.total_races_simulated > 1 ? 's' : ''}
+                    </p>
+                    <div className="mt-2 flex flex-wrap gap-1">
+                        {otherCategoriesResult.categories_simulated.map(cat => (
+                            <span key={cat.category_id} className="text-[9px] uppercase font-bold tracking-widest border border-white/10 bg-white/5 px-2 py-0.5 rounded text-gray-400">
+                                {cat.category_name}
+                            </span>
+                        ))}
+                    </div>
+                </div>
+            )}
+        </div>
+
+        {/* Direita: Tabela de Resultados (100% dinâmica com scroll perfeito) */}
+        <div className="col-span-12 lg:col-span-9 rounded-3xl p-6 overflow-hidden flex flex-col bg-[#060a10] border border-white/5 shadow-inner relative">
+             
+             {/* Gradient glow interno no topo para suavizar */}
+             <div className="absolute top-0 left-0 right-0 h-16 bg-gradient-to-b from-[#58a6ff]/5 to-transparent pointer-events-none"></div>
+
+             <div className="flex justify-between items-center mb-4 border-b border-white/10 pb-4 shrink-0 px-2 relative z-10">
+                 <h3 className="text-sm font-bold text-white uppercase tracking-widest opacity-90 drop-shadow-sm">
+                     {showChampionship ? "Classificação Geral do Campeonato" : "Tabela Oficial da Prova"}
+                 </h3>
+                 <button 
+                     onClick={() => setShowChampionship(!showChampionship)}
+                     className="text-[11px] text-[#58a6ff] bg-[#58a6ff]/10 hover:bg-[#58a6ff]/20 border border-[#58a6ff]/30 px-4 py-1.5 rounded-lg uppercase font-bold tracking-widest transition"
+                 >
+                     {showChampionship ? "Retornar aos Resultados" : "Ver Campeonato Completo"}
+                 </button>
+             </div>
+             
+             <div className="flex-1 overflow-y-auto custom-scrollbar pr-2 relative z-10">
+                 {showChampionship ? (
+                     <div className="animate-fade-in pr-2">
+                         {loadingChampionship ? (
+                             <div className="py-10 text-center">
+                                 <p className="text-sm text-gray-400 font-mono tracking-widest uppercase animate-pulse">Consultando Federação...</p>
+                             </div>
+                         ) : championshipError ? (
+                             <div className="bg-red-500/10 border border-red-500/30 text-red-400 px-4 py-3 rounded-xl text-sm font-mono text-center">
+                                 {championshipError}
+                             </div>
+                         ) : (
+                             <table className="w-full text-left">
+                                <thead className="text-[10px] uppercase tracking-[0.2em] text-gray-500 sticky top-0 bg-[#060a10] z-10 shadow-sm">
+                                    <tr>
+                                        <th className="py-4 px-2 w-[80px] text-center border-b border-white/5">POS</th>
+                                        <th className="py-4 px-2 border-b border-white/5">PILOTO</th>
+                                        <th className="py-4 px-2 w-[180px] border-b border-white/5">EQUIPE</th>
+                                        <th className="py-4 px-2 w-24 text-center border-b border-white/5">VITÓRIAS</th>
+                                        <th className="py-4 px-2 w-20 text-right pr-4 border-b border-white/5">PTS</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="text-sm font-medium divide-y divide-white/5">
+                                    {championship.map((driver) => (
+                                        <tr key={driver.id} className={`hover:bg-white/5 transition ${driver.is_jogador ? 'bg-[#58a6ff]/10 relative shadow-[inset_4px_0_0_#58a6ff]' : ''}`}>
+                                            <td className={`py-4 px-2 text-center text-lg font-black ${driver.posicao_campeonato === 1 ? 'text-yellow-500' : driver.posicao_campeonato === 2 ? 'text-gray-300' : driver.posicao_campeonato === 3 ? 'text-orange-400' : 'text-gray-500'}`}>
+                                                {driver.posicao_campeonato}
+                                            </td>
+                                            <td className={`py-4 px-2 font-bold ${driver.is_jogador ? 'text-[#58a6ff]' : 'text-gray-200'}`}>
+                                                {driver.is_jogador ? `▶ ${driver.nome} ◀` : driver.nome}
+                                            </td>
+                                            <td className="py-4 px-2 text-[10px] font-bold uppercase tracking-widest text-gray-400 opacity-90">
+                                                <div className="flex items-center gap-2">
+                                                    {driver.equipe_cor && (
+                                                        <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: driver.equipe_cor, boxShadow: `0 0 8px ${driver.equipe_cor}80` }}></div>
+                                                    )}
+                                                    <span className={`truncate max-w-[140px] ${driver.is_jogador ? 'text-[#58a6ff]' : ''}`}>{driver.equipe_nome || "-"}</span>
+                                                </div>
+                                            </td>
+                                            <td className="py-4 px-2 text-center font-mono font-bold text-gray-400">{driver.vitorias}</td>
+                                            <td className="py-4 px-2 text-right font-black font-mono text-white text-base pr-4">{driver.pontos}</td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                             </table>
+                         )}
+                     </div>
+                 ) : (
+                     <table className="w-full text-left">
+                         <thead className="text-[10px] uppercase tracking-[0.16em] text-gray-500 border-b border-white/10 sticky top-0 bg-[#060a10] z-10 shadow-sm">
+                             <tr>
+                                 <th className="py-4 px-2 w-[110px] text-center">POS (VAR)</th>
+                                 <th className="py-4 px-2 w-[240px]">PILOTO</th>
+                                 <th className="py-4 px-2 w-[200px]">EQUIPE</th>
+                                 <th className="py-4 px-2 text-right pr-6">TEMPO / GAP</th>
+                             </tr>
+                         </thead>
+                         <tbody className="text-[13px] font-medium divide-y divide-white/5">
+                             {result.race_results.map((entry) => {
+                                 let posColor = "text-gray-500";
+                                 let posSize = "text-base";
+                                 if (entry.finish_position === 1) { posColor = "text-yellow-500"; posSize = "text-lg"; }
+                                 else if (entry.finish_position === 2) { posColor = "text-gray-300"; posSize = "text-[17px]"; }
+                                 else if (entry.finish_position === 3) { posColor = "text-orange-400"; posSize = "text-base"; }
+                                 
+                                 const isJogador = entry.is_jogador;
+                                 if (isJogador) posColor = "text-[#58a6ff]";
+
+                                 // Delta ao lado da Posição
+                                 const delta = entry.positions_gained;
+                                 let deltaStr = delta === 0 ? "-" : (delta > 0 ? `+${delta}` : `${delta}`);
+                                 let deltaColor = delta === 0 ? "text-gray-600 font-medium" : (delta > 0 ? "text-green-400 font-bold" : "text-red-400/80 font-bold");
+
+                                 return (
+                                     <tr key={entry.pilot_id} className={`hover:bg-white/5 transition ${isJogador ? 'bg-[#58a6ff]/10 relative shadow-[inset_4px_0_0_#58a6ff]' : entry.is_dnf ? 'bg-red-500/5 opacity-80' : 'bg-white/[0.01]'}`}>
+                                         
+                                         {/* Coluna combinada POS + Delta */}
+                                         <td className="py-4 px-2 text-center align-middle">
+                                            <div className="flex items-center justify-center gap-2">
+                                                <span className={`font-black w-6 text-right ${entry.is_dnf ? 'text-red-500 text-xs tracking-widest uppercase' : posColor + ' ' + posSize}`}>
+                                                    {entry.is_dnf ? 'DNF' : entry.finish_position}
+                                                </span>
+                                                {!entry.is_dnf && (
+                                                    <span className={`text-[10px] min-w-[20px] text-left ${deltaColor}`}>
+                                                        {delta > 0 ? `▲${deltaStr.replace('+','')}` : delta < 0 ? `▼${deltaStr.replace('-','')}` : '—'}
+                                                    </span>
+                                                )}
+                                            </div>
+                                         </td>
+                                         
+                                         <td className={`py-4 px-2 font-bold flex items-center gap-2 ${entry.is_dnf ? 'line-through text-gray-500' : isJogador ? 'text-[#58a6ff] text-sm' : 'text-gray-200 text-sm'}`}>
+                                            {entry.has_fastest_lap && !entry.is_dnf && <span className="animate-pulse drop-shadow-md pb-[2px]" title="Volta mais rápida">⚡</span>}
+                                            {isJogador ? `▶ ${entry.pilot_name} ◀` : entry.pilot_name}
+                                         </td>
+                                         
+                                         <td className={`py-4 px-2 text-[11px] uppercase tracking-widest ${isJogador ? 'font-black text-[#58a6ff] opacity-80' : 'text-gray-400 font-bold'}`}>
+                                            <div className="flex items-center gap-2">
+                                                {teamColors[entry.team_name] && (
+                                                    <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: teamColors[entry.team_name], boxShadow: `0 0 8px ${teamColors[entry.team_name]}80` }}></div>
+                                                )}
+                                                <span className="truncate max-w-[170px]">{entry.team_name}</span>
+                                            </div>
+                                         </td>
+                                         
+                                         <td className={`py-4 px-2 text-right font-mono pr-6 ${entry.is_dnf ? 'text-red-500 text-[10px] font-bold tracking-widest uppercase' : entry.finish_position === 1 ? 'text-yellow-500 font-bold' : isJogador ? 'text-white font-bold' : 'text-gray-400'}`}>
+                                             {entry.is_dnf 
+                                                ? "Abandonou" 
+                                                : entry.finish_position === 1 
+                                                    ? formatLapTime(entry.total_race_time_ms) 
+                                                    : formatGap(entry.gap_to_winner_ms)}
+                                         </td>
+
+                                     </tr>
+                                 );
+                             })}
+                         </tbody>
+                     </table>
+                 )}
+             </div>
+        </div>
+
       </div>
+
     </div>
   );
-}
-
-function weatherLabel(value) {
-  if (value === "HeavyRain") return "Chuva forte";
-  if (value === "Wet") return "Chuva";
-  if (value === "Damp") return "Umido";
-  return "Seco";
-}
-
-function positionPrefix(position) {
-  if (position === 1) return "🥇";
-  if (position === 2) return "🥈";
-  if (position === 3) return "🥉";
-  return "";
-}
-
-function positionClass(position) {
-  if (position === 1) return "text-[#ffd700]";
-  if (position === 2) return "text-[#c0c0c0]";
-  if (position === 3) return "text-[#cd7f32]";
-  return "text-text-primary";
-}
-
-function podiumClass(index) {
-  if (index === 0) return "text-[#ffd700]";
-  if (index === 1) return "text-[#c0c0c0]";
-  if (index === 2) return "text-[#cd7f32]";
-  return "text-text-secondary";
-}
-
-function deltaClass(value) {
-  if (value > 0) return "text-status-green";
-  if (value < 0) return "text-status-red";
-  return "text-text-secondary";
-}
-
-function deltaLabel(value) {
-  if (value > 0) return `+${value}`;
-  return `${value}`;
 }
 
 export default RaceResultView;

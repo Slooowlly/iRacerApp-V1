@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use rand::Rng;
 use rusqlite::Connection;
 
@@ -9,6 +11,7 @@ use crate::db::queries::calendar as calendar_queries;
 use crate::db::queries::drivers as driver_queries;
 use crate::db::queries::seasons as season_queries;
 use crate::db::queries::teams as team_queries;
+use crate::evolution::context::StandingEntry;
 use crate::generators::ids::{next_id, next_ids, IdType};
 use crate::models::season::Season;
 
@@ -23,6 +26,95 @@ pub(crate) fn create_and_persist_new_season(
     season_queries::insert_season(conn, &new_season)
         .map_err(|e| format!("Falha ao inserir nova temporada: {e}"))?;
     Ok(new_season)
+}
+
+/// Arquiva o snapshot completo de cada piloto ao fim da temporada.
+/// Deve ser chamado DEPOIS do crescimento de atributos e ANTES da promoção/rebaixamento,
+/// para capturar atributos finais e categoria original da temporada.
+pub(crate) fn archive_driver_season(
+    conn: &Connection,
+    season: &Season,
+    standings_by_driver: &HashMap<String, StandingEntry>,
+) -> Result<(), String> {
+    let drivers = driver_queries::get_all_drivers(conn)
+        .map_err(|e| format!("Falha ao carregar pilotos para arquivo historico: {e}"))?;
+
+    for driver in &drivers {
+        let standing = standings_by_driver.get(&driver.id);
+        let categoria = standing
+            .map(|s| s.category.as_str())
+            .unwrap_or_default();
+        let team_id = standing.and_then(|s| s.team_id.as_deref());
+        let posicao_campeonato = standing.map(|s| s.position);
+        let total_pilotos = standing.map(|s| s.total_drivers);
+
+        let snapshot = serde_json::json!({
+            "piloto_id":            driver.id,
+            "nome":                 driver.nome,
+            "idade":                driver.idade,
+            "nacionalidade":        driver.nacionalidade,
+            "is_jogador":           driver.is_jogador,
+            "season_number":        season.numero,
+            "ano":                  season.ano,
+            "categoria":            categoria,
+            "team_id":              team_id,
+            "posicao_campeonato":   posicao_campeonato,
+            "total_pilotos":        total_pilotos,
+            "pontos":               driver.stats_temporada.pontos,
+            "vitorias":             driver.stats_temporada.vitorias,
+            "podios":               driver.stats_temporada.podios,
+            "poles":                driver.stats_temporada.poles,
+            "corridas":             driver.stats_temporada.corridas,
+            "dnfs":                 driver.stats_temporada.dnfs,
+            "posicao_media":        driver.stats_temporada.posicao_media,
+            "melhor_resultado":     driver.melhor_resultado_temp,
+            "ultimos_resultados":   driver.ultimos_resultados,
+            "atributos": {
+                "skill":                driver.atributos.skill,
+                "consistencia":         driver.atributos.consistencia,
+                "racecraft":            driver.atributos.racecraft,
+                "defesa":               driver.atributos.defesa,
+                "ritmo_classificacao":  driver.atributos.ritmo_classificacao,
+                "gestao_pneus":         driver.atributos.gestao_pneus,
+                "habilidade_largada":   driver.atributos.habilidade_largada,
+                "adaptabilidade":       driver.atributos.adaptabilidade,
+                "fator_chuva":          driver.atributos.fator_chuva,
+                "fitness":              driver.atributos.fitness,
+                "experiencia":          driver.atributos.experiencia,
+                "desenvolvimento":      driver.atributos.desenvolvimento,
+                "aggression":           driver.atributos.aggression,
+                "smoothness":           driver.atributos.smoothness,
+                "midia":                driver.atributos.midia,
+                "mentalidade":          driver.atributos.mentalidade,
+                "confianca":            driver.atributos.confianca,
+            },
+            "motivacao":                driver.motivacao,
+            "temporadas_na_categoria":  driver.temporadas_na_categoria,
+        });
+
+        conn.execute(
+            "INSERT OR REPLACE INTO driver_season_archive
+             (piloto_id, season_number, ano, nome, categoria, posicao_campeonato, pontos, snapshot_json)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            rusqlite::params![
+                &driver.id,
+                season.numero,
+                season.ano,
+                &driver.nome,
+                categoria,
+                posicao_campeonato,
+                driver.stats_temporada.pontos,
+                snapshot.to_string(),
+            ],
+        )
+        .map_err(|e| {
+            format!(
+                "Falha ao arquivar temporada do piloto '{}': {e}",
+                driver.id
+            )
+        })?;
+    }
+    Ok(())
 }
 
 pub(crate) fn reset_driver_season_stats(conn: &Connection) -> Result<(), String> {
