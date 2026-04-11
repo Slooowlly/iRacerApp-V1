@@ -10,9 +10,10 @@ use crate::calendar::{generate_all_calendars_with_year, CalendarEntry};
 use crate::commands::career_detail::build_driver_detail_payload;
 use crate::commands::career_types::{
     BriefingPhraseEntry, BriefingPhraseEntryInput, BriefingPhraseHistory, BriefingStorySummary,
-    CareerData, CareerResumeContext, CareerResumeView, CreateCareerResult, DriverDetail,
-    ContractWarningInfo, DriverSummary, NextRaceBriefingSummary, PrimaryRivalSummary,
-    RaceSummary, SaveInfo, SeasonSummary, TeamStanding, TeamSummary, TrackHistorySummary,
+    AcceptedSpecialOfferSummary, CareerData, CareerResumeContext, CareerResumeView,
+    ContractWarningInfo, CreateCareerResult, DriverDetail, DriverSummary,
+    NextRaceBriefingSummary, PrimaryRivalSummary, RaceSummary, SaveInfo, SeasonSummary,
+    TeamStanding, TeamSummary, TrackHistorySummary,
     VerifyDatabaseResponse,
 };
 use crate::commands::race_history::{
@@ -39,14 +40,18 @@ use crate::evolution::pipeline::{run_end_of_season, EndOfSeasonResult};
 use crate::generators::ids::{next_id, IdType};
 use crate::generators::nationality::{format_nationality, get_nationality};
 use crate::generators::world::generate_world;
-use crate::market::pipeline::{fill_all_remaining_vacancies, run_market};
+use crate::market::pipeline::fill_all_remaining_vacancies;
 use crate::market::preseason::{
     advance_week, delete_preseason_plan, load_preseason_plan, save_preseason_plan, PendingAction,
     PlannedEvent, PreSeasonPlan, PreSeasonState, WeekResult,
 };
 use crate::market::proposals::{MarketProposal, ProposalStatus};
 use crate::models::driver::Driver;
-use crate::models::enums::{ContractStatus, SeasonPhase, TeamRole};
+use crate::models::enums::{ContractStatus, DriverStatus, SeasonPhase, TeamRole};
+use crate::models::license::{
+    driver_has_required_license_for_category, ensure_driver_can_join_category,
+    grant_driver_license_for_category_if_needed,
+};
 use crate::models::season::Season;
 use crate::models::team::{Team, TeamHierarchyClimate};
 use crate::news::{NewsImportance, NewsItem, NewsType};
@@ -140,6 +145,14 @@ pub(crate) fn create_career_in_base_dir(
 
             team_queries::insert_teams(tx, &world.teams)?;
             contract_queries::insert_contracts(tx, &world.contracts)?;
+            for contract in &world.contracts {
+                grant_driver_license_for_category_if_needed(
+                    tx,
+                    &contract.piloto_id,
+                    &contract.categoria,
+                )
+                .map_err(crate::db::connection::DbError::Migration)?;
+            }
             season_queries::insert_season(tx, &season)?;
             calendar_queries::insert_calendar_entries(tx, &all_calendar_entries)?;
             sync_meta_counters(
@@ -216,23 +229,29 @@ pub(crate) fn load_career_in_base_dir(
     let mut config = AppConfig::load_or_default(base_dir);
     let (db, career_dir, mut meta) = open_career_resources(base_dir, career_id)?;
     let meta_path = career_dir.join("meta.json");
-    let player = driver_queries::get_player_driver(&db.conn)
-        .map_err(|e| format!("Falha ao carregar piloto do jogador: {e}"))?;
-    let player_team = find_player_team(&db.conn, &player.id)?
-        .ok_or_else(|| "Equipe do jogador nao encontrada.".to_string())?;
     let active_season = season_queries::get_active_season(&db.conn)
         .map_err(|e| format!("Falha ao buscar temporada ativa: {e}"))?
         .ok_or_else(|| "Temporada ativa nao encontrada.".to_string())?;
-    let next_race =
-        calendar_queries::get_next_race(&db.conn, &active_season.id, &player_team.categoria)
-            .map_err(|e| format!("Falha ao carregar proxima corrida: {e}"))?;
+    let player = driver_queries::get_player_driver(&db.conn)
+        .map_err(|e| format!("Falha ao carregar piloto do jogador: {e}"))?;
+    let player_team = find_player_team(&db.conn, &player.id, active_season.fase)?;
+    let next_race = if let Some(ref team) = player_team {
+        calendar_queries::get_next_race(&db.conn, &active_season.id, &team.categoria)
+            .map_err(|e| format!("Falha ao carregar proxima corrida: {e}"))?
+    } else {
+        None
+    };
 
     let total_drivers = driver_queries::count_drivers(&db.conn)
         .map_err(|e| format!("Falha ao contar pilotos: {e}"))? as usize;
     let total_teams =
         count_rows(&db.conn, "teams").map_err(|e| format!("Falha ao contar equipes: {e}"))?;
-    let total_rodadas = count_calendar_entries(&db.conn, &active_season.id, &player_team.categoria)
-        .map_err(|e| format!("Falha ao contar corridas da temporada: {e}"))?;
+    let total_rodadas = if let Some(ref team) = player_team {
+        count_calendar_entries(&db.conn, &active_season.id, &team.categoria)
+            .map_err(|e| format!("Falha ao contar corridas da temporada: {e}"))?
+    } else {
+        0
+    };
 
     // Calcular interesse esperado da próxima corrida (fallback silencioso se falhar).
     // Usa race.categoria como fonte semântica do campeonato do evento.
@@ -280,8 +299,14 @@ pub(crate) fn load_career_in_base_dir(
         .save()
         .map_err(|e| format!("Falha ao atualizar config do app: {e}"))?;
 
-    let team_summary = build_team_summary(&db.conn, &player_team)
-        .map_err(|e| format!("Falha ao montar resumo da equipe: {e}"))?;
+    let team_summary = player_team
+        .as_ref()
+        .map(|team| {
+            build_team_summary(&db.conn, team)
+                .map_err(|e| format!("Falha ao montar resumo da equipe: {e}"))
+        })
+        .transpose()?;
+    let accepted_special_offer = build_accepted_special_offer_summary(&db.conn, &player)?;
     let next_race_summary = next_race.as_ref().map(|race| RaceSummary {
         id: race.id.clone(),
         rodada: race.rodada,
@@ -312,10 +337,14 @@ pub(crate) fn load_career_in_base_dir(
             nacionalidade: player.nacionalidade.clone(),
             idade: player.idade as i32,
             skill: player.atributos.skill.round().clamp(0.0, 100.0) as u8,
-            equipe_id: Some(player_team.id.clone()),
-            equipe_nome: Some(player_team.nome.clone()),
-            equipe_nome_curto: Some(player_team.nome_curto.clone()),
-            equipe_cor: player_team.cor_primaria.clone(),
+            categoria_especial_ativa: player.categoria_especial_ativa.clone(),
+            equipe_id: player_team.as_ref().map(|t| t.id.clone()),
+            equipe_nome: player_team.as_ref().map(|t| t.nome.clone()),
+            equipe_nome_curto: player_team.as_ref().map(|t| t.nome_curto.clone()),
+            equipe_cor: player_team
+                .as_ref()
+                .map(|t| t.cor_primaria.clone())
+                .unwrap_or_default(),
             is_jogador: player.is_jogador,
             pontos: player.stats_temporada.pontos.round() as i32,
             vitorias: player.stats_temporada.vitorias as i32,
@@ -331,7 +360,9 @@ pub(crate) fn load_career_in_base_dir(
             rodada_atual: active_season.rodada_atual,
             total_rodadas,
             status: active_season.status.as_str().to_string(),
+            fase: active_season.fase.as_str().to_string(),
         },
+        accepted_special_offer,
         next_race: next_race_summary,
         next_race_briefing: next_race_briefing_summary,
         total_drivers,
@@ -465,6 +496,7 @@ fn sync_meta_counters(
 }
 
 // Internal diagnostic helper kept out of the production Tauri command surface.
+#[allow(dead_code)]
 pub(crate) fn verify_database(
     app: AppHandle,
     career_number: u32,
@@ -497,6 +529,7 @@ pub(crate) fn verify_database(
 }
 
 // Internal diagnostic helper kept out of the production Tauri command surface.
+#[allow(dead_code)]
 pub(crate) fn test_create_driver(
     app: AppHandle,
     career_number: u32,
@@ -556,6 +589,7 @@ pub(crate) fn test_create_driver(
 }
 
 // Internal diagnostic helper kept out of the production Tauri command surface.
+#[allow(dead_code)]
 pub(crate) fn test_list_drivers(app: AppHandle, career_number: u32) -> Result<Vec<Driver>, String> {
     let base_dir = app
         .path()
@@ -589,7 +623,7 @@ pub(crate) fn advance_season_in_base_dir(
     let career_number =
         career_number_from_id(career_id).ok_or_else(|| "ID de carreira invalido.".to_string())?;
     let mut config = AppConfig::load_or_default(base_dir);
-    let (db, career_dir, mut meta) = open_career_resources(base_dir, career_id)?;
+    let (mut db, career_dir, mut meta) = open_career_resources(base_dir, career_id)?;
     let meta_path = career_dir.join("meta.json");
     let season = season_queries::get_active_season(&db.conn)
         .map_err(|e| format!("Falha ao buscar temporada ativa: {e}"))?
@@ -637,8 +671,11 @@ pub(crate) fn advance_season_in_base_dir(
     )
     .map_err(|e| format!("Falha ao criar backup de fim de temporada: {e}"))?;
 
-    let result = run_end_of_season(&db.conn, &season, &career_dir)?;
-    persist_end_of_season_news(&db.conn, &result, season.numero)?;
+    let result = run_end_of_season(&mut db.conn, &season, &career_dir)?;
+    warn_if_noncritical(
+        persist_end_of_season_news(&db.conn, &result, season.numero),
+        "Falha ao persistir noticias de fim de temporada",
+    );
     let total_races = count_season_calendar_entries(&db.conn, &result.new_season_id)
         .map_err(|e| format!("Falha ao contar corridas da nova temporada: {e}"))?;
     let now = Local::now().format("%Y-%m-%dT%H:%M:%S").to_string();
@@ -647,22 +684,116 @@ pub(crate) fn advance_season_in_base_dir(
     meta.current_year = result.new_year.max(0) as u32;
     meta.last_played = now;
     meta.total_races = total_races;
-    write_save_meta(&meta_path, &meta)?;
+    warn_if_noncritical(
+        write_save_meta(&meta_path, &meta),
+        "Falha ao atualizar meta.json apos avancar temporada",
+    );
 
     config.last_career = Some(career_number);
-    config
-        .save()
-        .map_err(|e| format!("Falha ao atualizar config do app: {e}"))?;
+    warn_if_noncritical(
+        config
+            .save()
+            .map_err(|e| format!("Falha ao atualizar config do app: {e}")),
+        "Falha ao atualizar config do app apos avancar temporada",
+    );
 
-    write_resume_context(
-        &career_dir,
-        &CareerResumeContext {
-            active_view: CareerResumeView::EndOfSeason,
-            end_of_season_result: Some(result.clone()),
-        },
-    )?;
+    warn_if_noncritical(
+        write_resume_context(
+            &career_dir,
+            &CareerResumeContext {
+                active_view: CareerResumeView::EndOfSeason,
+                end_of_season_result: Some(result.clone()),
+            },
+        ),
+        "Falha ao persistir resume_context apos avancar temporada",
+    );
 
     Ok(result)
+}
+
+/// Simula todas as corridas pendentes da temporada sem participação do jogador,
+/// conduzindo a temporada por todas as fases: BlocoRegular → JanelaConvocacao →
+/// BlocoEspecial → PosEspecial. Após esta função, advance_season pode ser chamado.
+/// Usado quando o jogador está sem equipe e quer pular para a próxima pré-temporada.
+pub(crate) fn skip_all_pending_races_in_base_dir(
+    base_dir: &Path,
+    career_id: &str,
+) -> Result<(), String> {
+    let config = AppConfig::load_or_default(base_dir);
+    let career_dir = config.saves_dir().join(career_id);
+    let db_path = career_dir.join("career.db");
+    let mut db = Database::open_existing(&db_path)
+        .map_err(|e| format!("Falha ao abrir banco da carreira: {e}"))?;
+
+    // ── Fase 1: BlocoRegular ─────────────────────────────────────────────────
+    {
+        let season = season_queries::get_active_season(&db.conn)
+            .map_err(|e| format!("Falha ao buscar temporada ativa: {e}"))?
+            .ok_or_else(|| "Temporada ativa nao encontrada.".to_string())?;
+
+        if season.fase == SeasonPhase::BlocoRegular {
+            let pending = calendar_queries::get_pending_races(&db.conn, &season.id)
+                .map_err(|e| format!("Falha ao buscar corridas pendentes: {e}"))?;
+            for race in &pending {
+                crate::commands::race::simulate_category_race(&mut db, race, false)?;
+            }
+            crate::convocation::advance_to_convocation_window(&db.conn)
+                .map_err(|e| format!("Falha ao avancar para janela de convocacao: {e}"))?;
+        }
+    }
+
+    // ── Fase 2: JanelaConvocacao ─────────────────────────────────────────────
+    {
+        let season = season_queries::get_active_season(&db.conn)
+            .map_err(|e| format!("Falha ao buscar temporada ativa: {e}"))?
+            .ok_or_else(|| "Temporada ativa nao encontrada.".to_string())?;
+
+        if season.fase == SeasonPhase::JanelaConvocacao {
+            crate::convocation::run_convocation_window(&db.conn)
+                .map_err(|e| format!("Falha ao executar janela de convocacao: {e}"))?;
+            crate::convocation::iniciar_bloco_especial(&db.conn)
+                .map_err(|e| format!("Falha ao iniciar bloco especial: {e}"))?;
+        }
+    }
+
+    // ── Fase 3: BlocoEspecial ────────────────────────────────────────────────
+    {
+        let season = season_queries::get_active_season(&db.conn)
+            .map_err(|e| format!("Falha ao buscar temporada ativa: {e}"))?
+            .ok_or_else(|| "Temporada ativa nao encontrada.".to_string())?;
+
+        if season.fase == SeasonPhase::BlocoEspecial {
+            let player = driver_queries::get_player_driver(&db.conn)
+                .map_err(|e| format!("Falha ao carregar jogador: {e}"))?;
+            if player.categoria_especial_ativa.is_some() {
+                return Err(
+                    "O jogador participa do bloco especial ativo e deve correr essa fase normalmente."
+                        .to_string(),
+                );
+            }
+
+            for category_id in ["production_challenger", "endurance"] {
+                let pending = calendar_queries::get_pending_races_for_category(
+                    &db.conn,
+                    &season.id,
+                    category_id,
+                )
+                .map_err(|e| {
+                    format!("Falha ao buscar corridas pendentes de {}: {e}", category_id)
+                })?;
+                for race in &pending {
+                    crate::commands::race::simulate_category_race(&mut db, race, false)?;
+                }
+            }
+
+            crate::convocation::encerrar_bloco_especial(&db.conn)
+                .map_err(|e| format!("Falha ao encerrar bloco especial: {e}"))?;
+            crate::convocation::run_pos_especial(&db.conn)
+                .map_err(|e| format!("Falha ao executar pos-especial: {e}"))?;
+        }
+    }
+
+    Ok(())
 }
 
 pub(crate) fn advance_market_week_in_base_dir(
@@ -675,12 +806,24 @@ pub(crate) fn advance_market_week_in_base_dir(
     let meta_path = career_dir.join("meta.json");
     let mut plan = load_preseason_plan(&career_dir)?
         .ok_or_else(|| "Plano da pre-temporada nao encontrado.".to_string())?;
-    let result = advance_week(&db.conn, &mut plan)?;
-    persist_market_week_news(&db.conn, &plan.state, &result)?;
+    let tx = db
+        .conn
+        .unchecked_transaction()
+        .map_err(|e| format!("Falha ao iniciar transacao da semana de mercado: {e}"))?;
+    let result = advance_week(&tx, &mut plan)?;
+    warn_if_noncritical(
+        persist_market_week_news(&tx, &plan.state, &result),
+        "Falha ao persistir noticias da semana de mercado",
+    );
     crate::market::preseason::save_preseason_plan(&career_dir, &plan)?;
+    tx.commit()
+        .map_err(|e| format!("Falha ao confirmar semana de mercado: {e}"))?;
 
     meta.last_played = Local::now().format("%Y-%m-%dT%H:%M:%S").to_string();
-    write_save_meta(&meta_path, &meta)?;
+    warn_if_noncritical(
+        write_save_meta(&meta_path, &meta),
+        "Falha ao atualizar meta.json apos avancar semana de mercado",
+    );
     Ok(result)
 }
 
@@ -688,9 +831,29 @@ pub(crate) fn get_preseason_state_in_base_dir(
     base_dir: &Path,
     career_id: &str,
 ) -> Result<PreSeasonState, String> {
-    let (_db, career_dir, _) = open_career_resources(base_dir, career_id)?;
-    let plan = load_preseason_plan(&career_dir)?
+    let (db, career_dir, _) = open_career_resources(base_dir, career_id)?;
+    let mut plan = load_preseason_plan(&career_dir)?
         .ok_or_else(|| "Plano da pre-temporada nao encontrado.".to_string())?;
+    let season = season_queries::get_active_season(&db.conn)
+        .map_err(|e| format!("Falha ao carregar temporada da pre-temporada: {e}"))?
+        .ok_or_else(|| format!("Temporada {} nao encontrada", plan.state.season_number))?;
+    if season.numero != plan.state.season_number {
+        return Err(format!(
+            "Plano de pre-temporada desatualizado para a temporada ativa {}.",
+            season.numero
+        ));
+    }
+    crate::market::preseason::refresh_preseason_state_display_date(
+        &db.conn,
+        &season.id,
+        &mut plan.state,
+    )?;
+    let player = driver_queries::get_player_driver(&db.conn)
+        .map_err(|e| format!("Falha ao carregar jogador: {e}"))?;
+    plan.state.player_has_team =
+        contract_queries::get_active_regular_contract_for_pilot(&db.conn, &player.id)
+            .map(|c| c.is_some())
+            .unwrap_or(false);
     Ok(plan.state)
 }
 
@@ -699,13 +862,17 @@ pub(crate) fn get_player_proposals_in_base_dir(
     career_id: &str,
 ) -> Result<Vec<PlayerProposalView>, String> {
     let (db, _career_dir, _meta) = open_career_resources(base_dir, career_id)?;
+    let season = season_queries::get_active_season(&db.conn)
+        .map_err(|e| format!("Falha ao carregar temporada ativa: {e}"))?
+        .ok_or_else(|| "Temporada ativa nao encontrada.".to_string())?;
     let player = driver_queries::get_player_driver(&db.conn)
         .map_err(|e| format!("Falha ao carregar jogador: {e}"))?;
-    let mut proposals = market_proposal_queries::get_pending_player_proposals(&db.conn, &player.id)
-        .map_err(|e| format!("Falha ao buscar propostas pendentes: {e}"))?
-        .into_iter()
-        .map(|proposal| build_player_proposal_view(&db.conn, &proposal))
-        .collect::<Result<Vec<_>, _>>()?;
+    let mut proposals =
+        market_proposal_queries::get_pending_player_proposals(&db.conn, &season.id, &player.id)
+            .map_err(|e| format!("Falha ao buscar propostas pendentes: {e}"))?
+            .into_iter()
+            .map(|proposal| build_player_proposal_view(&db.conn, &proposal))
+            .collect::<Result<Vec<_>, _>>()?;
     proposals.sort_by(|a, b| b.car_performance.total_cmp(&a.car_performance));
     Ok(proposals)
 }
@@ -722,9 +889,10 @@ pub(crate) fn respond_to_proposal_in_base_dir(
     let season = season_queries::get_active_season(&db.conn)
         .map_err(|e| format!("Falha ao carregar temporada ativa: {e}"))?
         .ok_or_else(|| "Temporada ativa nao encontrada.".to_string())?;
-    let proposal = market_proposal_queries::get_market_proposal_by_id(&db.conn, proposal_id)
-        .map_err(|e| format!("Falha ao carregar proposta: {e}"))?
-        .ok_or_else(|| "Proposta nao encontrada.".to_string())?;
+    let proposal =
+        market_proposal_queries::get_market_proposal_by_id(&db.conn, &season.id, proposal_id)
+            .map_err(|e| format!("Falha ao carregar proposta: {e}"))?
+            .ok_or_else(|| "Proposta nao encontrada.".to_string())?;
     if proposal.piloto_id != player.id {
         return Err("A proposta nao pertence ao jogador.".to_string());
     }
@@ -745,7 +913,10 @@ pub(crate) fn respond_to_proposal_in_base_dir(
         tx.commit()
             .map_err(|e| format!("Falha ao confirmar aceite da proposta: {e}"))?;
 
-        reconcile_plan_after_player_accept(&career_dir, &db.conn, &proposal)?;
+        warn_if_noncritical(
+            reconcile_plan_after_player_accept(&career_dir, &db.conn, &proposal),
+            "Falha ao reconciliar plano apos aceite da proposta",
+        );
         new_team_name = Some(proposal.equipe_nome.clone());
     } else {
         let tx = db
@@ -764,12 +935,12 @@ pub(crate) fn respond_to_proposal_in_base_dir(
     }
 
     let mut remaining =
-        market_proposal_queries::count_pending_player_proposals(&db.conn, &player.id)
+        market_proposal_queries::count_pending_player_proposals(&db.conn, &season.id, &player.id)
             .map_err(|e| format!("Falha ao contar propostas pendentes: {e}"))?;
 
     if !accept && remaining == 0 {
-        if contract_queries::get_active_contract_for_pilot(&db.conn, &player.id)
-            .map_err(|e| format!("Falha ao verificar equipe atual do jogador: {e}"))?
+        if contract_queries::get_active_regular_contract_for_pilot(&db.conn, &player.id)
+            .map_err(|e| format!("Falha ao verificar equipe regular do jogador: {e}"))?
             .is_none()
         {
             let emergency = generate_emergency_player_proposals(&db.conn, &player, &season)?;
@@ -785,7 +956,10 @@ pub(crate) fn respond_to_proposal_in_base_dir(
         }
     }
 
-    sync_preseason_pending_flag(&career_dir, remaining > 0)?;
+    warn_if_noncritical(
+        sync_preseason_pending_flag(&career_dir, remaining > 0),
+        "Falha ao sincronizar indicador de propostas pendentes",
+    );
     let headlines = news_items
         .iter()
         .map(|item| item.titulo.clone())
@@ -845,7 +1019,8 @@ pub(crate) fn get_news_in_base_dir(
     };
 
     if let Some(tipo) = tipo {
-        let tipo_normalizado = NewsType::from_str(tipo);
+        let tipo_normalizado = NewsType::from_str_strict(tipo)
+            .map_err(|e| format!("Filtro de noticia invalido: {e}"))?;
         items.retain(|item| item.tipo == tipo_normalizado);
     }
 
@@ -865,28 +1040,20 @@ pub(crate) fn finalize_preseason_in_base_dir(
         return Err("Pre-temporada ainda nao foi concluida.".to_string());
     }
 
+    let season = season_queries::get_active_season(&db.conn)
+        .map_err(|e| format!("Falha ao carregar temporada ativa: {e}"))?
+        .ok_or_else(|| "Temporada ativa nao encontrada.".to_string())?;
     let player = driver_queries::get_player_driver(&db.conn)
         .map_err(|e| format!("Falha ao carregar jogador: {e}"))?;
-    let pending = market_proposal_queries::count_pending_player_proposals(&db.conn, &player.id)
-        .map_err(|e| format!("Falha ao contar propostas pendentes: {e}"))?;
+    let pending =
+        market_proposal_queries::count_pending_player_proposals(&db.conn, &season.id, &player.id)
+            .map_err(|e| format!("Falha ao contar propostas pendentes: {e}"))?;
     if pending > 0 {
         return Err(format!(
             "Voce tem {} proposta(s) pendente(s). Resolva antes de iniciar a temporada.",
             pending
         ));
     }
-    if contract_queries::get_active_contract_for_pilot(&db.conn, &player.id)
-        .map_err(|e| format!("Falha ao verificar equipe do jogador: {e}"))?
-        .is_none()
-    {
-        return Err(
-            "Voce nao tem equipe! Aceite uma proposta antes de iniciar a temporada.".to_string(),
-        );
-    }
-
-    let season = season_queries::get_active_season(&db.conn)
-        .map_err(|e| format!("Falha ao carregar temporada ativa: {e}"))?
-        .ok_or_else(|| "Temporada ativa nao encontrada.".to_string())?;
 
     let mut rng = rand::thread_rng();
 
@@ -912,6 +1079,49 @@ pub(crate) fn finalize_preseason_in_base_dir(
     Ok(())
 }
 
+pub(crate) fn get_preseason_free_agents_in_base_dir(
+    base_dir: &Path,
+    career_id: &str,
+) -> Result<Vec<crate::commands::career_types::FreeAgentPreview>, String> {
+    let (db, _, _) = open_career_resources(base_dir, career_id)?;
+    let raw = contract_queries::get_free_agents_for_preseason(&db.conn)
+        .map_err(|e| format!("Falha ao buscar agentes livres: {e}"))?;
+
+    let result = raw
+        .into_iter()
+        .map(|r| {
+            let abbr = r
+                .previous_team_name
+                .as_deref()
+                .map(|name| name.chars().take(3).collect::<String>().to_uppercase());
+            let (license_nivel, license_sigla) = match r.max_license_level {
+                Some(0) => ("Rookie", "R"),
+                Some(1) => ("Amador", "A"),
+                Some(2) => ("Pro", "P"),
+                Some(3) => ("Super Pro", "SP"),
+                Some(4) => ("Elite", "E"),
+                Some(_) => ("Super Elite", "SE"),
+                None => ("Rookie", "R"),
+            };
+            crate::commands::career_types::FreeAgentPreview {
+                driver_id: r.driver_id,
+                driver_name: r.driver_name,
+                categoria: r.categoria,
+                is_rookie: r.is_rookie,
+                previous_team_name: r.previous_team_name,
+                previous_team_color: r.previous_team_color,
+                previous_team_abbr: abbr,
+                seasons_at_last_team: r.seasons_at_last_team,
+                total_career_seasons: r.total_career_seasons,
+                license_nivel: license_nivel.to_string(),
+                license_sigla: license_sigla.to_string(),
+            }
+        })
+        .collect();
+
+    Ok(result)
+}
+
 pub(crate) fn get_driver_detail_in_base_dir(
     base_dir: &Path,
     career_id: &str,
@@ -923,8 +1133,7 @@ pub(crate) fn get_driver_detail_in_base_dir(
     let season = season_queries::get_active_season(&db.conn)
         .map_err(|e| format!("Falha ao buscar temporada ativa: {e}"))?
         .ok_or_else(|| "Temporada ativa nao encontrada.".to_string())?;
-    let contract = contract_queries::get_active_contract_for_pilot(&db.conn, driver_id)
-        .map_err(|e| format!("Falha ao buscar contrato ativo: {e}"))?;
+    let contract = preferred_active_contract_for_phase(&db.conn, driver_id, season.fase)?;
     let team = resolve_driver_team(&db.conn, driver_id, contract.as_ref())?;
     let role = resolve_driver_role(driver_id, contract.as_ref(), team.as_ref());
 
@@ -998,8 +1207,7 @@ fn write_resume_context(career_dir: &Path, context: &CareerResumeContext) -> Res
     let path = resume_context_path(career_dir);
     let payload = serde_json::to_string_pretty(context)
         .map_err(|e| format!("Falha ao serializar resume_context.json: {e}"))?;
-    std::fs::write(&path, payload)
-        .map_err(|e| format!("Falha ao gravar resume_context.json: {e}"))
+    std::fs::write(&path, payload).map_err(|e| format!("Falha ao gravar resume_context.json: {e}"))
 }
 
 fn delete_resume_context(career_dir: &Path) -> Result<(), String> {
@@ -1008,8 +1216,7 @@ fn delete_resume_context(career_dir: &Path) -> Result<(), String> {
         return Ok(());
     }
 
-    std::fs::remove_file(&path)
-        .map_err(|e| format!("Falha ao remover resume_context.json: {e}"))
+    std::fs::remove_file(&path).map_err(|e| format!("Falha ao remover resume_context.json: {e}"))
 }
 
 pub(crate) fn persist_resume_context_in_base_dir(
@@ -1024,7 +1231,9 @@ pub(crate) fn persist_resume_context_in_base_dir(
         CareerResumeView::Dashboard => delete_resume_context(&career_dir),
         CareerResumeView::EndOfSeason => {
             let Some(result) = end_of_season_result else {
-                return Err("Estado de fim de temporada requer payload para restauracao.".to_string());
+                return Err(
+                    "Estado de fim de temporada requer payload para restauracao.".to_string(),
+                );
             };
 
             write_resume_context(
@@ -1082,7 +1291,10 @@ fn read_briefing_phrase_history(path: &Path) -> Result<BriefingPhraseHistory, St
         .map_err(|e| format!("Falha ao parsear briefing_phrase_history.json: {e}"))
 }
 
-fn write_briefing_phrase_history(path: &Path, history: &BriefingPhraseHistory) -> Result<(), String> {
+fn write_briefing_phrase_history(
+    path: &Path,
+    history: &BriefingPhraseHistory,
+) -> Result<(), String> {
     let payload = serde_json::to_string_pretty(history)
         .map_err(|e| format!("Falha ao serializar briefing_phrase_history.json: {e}"))?;
     std::fs::write(path, payload)
@@ -1214,8 +1426,8 @@ fn accept_player_proposal_tx(
     season: &Season,
     proposal: &MarketProposal,
 ) -> Result<(), String> {
-    let previous_contract = contract_queries::get_active_contract_for_pilot(tx, &player.id)
-        .map_err(|e| format!("Falha ao buscar contrato atual do jogador: {e}"))?;
+    let previous_contract = contract_queries::get_active_regular_contract_for_pilot(tx, &player.id)
+        .map_err(|e| format!("Falha ao buscar contrato regular atual do jogador: {e}"))?;
     let previous_team_id = previous_contract
         .as_ref()
         .map(|contract| contract.equipe_id.clone());
@@ -1231,6 +1443,7 @@ fn accept_player_proposal_tx(
     let team = team_queries::get_team_by_id(tx, &proposal.equipe_id)
         .map_err(|e| format!("Falha ao carregar equipe da proposta: {e}"))?
         .ok_or_else(|| "Equipe da proposta nao encontrada.".to_string())?;
+    ensure_driver_can_join_category(tx, &player.id, &player.nome, &team.categoria)?;
     let contract = crate::models::contract::Contract::new(
         next_id(tx, IdType::Contract).map_err(|e| format!("Falha ao gerar ID de contrato: {e}"))?,
         player.id.clone(),
@@ -1245,7 +1458,7 @@ fn accept_player_proposal_tx(
     );
     contract_queries::insert_contract(tx, &contract)
         .map_err(|e| format!("Falha ao criar novo contrato do jogador: {e}"))?;
-    place_driver_in_team(tx, &team.id, &player.id, proposal.papel.clone())?;
+    normalize_regular_contracts_for_team(tx, &team.id)?;
     refresh_team_hierarchy_now(tx, &team.id)?;
 
     let mut updated_player = player.clone();
@@ -1256,7 +1469,7 @@ fn accept_player_proposal_tx(
 
     market_proposal_queries::update_proposal_status(tx, &proposal.id, "Aceita", None)
         .map_err(|e| format!("Falha ao marcar proposta como aceita: {e}"))?;
-    market_proposal_queries::expire_remaining_proposals(tx, &player.id, &proposal.id)
+    market_proposal_queries::expire_remaining_proposals(tx, &season.id, &player.id, &proposal.id)
         .map_err(|e| format!("Falha ao expirar demais propostas: {e}"))?;
 
     if let Some(previous_team_id) = previous_team_id.filter(|old_team| old_team != &team.id) {
@@ -1265,6 +1478,84 @@ fn accept_player_proposal_tx(
     }
 
     Ok(())
+}
+
+fn normalize_regular_contracts_for_team(
+    conn: &rusqlite::Connection,
+    team_id: &str,
+) -> Result<bool, String> {
+    let team = team_queries::get_team_by_id(conn, team_id)
+        .map_err(|e| format!("Falha ao carregar equipe para normalizar contratos: {e}"))?
+        .ok_or_else(|| "Equipe nao encontrada para normalizar contratos.".to_string())?;
+    let mut active_regular_contracts = contract_queries::get_active_contracts_for_team(conn, team_id)
+        .map_err(|e| format!("Falha ao carregar contratos ativos da equipe: {e}"))?
+        .into_iter()
+        .filter(|contract| contract.tipo == crate::models::enums::ContractType::Regular)
+        .collect::<Vec<_>>();
+    active_regular_contracts.sort_by(|a, b| {
+        b.temporada_inicio
+            .cmp(&a.temporada_inicio)
+            .then_with(|| b.created_at.cmp(&a.created_at))
+            .then_with(|| b.id.cmp(&a.id))
+    });
+
+    let mut keep_n1 = None;
+    let mut keep_n2 = None;
+    let mut displaced_driver_ids = HashSet::new();
+
+    for contract in active_regular_contracts {
+        let slot = match contract.papel {
+            TeamRole::Numero1 => &mut keep_n1,
+            TeamRole::Numero2 => &mut keep_n2,
+        };
+        if slot.is_none() {
+            *slot = Some(contract);
+            continue;
+        }
+
+        contract_queries::update_contract_status(conn, &contract.id, &ContractStatus::Rescindido)
+            .map_err(|e| {
+                format!(
+                    "Falha ao rescindir contrato regular excedente '{}': {e}",
+                    contract.id
+                )
+            })?;
+        displaced_driver_ids.insert(contract.piloto_id);
+    }
+
+    let piloto_1 = keep_n1.as_ref().map(|contract| contract.piloto_id.as_str());
+    let piloto_2 = keep_n2.as_ref().map(|contract| contract.piloto_id.as_str());
+    let changed = team.piloto_1_id.as_deref() != piloto_1
+        || team.piloto_2_id.as_deref() != piloto_2
+        || !displaced_driver_ids.is_empty();
+
+    if team.piloto_1_id.as_deref() != piloto_1 || team.piloto_2_id.as_deref() != piloto_2 {
+        team_queries::update_team_pilots(conn, team_id, piloto_1, piloto_2)
+            .map_err(|e| format!("Falha ao atualizar lineup da equipe '{}': {e}", team.nome))?;
+    }
+
+    for driver_id in displaced_driver_ids {
+        if contract_queries::get_active_contract_for_pilot(conn, &driver_id)
+            .map_err(|e| format!("Falha ao verificar contrato remanescente de '{}': {e}", driver_id))?
+            .is_some()
+        {
+            continue;
+        }
+        let mut driver = driver_queries::get_driver(conn, &driver_id)
+            .map_err(|e| format!("Falha ao carregar piloto deslocado '{}': {e}", driver_id))?;
+        if driver.categoria_atual.is_none() {
+            continue;
+        }
+        driver.categoria_atual = None;
+        driver_queries::update_driver(conn, &driver).map_err(|e| {
+            format!(
+                "Falha ao limpar categoria do piloto deslocado '{}': {e}",
+                driver_id
+            )
+        })?;
+    }
+
+    Ok(changed)
 }
 
 fn place_driver_in_team(
@@ -1352,17 +1643,25 @@ fn generate_emergency_player_proposals(
         .and_then(categories::get_category_config)
         .map(|config| config.tier)
         .unwrap_or(0);
-    let mut vacancies = list_team_vacancies(conn)?
-        .into_iter()
-        .filter(|vacancy| {
-            let tier = categories::get_category_config(&vacancy.team.categoria)
-                .map(|config| config.tier)
-                .unwrap_or(0);
-            tier >= player_tier && tier <= player_tier + 1
-        })
-        .collect::<Vec<_>>();
+    let mut vacancies = Vec::new();
+    for vacancy in list_team_vacancies(conn)? {
+        let tier = categories::get_category_config(&vacancy.team.categoria)
+            .map(|config| config.tier)
+            .unwrap_or(0);
+        let tier_ok = tier >= player_tier && tier <= player_tier + 1;
+        if tier_ok
+            && driver_has_required_license_for_category(conn, &player.id, &vacancy.team.categoria)?
+        {
+            vacancies.push(vacancy);
+        }
+    }
     if vacancies.is_empty() {
-        vacancies = list_team_vacancies(conn)?;
+        for vacancy in list_team_vacancies(conn)? {
+            if driver_has_required_license_for_category(conn, &player.id, &vacancy.team.categoria)?
+            {
+                vacancies.push(vacancy);
+            }
+        }
     }
     vacancies.sort_by(|a, b| b.team.car_performance.total_cmp(&a.team.car_performance));
 
@@ -1411,24 +1710,36 @@ fn force_place_player(
         .and_then(categories::get_category_config)
         .map(|config| config.tier)
         .unwrap_or(0);
-    let mut vacancies = list_team_vacancies(conn)?
-        .into_iter()
-        .filter(|vacancy| {
-            categories::get_category_config(&vacancy.team.categoria)
-                .map(|config| config.tier == player_tier)
-                .unwrap_or(false)
-        })
-        .collect::<Vec<_>>();
+    let mut vacancies = Vec::new();
+    for vacancy in list_team_vacancies(conn)? {
+        let tier_ok = categories::get_category_config(&vacancy.team.categoria)
+            .map(|config| config.tier == player_tier)
+            .unwrap_or(false);
+        if tier_ok
+            && driver_has_required_license_for_category(conn, &player.id, &vacancy.team.categoria)?
+        {
+            vacancies.push(vacancy);
+        }
+    }
     if vacancies.is_empty() {
-        vacancies = list_team_vacancies(conn)?;
+        for vacancy in list_team_vacancies(conn)? {
+            if driver_has_required_license_for_category(conn, &player.id, &vacancy.team.categoria)?
+            {
+                vacancies.push(vacancy);
+            }
+        }
     }
     vacancies.sort_by(|a, b| a.team.car_performance.total_cmp(&b.team.car_performance));
     let Some(vacancy) = vacancies.into_iter().next() else {
         return Ok(None);
     };
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|e| format!("Falha ao iniciar transacao de alocacao forcada: {e}"))?;
+    ensure_driver_can_join_category(&tx, &player.id, &player.nome, &vacancy.team.categoria)?;
 
     let contract = crate::models::contract::Contract::new(
-        next_id(conn, IdType::Contract)
+        next_id(&tx, IdType::Contract)
             .map_err(|e| format!("Falha ao gerar contrato forçado: {e}"))?,
         player.id.clone(),
         player.nome.clone(),
@@ -1440,15 +1751,17 @@ fn force_place_player(
         vacancy.role.clone(),
         vacancy.team.categoria.clone(),
     );
-    contract_queries::insert_contract(conn, &contract)
+    contract_queries::insert_contract(&tx, &contract)
         .map_err(|e| format!("Falha ao inserir contrato forçado: {e}"))?;
-    place_driver_in_team(conn, &vacancy.team.id, &player.id, vacancy.role.clone())?;
-    refresh_team_hierarchy_now(conn, &vacancy.team.id)?;
+    place_driver_in_team(&tx, &vacancy.team.id, &player.id, vacancy.role.clone())?;
+    refresh_team_hierarchy_now(&tx, &vacancy.team.id)?;
     let mut updated_player = player.clone();
     updated_player.categoria_atual = Some(vacancy.team.categoria.clone());
     updated_player.status = crate::models::enums::DriverStatus::Ativo;
-    driver_queries::update_driver(conn, &updated_player)
+    driver_queries::update_driver(&tx, &updated_player)
         .map_err(|e| format!("Falha ao atualizar jogador apos alocacao forcada: {e}"))?;
+    tx.commit()
+        .map_err(|e| format!("Falha ao confirmar alocacao forcada: {e}"))?;
     Ok(Some(vacancy.team.nome))
 }
 
@@ -1473,10 +1786,14 @@ fn backfill_team_vacancy(
         .into_iter()
         .filter(|driver| driver.status == crate::models::enums::DriverStatus::Ativo)
         .filter(|driver| {
-            contract_queries::get_active_contract_for_pilot(conn, &driver.id)
+            contract_queries::get_active_regular_contract_for_pilot(conn, &driver.id)
                 .ok()
                 .flatten()
                 .is_none()
+        })
+        .filter(|driver| {
+            driver_has_required_license_for_category(conn, &driver.id, &team.categoria)
+                .unwrap_or(false)
         })
         .max_by(|a, b| a.atributos.skill.total_cmp(&b.atributos.skill));
 
@@ -1501,8 +1818,10 @@ fn backfill_team_vacancy(
         );
         driver_queries::insert_driver(conn, &rookie)
             .map_err(|e| format!("Falha ao inserir rookie emergencial: {e}"))?;
+        grant_driver_license_for_category_if_needed(conn, &rookie.id, &team.categoria)?;
         rookie
     };
+    ensure_driver_can_join_category(conn, &replacement.id, &replacement.nome, &team.categoria)?;
 
     let contract = crate::models::contract::Contract::new(
         next_id(conn, IdType::Contract)
@@ -1550,6 +1869,54 @@ fn normalize_car_performance(car_performance: f64) -> u8 {
         .clamp(0.0, 100.0) as u8
 }
 
+fn pending_player_event_team_ids(event: &PendingAction, player_id: &str) -> Option<Vec<String>> {
+    match event {
+        PendingAction::ExpireContract {
+            driver_id, team_id, ..
+        } if driver_id == player_id => Some(vec![team_id.clone()]),
+        PendingAction::RenewContract {
+            driver_id, team_id, ..
+        } if driver_id == player_id => Some(vec![team_id.clone()]),
+        PendingAction::Transfer {
+            driver_id,
+            from_team_id,
+            to_team_id,
+            ..
+        } if driver_id == player_id => {
+            let mut team_ids = Vec::new();
+            if let Some(from_team_id) = from_team_id {
+                team_ids.push(from_team_id.clone());
+            }
+            team_ids.push(to_team_id.clone());
+            Some(team_ids)
+        }
+        PendingAction::PlayerProposal { proposal } if proposal.piloto_id == player_id => {
+            Some(vec![proposal.equipe_id.clone()])
+        }
+        PendingAction::PlaceRookie {
+            driver, team_id, ..
+        } if driver.id == player_id => Some(vec![team_id.clone()]),
+        _ => None,
+    }
+}
+
+fn is_team_role_vacant(
+    conn: &rusqlite::Connection,
+    team_id: &str,
+    role: &str,
+) -> Result<bool, String> {
+    let team = team_queries::get_team_by_id(conn, team_id)
+        .map_err(|e| format!("Falha ao carregar equipe para validar vaga: {e}"))?
+        .ok_or_else(|| "Equipe nao encontrada para validar vaga.".to_string())?;
+    let is_vacant = match TeamRole::from_str_strict(role)
+        .map_err(|e| format!("Papel de equipe invalido ao validar vaga: {e}"))?
+    {
+        TeamRole::Numero1 => team.piloto_1_id.is_none(),
+        TeamRole::Numero2 => team.piloto_2_id.is_none(),
+    };
+    Ok(is_vacant)
+}
+
 fn reconcile_plan_after_player_accept(
     career_dir: &Path,
     conn: &rusqlite::Connection,
@@ -1558,28 +1925,45 @@ fn reconcile_plan_after_player_accept(
     let Some(mut plan) = load_preseason_plan(career_dir)? else {
         return Ok(());
     };
-    if let Some(index) = plan
+    let mut affected_team_ids = HashSet::from([proposal.equipe_id.clone()]);
+    plan.planned_events.retain(|event| {
+        if event.executed {
+            return true;
+        }
+        if let Some(team_ids) = pending_player_event_team_ids(&event.event, &proposal.piloto_id) {
+            affected_team_ids.extend(team_ids);
+            return false;
+        }
+        true
+    });
+
+    let stale_rookie_indices = plan
         .planned_events
         .iter()
-        .position(|event| {
-            !event.executed
-                && matches!(&event.event,
-                    PendingAction::PlaceRookie { team_id, role, .. }
-                    if team_id == &proposal.equipe_id && role == proposal.papel.as_str()
+        .enumerate()
+        .filter(|(_, event)| !event.executed)
+        .filter_map(|(index, event)| match &event.event {
+            PendingAction::PlaceRookie { team_id, role, .. }
+                if affected_team_ids.contains(team_id) =>
+            {
+                Some(
+                    is_team_role_vacant(conn, team_id, role)
+                        .map(|is_vacant| (!is_vacant).then_some(index)),
                 )
+            }
+            _ => None,
         })
-        .or_else(|| {
-            plan.planned_events.iter().position(|event| {
-                !event.executed
-                    && matches!(&event.event,
-                        PendingAction::PlaceRookie { team_id, .. } if team_id == &proposal.equipe_id
-                    )
-            })
-        })
-    {
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+
+    for index in stale_rookie_indices.into_iter().rev() {
         plan.planned_events.remove(index);
     }
-    refresh_planned_hierarchy_for_team(&mut plan, conn, &proposal.equipe_id)?;
+    for team_id in affected_team_ids {
+        refresh_planned_hierarchy_for_team(&mut plan, conn, &team_id)?;
+    }
     plan.state.player_has_pending_proposals = false;
     save_preseason_plan(career_dir, &plan)
 }
@@ -1675,7 +2059,6 @@ fn refresh_planned_hierarchy_for_team(
     Ok(())
 }
 
-
 fn open_career_resources(
     base_dir: &Path,
     career_id: &str,
@@ -1697,9 +2080,126 @@ fn open_career_resources(
 
     let db = Database::open_existing(&db_path)
         .map_err(|e| format!("Falha ao abrir banco da carreira: {e}"))?;
+    repair_regular_contract_consistency(&db.conn)?;
     let meta = read_save_meta(&meta_path)?;
 
     Ok((db, career_dir, meta))
+}
+
+fn repair_regular_contract_consistency(conn: &rusqlite::Connection) -> Result<(), String> {
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|e| format!("Falha ao iniciar reparo de contratos: {e}"))?;
+    let mut affected_team_ids = HashSet::new();
+    let active_regular_contracts = contract_queries::get_all_active_regular_contracts(&tx)
+        .map_err(|e| format!("Falha ao carregar contratos regulares ativos: {e}"))?;
+    let mut contracts_by_pilot = HashMap::<String, Vec<_>>::new();
+
+    for contract in active_regular_contracts {
+        contracts_by_pilot
+            .entry(contract.piloto_id.clone())
+            .or_default()
+            .push(contract);
+    }
+
+    for contracts in contracts_by_pilot.values_mut() {
+        if contracts.len() <= 1 {
+            continue;
+        }
+
+        contracts.sort_by(|a, b| {
+            b.temporada_inicio
+                .cmp(&a.temporada_inicio)
+                .then_with(|| b.created_at.cmp(&a.created_at))
+                .then_with(|| b.id.cmp(&a.id))
+        });
+
+        for duplicate in contracts.iter().skip(1) {
+            contract_queries::update_contract_status(
+                &tx,
+                &duplicate.id,
+                &ContractStatus::Rescindido,
+            )
+            .map_err(|e| {
+                format!(
+                    "Falha ao rescindir contrato regular duplicado '{}': {e}",
+                    duplicate.id
+                )
+            })?;
+            affected_team_ids.insert(duplicate.equipe_id.clone());
+        }
+
+        if let Some(kept) = contracts.first() {
+            affected_team_ids.insert(kept.equipe_id.clone());
+        }
+    }
+
+    let teams =
+        team_queries::get_all_teams(&tx).map_err(|e| format!("Falha ao carregar equipes: {e}"))?;
+    let teams_by_id = teams
+        .iter()
+        .map(|team| (team.id.clone(), team.clone()))
+        .collect::<HashMap<_, _>>();
+    let drivers = driver_queries::get_all_drivers(&tx)
+        .map_err(|e| format!("Falha ao carregar pilotos para reparo: {e}"))?;
+    let drivers_by_id = drivers
+        .into_iter()
+        .map(|driver| (driver.id.clone(), driver))
+        .collect::<HashMap<_, _>>();
+    let active_regular_contracts = contract_queries::get_all_active_regular_contracts(&tx)
+        .map_err(|e| format!("Falha ao recarregar contratos regulares ativos: {e}"))?;
+    for contract in active_regular_contracts {
+        let Some(team) = teams_by_id.get(&contract.equipe_id) else {
+            continue;
+        };
+        if categories::is_especial(&team.categoria) {
+            continue;
+        }
+
+        let Some(driver) = drivers_by_id.get(&contract.piloto_id) else {
+            continue;
+        };
+        if driver.status == DriverStatus::Aposentado {
+            contract_queries::update_contract_status(
+                &tx,
+                &contract.id,
+                &ContractStatus::Rescindido,
+            )
+            .map_err(|e| {
+                format!(
+                    "Falha ao rescindir contrato regular invalido '{}': {e}",
+                    contract.id
+                )
+            })?;
+            affected_team_ids.insert(contract.equipe_id.clone());
+            continue;
+        }
+
+        if driver.categoria_atual.as_deref() != Some(team.categoria.as_str()) {
+            let mut updated_driver = driver.clone();
+            updated_driver.categoria_atual = Some(team.categoria.clone());
+            driver_queries::update_driver(&tx, &updated_driver).map_err(|e| {
+                format!("Falha ao corrigir categoria do piloto '{}': {e}", driver.id)
+            })?;
+        }
+    }
+
+    for team in teams
+        .iter()
+        .filter(|team| !categories::is_especial(&team.categoria))
+    {
+        if normalize_regular_contracts_for_team(&tx, &team.id)? {
+            affected_team_ids.insert(team.id.clone());
+        }
+    }
+
+    for team_id in affected_team_ids {
+        refresh_team_hierarchy_now(&tx, &team_id)?;
+    }
+
+    tx.commit()
+        .map_err(|e| format!("Falha ao concluir reparo de contratos: {e}"))?;
+    Ok(())
 }
 
 pub(crate) fn get_drivers_by_category_in_base_dir(
@@ -1728,13 +2228,16 @@ pub(crate) fn get_drivers_by_category_in_base_dir(
         .into_iter()
         .map(|driver| {
             let driver_id = driver.id.clone();
-            let team = find_player_team(&db.conn, &driver.id).ok().flatten();
+            let team = find_player_team(&db.conn, &driver.id, season.fase)
+                .ok()
+                .flatten();
             DriverSummary {
                 id: driver_id.clone(),
                 nome: driver.nome,
                 nacionalidade: driver.nacionalidade,
                 idade: driver.idade as i32,
                 skill: driver.atributos.skill.round().clamp(0.0, 100.0) as u8,
+                categoria_especial_ativa: driver.categoria_especial_ativa.clone(),
                 equipe_id: team.as_ref().map(|value| value.id.clone()),
                 equipe_nome: team.as_ref().map(|value| value.nome.clone()),
                 equipe_nome_curto: team.as_ref().map(|value| value.nome_curto.clone()),
@@ -1841,6 +2344,76 @@ fn parse_recent_result_entry(value: &serde_json::Value) -> Option<RoundResult> {
     })
 }
 
+fn get_driver_slot_info(
+    db: &Database,
+    driver_id: Option<&String>,
+    team_id: &str,
+    active_season_number: i32,
+) -> (Option<String>, Option<i32>) {
+    let Some(driver_id) = driver_id else {
+        return (None, None);
+    };
+
+    let driver_name = driver_queries::get_driver(&db.conn, driver_id)
+        .ok()
+        .map(|driver| driver.nome);
+    let tenure_seasons =
+        calculate_consecutive_team_tenure(&db.conn, driver_id, team_id, active_season_number);
+    (driver_name, tenure_seasons)
+}
+
+fn calculate_consecutive_team_tenure(
+    conn: &rusqlite::Connection,
+    driver_id: &str,
+    team_id: &str,
+    active_season_number: i32,
+) -> Option<i32> {
+    let contracts = contract_queries::get_contracts_for_pilot(conn, driver_id).ok()?;
+    consecutive_team_seasons_up_to(&contracts, team_id, active_season_number)
+}
+
+fn consecutive_team_seasons_up_to(
+    contracts: &[crate::models::contract::Contract],
+    team_id: &str,
+    active_season_number: i32,
+) -> Option<i32> {
+    let mut intervals: Vec<(i32, i32)> = contracts
+        .iter()
+        .filter(|contract| {
+            contract.tipo == crate::models::enums::ContractType::Regular
+                && contract.equipe_id == team_id
+                && contract.status != crate::models::enums::ContractStatus::Pendente
+        })
+        .map(|contract| {
+            (
+                contract.temporada_inicio,
+                contract.temporada_fim.min(active_season_number),
+            )
+        })
+        .filter(|(start, end)| *start <= *end)
+        .collect();
+
+    intervals.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.cmp(&a.1)));
+
+    let mut covered_until = active_season_number;
+    let mut earliest_start = None;
+
+    for (start, end) in intervals {
+        if end < covered_until {
+            if end + 1 != covered_until {
+                continue;
+            }
+        } else if start > covered_until || end < covered_until {
+            continue;
+        }
+
+        earliest_start = Some(start);
+        covered_until = start - 1;
+    }
+
+    earliest_start.map(|start| active_season_number - start + 1)
+}
+
 pub(crate) fn get_teams_standings_in_base_dir(
     base_dir: &Path,
     career_id: &str,
@@ -1851,21 +2424,27 @@ pub(crate) fn get_teams_standings_in_base_dir(
     let teams = team_queries::get_teams_by_category(&db.conn, &category)
         .map_err(|e| format!("Falha ao buscar equipes da categoria: {e}"))?;
     let previous_champions = get_previous_champions_in_base_dir(base_dir, career_id, &category)?;
+    let active_season_number = season_queries::get_active_season(&db.conn)
+        .map_err(|e| format!("Falha ao buscar temporada ativa: {e}"))?
+        .map(|season| season.numero)
+        .unwrap_or(1);
 
     let mut standings: Vec<TeamStanding> = teams
         .into_iter()
         .map(|team| {
             let team_id = team.id.clone();
-            let piloto_1_nome = team
-                .piloto_1_id
-                .as_ref()
-                .and_then(|id| driver_queries::get_driver(&db.conn, id).ok())
-                .map(|driver| driver.nome);
-            let piloto_2_nome = team
-                .piloto_2_id
-                .as_ref()
-                .and_then(|id| driver_queries::get_driver(&db.conn, id).ok())
-                .map(|driver| driver.nome);
+            let (piloto_1_nome, piloto_1_tenure_seasons) = get_driver_slot_info(
+                &db,
+                team.piloto_1_id.as_ref(),
+                &team_id,
+                active_season_number,
+            );
+            let (piloto_2_nome, piloto_2_tenure_seasons) = get_driver_slot_info(
+                &db,
+                team.piloto_2_id.as_ref(),
+                &team_id,
+                active_season_number,
+            );
 
             TeamStanding {
                 posicao: 0,
@@ -1876,7 +2455,9 @@ pub(crate) fn get_teams_standings_in_base_dir(
                 pontos: team.stats_pontos,
                 vitorias: team.stats_vitorias,
                 piloto_1_nome,
+                piloto_1_tenure_seasons,
                 piloto_2_nome,
+                piloto_2_tenure_seasons,
                 trofeus: previous_champions
                     .constructor_champions
                     .iter()
@@ -1891,6 +2472,7 @@ pub(crate) fn get_teams_standings_in_base_dir(
                     .unwrap_or_default(),
                 classe: team.classe.clone(),
                 temp_posicao: team.temp_posicao,
+                categoria_anterior: team.categoria_anterior.clone(),
             }
         })
         .collect();
@@ -2004,9 +2586,30 @@ fn save_meta_to_info(meta: SaveMeta) -> SaveInfo {
     }
 }
 
-fn find_player_team(conn: &rusqlite::Connection, player_id: &str) -> Result<Option<Team>, String> {
-    let contract = contract_queries::get_active_contract_for_pilot(conn, player_id)
-        .map_err(|e| format!("Falha ao buscar contrato ativo: {e}"))?;
+fn preferred_active_contract_for_phase(
+    conn: &rusqlite::Connection,
+    driver_id: &str,
+    season_phase: SeasonPhase,
+) -> Result<Option<crate::models::contract::Contract>, String> {
+    if season_phase == SeasonPhase::BlocoEspecial {
+        let special_contract =
+            contract_queries::get_active_especial_contract_for_pilot(conn, driver_id)
+                .map_err(|e| format!("Falha ao buscar contrato especial ativo: {e}"))?;
+        if special_contract.is_some() {
+            return Ok(special_contract);
+        }
+    }
+
+    contract_queries::get_active_regular_contract_for_pilot(conn, driver_id)
+        .map_err(|e| format!("Falha ao buscar contrato regular ativo: {e}"))
+}
+
+fn find_player_team(
+    conn: &rusqlite::Connection,
+    player_id: &str,
+    season_phase: SeasonPhase,
+) -> Result<Option<Team>, String> {
+    let contract = preferred_active_contract_for_phase(conn, player_id, season_phase)?;
     resolve_driver_team(conn, player_id, contract.as_ref())
 }
 
@@ -2084,6 +2687,7 @@ fn build_team_summary(conn: &rusqlite::Connection, team: &Team) -> Result<TeamSu
         cor_primaria: team.cor_primaria.clone(),
         cor_secundaria: team.cor_secundaria.clone(),
         categoria: team.categoria.clone(),
+        classe: team.classe.clone(),
         car_performance: team.car_performance,
         confiabilidade: team.confiabilidade,
         budget: team.budget,
@@ -2092,6 +2696,30 @@ fn build_team_summary(conn: &rusqlite::Connection, team: &Team) -> Result<TeamSu
         piloto_2_id: team.piloto_2_id.clone(),
         piloto_2_nome,
     })
+}
+
+fn build_accepted_special_offer_summary(
+    conn: &rusqlite::Connection,
+    player: &crate::models::driver::Driver,
+) -> Result<Option<AcceptedSpecialOfferSummary>, String> {
+    if player.categoria_especial_ativa.is_none() {
+        return Ok(None);
+    }
+
+    let Some(contract) = contract_queries::get_active_especial_contract_for_pilot(conn, &player.id)
+        .map_err(|e| format!("Falha ao buscar contrato especial ativo: {e}"))?
+    else {
+        return Ok(None);
+    };
+
+    Ok(Some(AcceptedSpecialOfferSummary {
+        id: contract.id,
+        team_id: contract.equipe_id,
+        team_name: contract.equipe_nome,
+        special_category: contract.categoria,
+        class_name: contract.classe.unwrap_or_default(),
+        papel: contract.papel.as_str().to_string(),
+    }))
 }
 
 fn empty_track_history_summary() -> TrackHistorySummary {
@@ -2121,8 +2749,8 @@ fn build_next_race_briefing_summary(
     season_number: i32,
     race: &CalendarEntry,
 ) -> Result<NextRaceBriefingSummary, String> {
-    let contract_warning = contract_queries::get_active_contract_for_pilot(conn, player_id)
-        .map_err(|e| format!("Falha ao buscar contrato do jogador: {e}"))?
+    let contract_warning = contract_queries::get_active_regular_contract_for_pilot(conn, player_id)
+        .map_err(|e| format!("Falha ao buscar contrato regular do jogador: {e}"))?
         .and_then(|c| {
             if c.is_ultimo_ano(season_number) {
                 Some(ContractWarningInfo {
@@ -2135,9 +2763,18 @@ fn build_next_race_briefing_summary(
         });
 
     Ok(NextRaceBriefingSummary {
-        track_history: Some(build_track_history_summary(conn, player_id, &race.track_name)?),
+        track_history: Some(build_track_history_summary(
+            conn,
+            player_id,
+            &race.track_name,
+        )?),
         primary_rival: build_primary_rival_summary(conn, player_id, &race.categoria)?,
-        weekend_stories: build_weekend_story_summaries(conn, season_number, &race.categoria, race.rodada)?,
+        weekend_stories: build_weekend_story_summaries(
+            conn,
+            season_number,
+            &race.categoria,
+            race.rodada,
+        )?,
         contract_warning,
     })
 }
@@ -2222,7 +2859,11 @@ fn build_primary_rival_summary(
 
     let player = &drivers[player_index];
     let rival_index = if player_index == 0 {
-        if drivers.len() > 1 { 1 } else { return Ok(None) }
+        if drivers.len() > 1 {
+            1
+        } else {
+            return Ok(None);
+        }
     } else {
         player_index - 1
     };
@@ -2257,7 +2898,9 @@ fn build_weekend_story_summaries(
     let mut stories = news_queries::get_news_by_season(conn, season_number, 200)
         .map_err(|e| format!("Falha ao buscar noticias da temporada para a previa: {e}"))?
         .into_iter()
-        .filter(|item| item.categoria_id.as_deref() == Some(categoria) && item.rodada == Some(round_number))
+        .filter(|item| {
+            item.categoria_id.as_deref() == Some(categoria) && item.rodada == Some(round_number)
+        })
         .collect::<Vec<_>>();
 
     stories.sort_by(|left, right| {
@@ -2316,6 +2959,12 @@ fn build_briefing_story_summary_text(text: &str) -> String {
     trimmed.chars().take(140).collect()
 }
 
+fn warn_if_noncritical<T>(result: Result<T, String>, context: &str) {
+    if let Err(error) = result {
+        eprintln!("Aviso: {context}: {error}");
+    }
+}
+
 fn count_rows(conn: &rusqlite::Connection, table: &str) -> Result<usize, rusqlite::Error> {
     let sql = format!("SELECT COUNT(*) FROM {table}");
     let count: i64 = conn.query_row(&sql, [], |row| row.get(0))?;
@@ -2350,6 +2999,7 @@ fn count_season_calendar_entries(
 
 #[cfg(test)]
 mod tests {
+    use chrono::{Datelike, NaiveDate};
     use std::fs;
 
     use super::*;
@@ -2500,6 +3150,70 @@ mod tests {
     }
 
     #[test]
+    fn test_create_career_seeds_initial_licenses_for_active_grid() {
+        let base_dir = unique_test_dir("seed_initial_licenses");
+        fs::create_dir_all(&base_dir).expect("base dir");
+
+        let input = CreateCareerInput {
+            player_name: "Joao Silva".to_string(),
+            player_nationality: "br".to_string(),
+            player_age: Some(22),
+            category: "mazda_rookie".to_string(),
+            team_index: 2,
+            difficulty: "medio".to_string(),
+        };
+
+        let result = create_career_in_base_dir(&base_dir, input).expect("career should be created");
+        let db_path = std::path::PathBuf::from(&result.save_path).join("career.db");
+        let db = Database::open_existing(&db_path).expect("db should open");
+
+        let seeded_licenses: i64 = db
+            .conn
+            .query_row("SELECT COUNT(*) FROM licenses", [], |row| row.get(0))
+            .expect("licenses count");
+        let gt3_without_license: i64 = db
+            .conn
+            .query_row(
+                "SELECT COUNT(*)
+                 FROM contracts c
+                 JOIN teams t ON t.id = c.equipe_id
+                 LEFT JOIN licenses l
+                   ON l.piloto_id = c.piloto_id
+                  AND CAST(l.nivel AS INTEGER) >= 3
+                 WHERE c.status = 'Ativo'
+                   AND c.tipo = 'Regular'
+                   AND t.categoria = 'gt3'
+                   AND l.piloto_id IS NULL",
+                [],
+                |row| row.get(0),
+            )
+            .expect("gt3 license coverage");
+        let gt4_without_license: i64 = db
+            .conn
+            .query_row(
+                "SELECT COUNT(*)
+                 FROM contracts c
+                 JOIN teams t ON t.id = c.equipe_id
+                 LEFT JOIN licenses l
+                   ON l.piloto_id = c.piloto_id
+                  AND CAST(l.nivel AS INTEGER) >= 2
+                 WHERE c.status = 'Ativo'
+                   AND c.tipo = 'Regular'
+                   AND t.categoria = 'gt4'
+                   AND l.piloto_id IS NULL",
+                [],
+                |row| row.get(0),
+            )
+            .expect("gt4 license coverage");
+
+        assert_eq!(seeded_licenses, 108);
+        assert_eq!(gt3_without_license, 0);
+        assert_eq!(gt4_without_license, 0);
+
+        let _ = fs::remove_dir_all(base_dir);
+    }
+
+    #[test]
     fn test_load_career_returns_player() {
         let base_dir = create_test_career_dir("load_player");
         let career = load_career_in_base_dir(&base_dir, "career_001").expect("load career");
@@ -2514,10 +3228,11 @@ mod tests {
     fn test_load_career_returns_team() {
         let base_dir = create_test_career_dir("load_team");
         let career = load_career_in_base_dir(&base_dir, "career_001").expect("load career");
+        let player_team = career.player_team.as_ref().expect("player team");
 
-        assert!(!career.player_team.id.is_empty());
-        assert!(career.player_team.piloto_1_id.is_some());
-        assert!(career.player_team.piloto_2_id.is_some());
+        assert!(!player_team.id.is_empty());
+        assert!(player_team.piloto_1_id.is_some());
+        assert!(player_team.piloto_2_id.is_some());
 
         let _ = fs::remove_dir_all(base_dir);
     }
@@ -2571,6 +3286,253 @@ mod tests {
     }
 
     #[test]
+    fn test_load_career_prefers_active_special_contract_team() {
+        let base_dir = create_test_career_dir("load_active_special_team");
+        let config = AppConfig::load_or_default(&base_dir);
+        let db_path = config.saves_dir().join("career_001").join("career.db");
+        let db = Database::open_existing(&db_path).expect("db");
+        let mut player = driver_queries::get_player_driver(&db.conn).expect("player");
+        player.categoria_atual = Some("gt4".to_string());
+        player.atributos.skill = 98.0;
+        driver_queries::update_driver(&db.conn, &player).expect("update player");
+
+        crate::convocation::advance_to_convocation_window(&db.conn).expect("advance convocation");
+        crate::convocation::run_convocation_window(&db.conn).expect("run convocation");
+        let offers = crate::commands::convocation::get_player_special_offers_in_base_dir(
+            &base_dir,
+            "career_001",
+        )
+        .expect("special offers");
+        crate::commands::convocation::respond_player_special_offer_in_base_dir(
+            &base_dir,
+            "career_001",
+            &offers[0].id,
+            true,
+        )
+        .expect("accept offer");
+        crate::convocation::iniciar_bloco_especial(&db.conn).expect("start special block");
+
+        let career = load_career_in_base_dir(&base_dir, "career_001").expect("load career");
+        let player_team = career.player_team.as_ref().expect("player team");
+
+        assert_eq!(player_team.categoria, "endurance");
+        assert_eq!(
+            career
+                .next_race
+                .as_ref()
+                .map(|race| race.season_phase.as_str()),
+            Some("BlocoEspecial")
+        );
+
+        let _ = fs::remove_dir_all(base_dir);
+    }
+
+    #[test]
+    fn test_load_career_serializes_convocation_state_fields() {
+        let base_dir = create_test_career_dir("load_convocation_contract_payload");
+        let config = AppConfig::load_or_default(&base_dir);
+        let db_path = config.saves_dir().join("career_001").join("career.db");
+        let db = Database::open_existing(&db_path).expect("db");
+        let mut player = driver_queries::get_player_driver(&db.conn).expect("player");
+        player.categoria_atual = Some("gt4".to_string());
+        player.atributos.skill = 98.0;
+        driver_queries::update_driver(&db.conn, &player).expect("update player");
+
+        crate::convocation::advance_to_convocation_window(&db.conn).expect("advance convocation");
+        crate::convocation::run_convocation_window(&db.conn).expect("run convocation");
+        let offers = crate::commands::convocation::get_player_special_offers_in_base_dir(
+            &base_dir,
+            "career_001",
+        )
+        .expect("special offers");
+        crate::commands::convocation::respond_player_special_offer_in_base_dir(
+            &base_dir,
+            "career_001",
+            &offers[0].id,
+            true,
+        )
+        .expect("accept offer");
+
+        let career = load_career_in_base_dir(&base_dir, "career_001").expect("load career");
+        let payload = serde_json::to_value(&career).expect("serialize payload");
+
+        assert_eq!(payload["season"]["fase"], "JanelaConvocacao");
+        assert_eq!(payload["player"]["categoria_especial_ativa"], "endurance");
+        assert!(
+            payload["player_team"].get("classe").is_some(),
+            "player_team.classe deveria ser serializado para a UI"
+        );
+        assert_eq!(
+            payload["accepted_special_offer"]["special_category"],
+            "endurance"
+        );
+        assert_eq!(
+            payload["accepted_special_offer"]["team_name"],
+            offers[0].team_name
+        );
+
+        let _ = fs::remove_dir_all(base_dir);
+    }
+
+    #[test]
+    fn test_load_career_prefers_regular_team_outside_special_phase() {
+        let base_dir = create_test_career_dir("load_regular_team_outside_special_phase");
+        let config = AppConfig::load_or_default(&base_dir);
+        let db_path = config.saves_dir().join("career_001").join("career.db");
+        let db = Database::open_existing(&db_path).expect("db");
+        let player = driver_queries::get_player_driver(&db.conn).expect("player");
+        let regular_contract =
+            contract_queries::get_active_regular_contract_for_pilot(&db.conn, &player.id)
+                .expect("regular contract")
+                .expect("player regular contract");
+        let special_team = team_queries::get_teams_by_category(&db.conn, "endurance")
+            .expect("special teams")
+            .into_iter()
+            .next()
+            .expect("endurance team");
+        let season = season_queries::get_active_season(&db.conn)
+            .expect("season")
+            .expect("active season");
+
+        let special_contract = contract_queries::generate_especial_contract(
+            next_id(&db.conn, IdType::Contract).expect("special contract id"),
+            &player.id,
+            &player.nome,
+            &special_team.id,
+            &special_team.nome,
+            TeamRole::Numero1,
+            "endurance",
+            special_team.classe.as_deref().unwrap_or("gt4"),
+            season.numero,
+        );
+        contract_queries::insert_contract(&db.conn, &special_contract).expect("insert special");
+        driver_queries::update_driver_especial_category(&db.conn, &player.id, Some("endurance"))
+            .expect("set special category");
+        team_queries::update_team_pilots(&db.conn, &special_team.id, Some(&player.id), None)
+            .expect("set special lineup");
+        season_queries::update_season_fase(&db.conn, &season.id, &SeasonPhase::BlocoRegular)
+            .expect("keep regular phase");
+
+        let career = load_career_in_base_dir(&base_dir, "career_001").expect("load career");
+        let player_team = career.player_team.as_ref().expect("player team");
+
+        assert_eq!(player_team.id, regular_contract.equipe_id);
+
+        let _ = fs::remove_dir_all(base_dir);
+    }
+
+    #[test]
+    fn test_load_career_repairs_duplicate_regular_contract_state() {
+        let base_dir = create_test_career_dir("repair_duplicate_regular_contract_state");
+        let config = AppConfig::load_or_default(&base_dir);
+        let db_path = config.saves_dir().join("career_001").join("career.db");
+        let db = Database::open_existing(&db_path).expect("db");
+        let mut player = driver_queries::get_player_driver(&db.conn).expect("player");
+        player.atributos.skill = 99.0;
+        player.categoria_atual = Some("gt4".to_string());
+        driver_queries::update_driver(&db.conn, &player).expect("update player");
+
+        let original_contract =
+            contract_queries::get_active_regular_contract_for_pilot(&db.conn, &player.id)
+                .expect("original contract")
+                .expect("player regular contract");
+        let replacement_team = team_queries::get_teams_by_category(&db.conn, "mazda_rookie")
+            .expect("rookie teams")
+            .into_iter()
+            .find(|team| team.id != original_contract.equipe_id)
+            .expect("replacement team");
+        let displaced_contract =
+            contract_queries::get_active_contracts_for_team(&db.conn, &replacement_team.id)
+                .expect("replacement contracts")
+                .into_iter()
+                .find(|contract| contract.tipo == crate::models::enums::ContractType::Regular)
+                .expect("regular driver to displace");
+        contract_queries::update_contract_status(
+            &db.conn,
+            &displaced_contract.id,
+            &ContractStatus::Rescindido,
+        )
+        .expect("rescind replacement seat");
+        db.conn
+            .execute_batch("DROP INDEX IF EXISTS idx_contracts_active_pilot_tipo;")
+            .expect("drop active-contract uniqueness guard for corruption scenario");
+
+        let mut replacement_contract = crate::models::contract::Contract::new(
+            next_id(&db.conn, IdType::Contract).expect("replacement contract id"),
+            player.id.clone(),
+            player.nome.clone(),
+            replacement_team.id.clone(),
+            replacement_team.nome.clone(),
+            original_contract.temporada_inicio,
+            2,
+            250_000.0,
+            TeamRole::Numero1,
+            replacement_team.categoria.clone(),
+        );
+        replacement_contract.created_at = "9999-12-31T23:59:59".to_string();
+        contract_queries::insert_contract(&db.conn, &replacement_contract)
+            .expect("insert replacement contract");
+
+        let gt4_team = team_queries::get_teams_by_category(&db.conn, "gt4")
+            .expect("gt4 teams")
+            .into_iter()
+            .next()
+            .expect("gt4 team");
+        team_queries::update_team_pilots(
+            &db.conn,
+            &gt4_team.id,
+            Some(&player.id),
+            gt4_team.piloto_2_id.as_deref(),
+        )
+        .expect("corrupt gt4 lineup");
+
+        let career = load_career_in_base_dir(&base_dir, "career_001").expect("load career");
+        let refreshed_db = Database::open_existing(&db_path).expect("db reopen");
+        let refreshed_player =
+            driver_queries::get_player_driver(&refreshed_db.conn).expect("player");
+        let active_regular_contracts =
+            contract_queries::get_contracts_for_pilot(&refreshed_db.conn, &player.id)
+                .expect("player contracts")
+                .into_iter()
+                .filter(|contract| {
+                    contract.status == ContractStatus::Ativo
+                        && contract.tipo == crate::models::enums::ContractType::Regular
+                })
+                .collect::<Vec<_>>();
+        let original_contract_after =
+            contract_queries::get_contract_by_id(&refreshed_db.conn, &original_contract.id)
+                .expect("query original contract")
+                .expect("original contract exists");
+        let refreshed_replacement_team =
+            team_queries::get_team_by_id(&refreshed_db.conn, &replacement_team.id)
+                .expect("query replacement team")
+                .expect("replacement team");
+        let refreshed_gt4_team = team_queries::get_team_by_id(&refreshed_db.conn, &gt4_team.id)
+            .expect("query gt4 team")
+            .expect("gt4 team");
+        let player_team = career.player_team.as_ref().expect("player team");
+
+        assert_eq!(player_team.id, replacement_team.id);
+        assert_eq!(active_regular_contracts.len(), 1);
+        assert_eq!(active_regular_contracts[0].id, replacement_contract.id);
+        assert_eq!(original_contract_after.status, ContractStatus::Rescindido);
+        assert_eq!(
+            refreshed_player.categoria_atual.as_deref(),
+            Some(replacement_team.categoria.as_str())
+        );
+        assert!(
+            refreshed_gt4_team.piloto_1_id.as_deref() != Some(player.id.as_str())
+                && refreshed_gt4_team.piloto_2_id.as_deref() != Some(player.id.as_str())
+        );
+        assert!(
+            refreshed_replacement_team.piloto_1_id.as_deref() == Some(player.id.as_str())
+                || refreshed_replacement_team.piloto_2_id.as_deref() == Some(player.id.as_str())
+        );
+
+        let _ = fs::remove_dir_all(base_dir);
+    }
+
+    #[test]
     fn test_next_race_briefing_summarizes_track_history() {
         let base_dir = create_test_career_dir("load_briefing_track_history");
         let career_id = "career_001";
@@ -2580,8 +3542,8 @@ mod tests {
         let season = season_queries::get_active_season(&db.conn)
             .expect("season")
             .expect("active season");
-        let calendar = calendar_queries::get_calendar(&db.conn, &season.id, "mazda_rookie")
-            .expect("calendar");
+        let calendar =
+            calendar_queries::get_calendar(&db.conn, &season.id, "mazda_rookie").expect("calendar");
         let race_one = calendar.first().expect("race one");
         let race_two = calendar.get(1).expect("race two");
 
@@ -2691,7 +3653,8 @@ mod tests {
                     tipo: NewsType::Rivalidade,
                     icone: "R".to_string(),
                     titulo: "Duelo esquenta a abertura".to_string(),
-                    texto: "A tensao entre os protagonistas cresce antes da etapa de abertura.".to_string(),
+                    texto: "A tensao entre os protagonistas cresce antes da etapa de abertura."
+                        .to_string(),
                     rodada: Some(1),
                     semana_pretemporada: None,
                     temporada: season.numero,
@@ -2725,7 +3688,9 @@ mod tests {
                     tipo: NewsType::Corrida,
                     icone: "C".to_string(),
                     titulo: "Abertura promete grid apertado".to_string(),
-                    texto: "A etapa de abertura deve embaralhar o pelotao logo nas primeiras voltas.".to_string(),
+                    texto:
+                        "A etapa de abertura deve embaralhar o pelotao logo nas primeiras voltas."
+                            .to_string(),
                     rodada: Some(1),
                     semana_pretemporada: None,
                     temporada: season.numero,
@@ -2742,7 +3707,8 @@ mod tests {
                     tipo: NewsType::Corrida,
                     icone: "X".to_string(),
                     titulo: "Outra categoria movimenta a semana".to_string(),
-                    texto: "Essa noticia nao deve entrar na previa da etapa do jogador.".to_string(),
+                    texto: "Essa noticia nao deve entrar na previa da etapa do jogador."
+                        .to_string(),
                     rodada: Some(1),
                     semana_pretemporada: None,
                     temporada: season.numero,
@@ -2767,7 +3733,9 @@ mod tests {
 
         assert_eq!(stories.len(), 3);
         assert_eq!(stories[0].title, "Duelo esquenta a abertura");
-        assert!(stories.iter().all(|story| !story.title.contains("Outra categoria")));
+        assert!(stories
+            .iter()
+            .all(|story| !story.title.contains("Outra categoria")));
 
         let _ = fs::remove_dir_all(base_dir);
     }
@@ -2830,7 +3798,10 @@ mod tests {
         ]);
         driver_queries::update_driver(&db.conn, &driver).expect("update driver");
 
-        let results_path = config.saves_dir().join("career_001").join("race_results.json");
+        let results_path = config
+            .saves_dir()
+            .join("career_001")
+            .join("race_results.json");
         if results_path.exists() {
             fs::remove_file(&results_path).expect("remove history file");
         }
@@ -2865,6 +3836,81 @@ mod tests {
         assert_eq!(standings[0].posicao, 1);
 
         let _ = fs::remove_dir_all(base_dir);
+    }
+
+    #[test]
+    fn test_consecutive_team_seasons_up_to_counts_only_current_streak() {
+        let mut season_one = crate::models::contract::Contract::new(
+            "C001".to_string(),
+            "P001".to_string(),
+            "Piloto".to_string(),
+            "T001".to_string(),
+            "Equipe 1".to_string(),
+            1,
+            1,
+            100_000.0,
+            TeamRole::Numero1,
+            "gt4".to_string(),
+        );
+        season_one.status = ContractStatus::Expirado;
+        let mut season_two = crate::models::contract::Contract::new(
+            "C002".to_string(),
+            "P001".to_string(),
+            "Piloto".to_string(),
+            "T001".to_string(),
+            "Equipe 1".to_string(),
+            2,
+            1,
+            110_000.0,
+            TeamRole::Numero1,
+            "gt4".to_string(),
+        );
+        season_two.status = ContractStatus::Expirado;
+        let season_three = crate::models::contract::Contract::new(
+            "C003".to_string(),
+            "P001".to_string(),
+            "Piloto".to_string(),
+            "T001".to_string(),
+            "Equipe 1".to_string(),
+            3,
+            2,
+            120_000.0,
+            TeamRole::Numero1,
+            "gt4".to_string(),
+        );
+        let mut different_team = crate::models::contract::Contract::new(
+            "C004".to_string(),
+            "P002".to_string(),
+            "Piloto 2".to_string(),
+            "T001".to_string(),
+            "Equipe 1".to_string(),
+            1,
+            1,
+            95_000.0,
+            TeamRole::Numero1,
+            "gt4".to_string(),
+        );
+        different_team.status = ContractStatus::Expirado;
+        let current_other_team = crate::models::contract::Contract::new(
+            "C005".to_string(),
+            "P002".to_string(),
+            "Piloto 2".to_string(),
+            "T002".to_string(),
+            "Equipe 2".to_string(),
+            3,
+            1,
+            105_000.0,
+            TeamRole::Numero1,
+            "gt4".to_string(),
+        );
+
+        let veteran_streak =
+            consecutive_team_seasons_up_to(&[season_one, season_two, season_three], "T001", 3);
+        let newcomer_streak =
+            consecutive_team_seasons_up_to(&[different_team, current_other_team], "T002", 3);
+
+        assert_eq!(veteran_streak, Some(3));
+        assert_eq!(newcomer_streak, Some(1));
     }
 
     #[test]
@@ -3236,6 +4282,33 @@ mod tests {
     }
 
     #[test]
+    fn test_advance_season_succeeds_even_if_resume_context_write_fails() {
+        let base_dir = create_test_career_dir("advance_resume_context_failure");
+        mark_all_races_completed(&base_dir, "career_001");
+
+        let config = AppConfig::load_or_default(&base_dir);
+        let save_dir = config.saves_dir().join("career_001");
+        fs::create_dir_all(save_dir.join("resume_context.json"))
+            .expect("block resume context path");
+
+        let result = advance_season_in_base_dir(&base_dir, "career_001")
+            .expect("advance season should still succeed");
+
+        let db_path = save_dir.join("career.db");
+        let db = Database::open_existing(&db_path).expect("db");
+        let active_season = season_queries::get_active_season(&db.conn)
+            .expect("active season query")
+            .expect("active season");
+
+        assert_eq!(result.new_year, 2025);
+        assert_eq!(active_season.numero, 2);
+        assert_eq!(active_season.ano, 2025);
+        assert!(save_dir.join("resume_context.json").is_dir());
+
+        let _ = fs::remove_dir_all(base_dir);
+    }
+
+    #[test]
     fn test_get_preseason_state_returns_initialized_state() {
         let base_dir = create_test_career_dir("preseason_state");
         mark_all_races_completed(&base_dir, "career_001");
@@ -3247,6 +4320,10 @@ mod tests {
         assert_eq!(state.current_week, 1);
         assert!(!state.is_complete);
         assert!(state.total_weeks >= 3);
+        assert!(
+            state.current_display_date.is_some(),
+            "preseason state should expose a simulation date",
+        );
 
         let _ = fs::remove_dir_all(base_dir);
     }
@@ -3257,13 +4334,148 @@ mod tests {
         mark_all_races_completed(&base_dir, "career_001");
 
         advance_season_in_base_dir(&base_dir, "career_001").expect("advance season");
+        let initial_state =
+            get_preseason_state_in_base_dir(&base_dir, "career_001").expect("preseason state");
+        let initial_date = initial_state
+            .current_display_date
+            .as_deref()
+            .and_then(|value| NaiveDate::parse_from_str(value, "%Y-%m-%d").ok())
+            .expect("valid initial preseason date");
+
         let week =
             advance_market_week_in_base_dir(&base_dir, "career_001").expect("advance market week");
         let state =
             get_preseason_state_in_base_dir(&base_dir, "career_001").expect("preseason state");
+        let advanced_date = state
+            .current_display_date
+            .as_deref()
+            .and_then(|value| NaiveDate::parse_from_str(value, "%Y-%m-%d").ok())
+            .expect("valid advanced preseason date");
 
         assert_eq!(week.week_number, 1);
         assert!(state.current_week >= 2 || state.is_complete);
+        assert_eq!(
+            advanced_date.signed_duration_since(initial_date).num_days(),
+            7,
+            "advancing the preseason should move the simulated date by one week",
+        );
+
+        let _ = fs::remove_dir_all(base_dir);
+    }
+
+    #[test]
+    fn test_preseason_dates_stay_inside_december_to_february_window() {
+        let base_dir = create_test_career_dir("preseason_market_window");
+        mark_all_races_completed(&base_dir, "career_001");
+
+        advance_season_in_base_dir(&base_dir, "career_001").expect("advance season");
+        let mut state =
+            get_preseason_state_in_base_dir(&base_dir, "career_001").expect("preseason state");
+
+        loop {
+            let current_date = state
+                .current_display_date
+                .as_deref()
+                .and_then(|value| NaiveDate::parse_from_str(value, "%Y-%m-%d").ok())
+                .expect("valid preseason date");
+            assert!(
+                matches!(current_date.month(), 12 | 1 | 2),
+                "preseason date {} should stay inside the december-february market window",
+                current_date
+            );
+
+            if state.is_complete {
+                break;
+            }
+
+            advance_market_week_in_base_dir(&base_dir, "career_001").expect("advance market week");
+            state =
+                get_preseason_state_in_base_dir(&base_dir, "career_001").expect("preseason state");
+        }
+
+        let _ = fs::remove_dir_all(base_dir);
+    }
+
+    #[test]
+    fn test_get_preseason_free_agents_payload_keeps_regular_history_when_special_exists() {
+        let base_dir = create_test_career_dir("preseason_free_agents_regular_history");
+        mark_all_races_completed(&base_dir, "career_001");
+
+        advance_season_in_base_dir(&base_dir, "career_001").expect("advance season");
+
+        let config = AppConfig::load_or_default(&base_dir);
+        let db_path = config.saves_dir().join("career_001").join("career.db");
+        let db = Database::open_existing(&db_path).expect("db");
+
+        let regular_team = team_queries::get_teams_by_category(&db.conn, "mazda_amador")
+            .expect("regular teams")
+            .into_iter()
+            .next()
+            .expect("regular team");
+        let special_team = team_queries::get_teams_by_category(&db.conn, "production_challenger")
+            .expect("special teams")
+            .into_iter()
+            .next()
+            .expect("special team");
+
+        let mut driver = Driver::new(
+            "P-PRESEASON-SPECIAL-001".to_string(),
+            "Piloto Historico".to_string(),
+            "Brasil".to_string(),
+            "M".to_string(),
+            26,
+            2021,
+        );
+        driver.status = DriverStatus::Ativo;
+        driver.categoria_atual = Some("mazda_amador".to_string());
+        driver_queries::insert_driver(&db.conn, &driver).expect("insert driver");
+
+        let mut regular_contract = crate::models::contract::Contract::new(
+            next_id(&db.conn, IdType::Contract).expect("regular contract id"),
+            driver.id.clone(),
+            driver.nome.clone(),
+            regular_team.id.clone(),
+            regular_team.nome.clone(),
+            2,
+            3,
+            80_000.0,
+            TeamRole::Numero1,
+            "mazda_amador".to_string(),
+        );
+        regular_contract.status = ContractStatus::Expirado;
+        regular_contract.created_at = "2026-01-01T08:00:00".to_string();
+        contract_queries::insert_contract(&db.conn, &regular_contract).expect("insert regular");
+
+        let mut special_contract = contract_queries::generate_especial_contract(
+            next_id(&db.conn, IdType::Contract).expect("special contract id"),
+            &driver.id,
+            &driver.nome,
+            &special_team.id,
+            &special_team.nome,
+            TeamRole::Numero2,
+            "production_challenger",
+            special_team.classe.as_deref().unwrap_or("mazda"),
+            4,
+        );
+        special_contract.status = ContractStatus::Expirado;
+        special_contract.created_at = "2026-06-01T08:00:00".to_string();
+        contract_queries::insert_contract(&db.conn, &special_contract).expect("insert special");
+
+        let free_agents =
+            get_preseason_free_agents_in_base_dir(&base_dir, "career_001").expect("free agents");
+        let preview = free_agents
+            .into_iter()
+            .find(|item| item.driver_id == driver.id)
+            .expect("driver preview");
+
+        assert_eq!(preview.categoria, "mazda_amador");
+        assert_eq!(preview.previous_team_name.as_deref(), Some(regular_team.nome.as_str()));
+        assert_eq!(
+            preview.previous_team_color.as_deref(),
+            Some(regular_team.cor_primaria.as_str())
+        );
+        assert_eq!(preview.seasons_at_last_team, 3);
+        assert_eq!(preview.total_career_seasons, 3);
 
         let _ = fs::remove_dir_all(base_dir);
     }
@@ -3290,9 +4502,7 @@ mod tests {
         mark_all_races_completed(&base_dir, "career_001");
         advance_season_in_base_dir(&base_dir, "career_001").expect("advance season");
 
-        let standings =
-            get_drivers_by_category_in_base_dir(&base_dir, "career_001", "mazda_rookie")
-                .expect("driver standings");
+        let refreshed_player_record = driver_queries::get_player_driver(&db.conn).expect("player");
         let snapshot_json: String = db
             .conn
             .query_row(
@@ -3306,14 +4516,13 @@ mod tests {
         let snapshot: serde_json::Value =
             serde_json::from_str(&snapshot_json).expect("valid snapshot json");
 
-        let refreshed_player = standings
-            .into_iter()
-            .find(|entry| entry.is_jogador)
-            .expect("player standing");
-
         assert!(
-            refreshed_player.results.iter().all(Option::is_none),
-            "new season standings should not show previous season recent results"
+            refreshed_player_record.ultimos_resultados == serde_json::json!([]),
+            "new season player record should not keep previous season recent results"
+        );
+        assert_eq!(
+            refreshed_player_record.stats_temporada.corridas, 0,
+            "new season player record should reset season race count"
         );
         assert_eq!(
             snapshot["ultimos_resultados"],
@@ -3342,9 +4551,42 @@ mod tests {
         advance_market_week_in_base_dir(&base_dir, "career_001").expect("advance market week");
 
         // news generation is now stubbed; just check the query runs without error
-        let _ = get_news_in_base_dir(&base_dir, "career_001", Some(1), None, Some(50)).expect("news");
+        let _ =
+            get_news_in_base_dir(&base_dir, "career_001", Some(1), None, Some(50)).expect("news");
         let _ = get_news_in_base_dir(&base_dir, "career_001", Some(2), Some("Mercado"), Some(50))
             .expect("market news");
+
+        let _ = fs::remove_dir_all(base_dir);
+    }
+
+    #[test]
+    fn test_get_news_rejects_invalid_type_filter() {
+        let base_dir = create_test_career_dir("get_news_invalid_type");
+        let error = get_news_in_base_dir(
+            &base_dir,
+            "career_001",
+            Some(1),
+            Some("TipoInvalido"),
+            Some(50),
+        )
+        .expect_err("invalid news type should fail");
+
+        assert!(error.contains("NewsType"));
+
+        let _ = fs::remove_dir_all(base_dir);
+    }
+
+    #[test]
+    fn test_is_team_role_vacant_rejects_invalid_role() {
+        let base_dir = create_test_career_dir("invalid_team_role_vacancy");
+        let config = AppConfig::load_or_default(&base_dir);
+        let db_path = config.saves_dir().join("career_001").join("career.db");
+        let db = Database::open_existing(&db_path).expect("db");
+
+        let error = is_team_role_vacant(&db.conn, "T001", "PapelInvalido")
+            .expect_err("invalid role should fail");
+
+        assert!(error.contains("TeamRole"));
 
         let _ = fs::remove_dir_all(base_dir);
     }
@@ -3442,11 +4684,417 @@ mod tests {
         assert_eq!(active_contract.equipe_id, "T001");
         let expired = crate::db::queries::market_proposals::get_market_proposal_by_id(
             &refreshed_db.conn,
+            &season.id,
             "MP-T002-P001",
         )
         .expect("proposal query")
         .expect("proposal");
         assert_eq!(expired.status.as_str(), "Expirada");
+
+        let _ = fs::remove_dir_all(base_dir);
+    }
+
+    #[test]
+    fn test_accept_proposal_replaces_only_regular_contract_when_special_exists() {
+        let base_dir = create_test_career_dir("accept_proposal_with_special_residue");
+        mark_all_races_completed(&base_dir, "career_001");
+        advance_season_in_base_dir(&base_dir, "career_001").expect("advance season");
+        let config = AppConfig::load_or_default(&base_dir);
+        let db_path = config.saves_dir().join("career_001").join("career.db");
+        let db = Database::open_existing(&db_path).expect("db");
+        let player = driver_queries::get_player_driver(&db.conn).expect("player");
+        let season = season_queries::get_active_season(&db.conn)
+            .expect("season query")
+            .expect("active season");
+        let special_team = team_queries::get_teams_by_category(&db.conn, "endurance")
+            .expect("special teams")
+            .into_iter()
+            .next()
+            .expect("endurance team");
+
+        let special_contract = contract_queries::generate_especial_contract(
+            next_id(&db.conn, IdType::Contract).expect("special contract id"),
+            &player.id,
+            &player.nome,
+            &special_team.id,
+            &special_team.nome,
+            TeamRole::Numero1,
+            "endurance",
+            special_team.classe.as_deref().unwrap_or("gt4"),
+            season.numero,
+        );
+        contract_queries::insert_contract(&db.conn, &special_contract).expect("insert special");
+        driver_queries::update_driver_especial_category(&db.conn, &player.id, Some("endurance"))
+            .expect("set special category");
+        team_queries::update_team_pilots(&db.conn, &special_team.id, Some(&player.id), None)
+            .expect("set special lineup");
+
+        seed_player_proposal(&db.conn, &season.id, &player.id, "T001", "Pendente");
+
+        let response =
+            respond_to_proposal_in_base_dir(&base_dir, "career_001", "MP-T001-P001", true)
+                .expect("accept proposal");
+
+        assert!(response.success);
+
+        let refreshed_db = Database::open_existing(&db_path).expect("db reopen");
+        let active_regular =
+            contract_queries::get_active_regular_contract_for_pilot(&refreshed_db.conn, &player.id)
+                .expect("regular contract query")
+                .expect("active regular contract");
+        let active_regular_count: i64 = refreshed_db
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM contracts
+                 WHERE piloto_id = ?1 AND status = 'Ativo' AND tipo = 'Regular'",
+                rusqlite::params![&player.id],
+                |row| row.get(0),
+            )
+            .expect("count active regular contracts");
+
+        assert_eq!(active_regular.equipe_id, "T001");
+        assert_eq!(active_regular_count, 1);
+
+        let _ = fs::remove_dir_all(base_dir);
+    }
+
+    #[test]
+    fn test_accept_proposal_to_full_team_replaces_incumbent_instead_of_creating_third_driver() {
+        let base_dir = create_test_career_dir("accept_proposal_replaces_full_team_incumbent");
+        mark_all_races_completed(&base_dir, "career_001");
+        advance_season_in_base_dir(&base_dir, "career_001").expect("advance season");
+        let config = AppConfig::load_or_default(&base_dir);
+        let db_path = config.saves_dir().join("career_001").join("career.db");
+        let db = Database::open_existing(&db_path).expect("db");
+        let mut player = driver_queries::get_player_driver(&db.conn).expect("player");
+        player.atributos.skill = 1.0;
+        driver_queries::update_driver(&db.conn, &player).expect("downgrade player skill");
+
+        let season = season_queries::get_active_season(&db.conn)
+            .expect("season query")
+            .expect("active season");
+        let current_contract = latest_regular_contract_for_driver(&db.conn, &player.id);
+        let target_team = team_queries::get_teams_by_category(&db.conn, &current_contract.categoria)
+            .expect("teams by category")
+            .into_iter()
+            .find(|team| team.id != current_contract.equipe_id)
+            .expect("target team");
+        let displaced_driver_id = target_team
+            .piloto_1_id
+            .clone()
+            .expect("full target team should have n1 incumbent");
+
+        seed_player_proposal(&db.conn, &season.id, &player.id, &target_team.id, "Pendente");
+
+        respond_to_proposal_in_base_dir(
+            &base_dir,
+            "career_001",
+            &format!("MP-{}-{}", target_team.id, player.id),
+            true,
+        )
+        .expect("accept proposal");
+
+        let career = load_career_in_base_dir(&base_dir, "career_001").expect("load career");
+        let refreshed_db = Database::open_existing(&db_path).expect("db reopen");
+        let refreshed_target_team = team_queries::get_team_by_id(&refreshed_db.conn, &target_team.id)
+            .expect("query target team")
+            .expect("target team");
+        let target_contracts = contract_queries::get_active_contracts_for_team(
+            &refreshed_db.conn,
+            &target_team.id,
+        )
+        .expect("target team contracts")
+        .into_iter()
+        .filter(|contract| contract.tipo == crate::models::enums::ContractType::Regular)
+        .collect::<Vec<_>>();
+        let displaced_contract = contract_queries::get_active_regular_contract_for_pilot(
+            &refreshed_db.conn,
+            &displaced_driver_id,
+        )
+        .expect("displaced contract query");
+        let player_team = career.player_team.as_ref().expect("player team");
+
+        assert_eq!(player_team.id, target_team.id);
+        assert_eq!(target_contracts.len(), 2);
+        assert!(
+            refreshed_target_team.piloto_1_id.as_deref() == Some(player.id.as_str())
+                || refreshed_target_team.piloto_2_id.as_deref() == Some(player.id.as_str()),
+            "accepted player should remain in the target lineup after consistency repair"
+        );
+        assert!(
+            displaced_contract
+                .as_ref()
+                .is_none_or(|contract| contract.equipe_id != target_team.id),
+            "incumbent displaced from the accepted role should no longer hold an active regular contract for the target team"
+        );
+
+        let _ = fs::remove_dir_all(base_dir);
+    }
+
+    #[test]
+    fn test_accept_proposal_rejects_team_without_required_license() {
+        let base_dir = create_test_career_dir("accept_proposal_without_required_license");
+        mark_all_races_completed(&base_dir, "career_001");
+        advance_season_in_base_dir(&base_dir, "career_001").expect("advance season");
+        let config = AppConfig::load_or_default(&base_dir);
+        let db_path = config.saves_dir().join("career_001").join("career.db");
+        let db = Database::open_existing(&db_path).expect("db");
+        let player = driver_queries::get_player_driver(&db.conn).expect("player");
+        let season = season_queries::get_active_season(&db.conn)
+            .expect("season query")
+            .expect("active season");
+        let invalid_team = team_queries::get_teams_by_category(&db.conn, "gt4")
+            .expect("gt4 teams")
+            .into_iter()
+            .next()
+            .expect("gt4 team");
+
+        seed_player_proposal(
+            &db.conn,
+            &season.id,
+            &player.id,
+            &invalid_team.id,
+            "Pendente",
+        );
+
+        let error = respond_to_proposal_in_base_dir(
+            &base_dir,
+            "career_001",
+            &format!("MP-{}-{}", invalid_team.id, player.id),
+            true,
+        )
+        .expect_err("accept proposal should fail without required license");
+
+        assert!(error.to_lowercase().contains("licenc"));
+
+        let refreshed_db = Database::open_existing(&db_path).expect("db reopen");
+        let active_regular =
+            contract_queries::get_active_regular_contract_for_pilot(&refreshed_db.conn, &player.id);
+        let active_regular = active_regular.expect("regular contract query");
+        assert!(active_regular
+            .as_ref()
+            .is_none_or(|contract| contract.equipe_id != invalid_team.id));
+
+        let invalid_team_contracts: i64 = refreshed_db
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM contracts
+                 WHERE piloto_id = ?1 AND status = 'Ativo' AND tipo = 'Regular' AND equipe_id = ?2",
+                rusqlite::params![&player.id, &invalid_team.id],
+                |row| row.get(0),
+            )
+            .expect("count invalid team contracts");
+        assert_eq!(invalid_team_contracts, 0);
+
+        let _ = fs::remove_dir_all(base_dir);
+    }
+
+    #[test]
+    fn test_accept_proposal_removes_pending_player_events_from_preseason_plan() {
+        let base_dir = create_test_career_dir("accept_proposal_clears_pending_player_events");
+        mark_all_races_completed(&base_dir, "career_001");
+        advance_season_in_base_dir(&base_dir, "career_001").expect("advance season");
+        let config = AppConfig::load_or_default(&base_dir);
+        let save_dir = config.saves_dir().join("career_001");
+        let db_path = save_dir.join("career.db");
+        let db = Database::open_existing(&db_path).expect("db");
+        let player = driver_queries::get_player_driver(&db.conn).expect("player");
+        let season = season_queries::get_active_season(&db.conn)
+            .expect("season query")
+            .expect("active season");
+        let current_contract = latest_regular_contract_for_driver(&db.conn, &player.id);
+        let gt4_team = team_queries::get_teams_by_category(&db.conn, "gt4")
+            .expect("gt4 teams")
+            .into_iter()
+            .find(|team| team.id != current_contract.equipe_id)
+            .expect("gt4 team");
+
+        seed_player_proposal(
+            &db.conn,
+            &season.id,
+            &player.id,
+            &current_contract.equipe_id,
+            "Pendente",
+        );
+
+        let mut plan = crate::market::preseason::load_preseason_plan(&save_dir)
+            .expect("load plan")
+            .expect("preseason plan");
+        plan.planned_events.push(PlannedEvent {
+            week: 2,
+            executed: false,
+            event: PendingAction::ExpireContract {
+                contract_id: current_contract.id.clone(),
+                driver_id: player.id.clone(),
+                driver_name: player.nome.clone(),
+                team_id: current_contract.equipe_id.clone(),
+                team_name: current_contract.equipe_nome.clone(),
+            },
+        });
+        plan.planned_events.push(PlannedEvent {
+            week: 3,
+            executed: false,
+            event: PendingAction::Transfer {
+                driver_id: player.id.clone(),
+                driver_name: player.nome.clone(),
+                from_team_id: Some(current_contract.equipe_id.clone()),
+                from_team_name: Some(current_contract.equipe_nome.clone()),
+                to_team_id: gt4_team.id.clone(),
+                to_team_name: gt4_team.nome.clone(),
+                salary: 120_000.0,
+                duration: 1,
+                role: TeamRole::Numero2.as_str().to_string(),
+            },
+        });
+        save_preseason_plan(&save_dir, &plan).expect("save mutated plan");
+
+        let response = respond_to_proposal_in_base_dir(
+            &base_dir,
+            "career_001",
+            &format!("MP-{}-{}", current_contract.equipe_id, player.id),
+            true,
+        )
+        .expect("accept proposal");
+
+        assert!(response.success);
+
+        let plan = crate::market::preseason::load_preseason_plan(&save_dir)
+            .expect("reload plan")
+            .expect("preseason plan");
+        assert!(
+            !plan.planned_events.iter().any(|event| {
+                !event.executed
+                    && matches!(
+                        &event.event,
+                        PendingAction::ExpireContract { driver_id, .. }
+                            | PendingAction::RenewContract { driver_id, .. }
+                            | PendingAction::Transfer { driver_id, .. }
+                            if driver_id == &player.id
+                    )
+            }),
+            "nenhum evento pendente do jogador deve sobreviver apos aceitar proposta"
+        );
+        assert!(
+            !plan.planned_events.iter().any(|event| {
+                !event.executed
+                    && matches!(
+                        &event.event,
+                        PendingAction::PlayerProposal { proposal } if proposal.piloto_id == player.id
+                    )
+            }),
+            "nenhuma proposta futura do jogador deve continuar pendente no plano"
+        );
+
+        let refreshed_db = Database::open_existing(&db_path).expect("db reopen");
+        let active_regular =
+            contract_queries::get_active_regular_contract_for_pilot(&refreshed_db.conn, &player.id)
+                .expect("regular contract query")
+                .expect("active regular contract");
+
+        assert_eq!(active_regular.equipe_id, current_contract.equipe_id);
+        assert_eq!(active_regular.categoria, current_contract.categoria);
+
+        let gt4_contracts: i64 = refreshed_db
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM contracts
+                 WHERE piloto_id = ?1 AND status = 'Ativo' AND tipo = 'Regular' AND equipe_id = ?2",
+                rusqlite::params![&player.id, &gt4_team.id],
+                |row| row.get(0),
+            )
+            .expect("count gt4 contracts");
+        assert_eq!(gt4_contracts, 0);
+
+        let _ = fs::remove_dir_all(base_dir);
+    }
+
+    #[test]
+    fn test_accept_proposal_removes_stale_place_rookie_for_accepted_team_role() {
+        let base_dir = create_test_career_dir("accept_proposal_clears_backfilled_rookie");
+        mark_all_races_completed(&base_dir, "career_001");
+        advance_season_in_base_dir(&base_dir, "career_001").expect("advance season");
+        let config = AppConfig::load_or_default(&base_dir);
+        let save_dir = config.saves_dir().join("career_001");
+        let db_path = save_dir.join("career.db");
+        let db = Database::open_existing(&db_path).expect("db");
+        let player = driver_queries::get_player_driver(&db.conn).expect("player");
+        let season = season_queries::get_active_season(&db.conn)
+            .expect("season query")
+            .expect("active season");
+
+        if contract_queries::get_active_regular_contract_for_pilot(&db.conn, &player.id)
+            .expect("active regular contract query")
+            .is_none()
+        {
+            let mut news_items = Vec::new();
+            force_place_player(&db.conn, &player, &season, &mut news_items)
+                .expect("force place player");
+        }
+
+        let current_contract = latest_regular_contract_for_driver(&db.conn, &player.id);
+        let target_team =
+            team_queries::get_teams_by_category(&db.conn, &current_contract.categoria)
+                .expect("teams by category")
+                .into_iter()
+                .find(|team| team.id != current_contract.equipe_id)
+                .expect("target team");
+        seed_player_proposal(
+            &db.conn,
+            &season.id,
+            &player.id,
+            &target_team.id,
+            "Pendente",
+        );
+
+        let mut plan = crate::market::preseason::load_preseason_plan(&save_dir)
+            .expect("load plan")
+            .expect("preseason plan");
+        plan.planned_events.push(PlannedEvent {
+            week: 4,
+            executed: false,
+            event: PendingAction::PlaceRookie {
+                driver: Driver::new(
+                    "P-PLAN-ROOKIE".to_string(),
+                    "Rookie de Plano".to_string(),
+                    "🇧🇷 Brasileiro".to_string(),
+                    "M".to_string(),
+                    18,
+                    2025,
+                ),
+                team_id: target_team.id.clone(),
+                team_name: target_team.nome.clone(),
+                salary: 22_000.0,
+                duration: 1,
+                role: TeamRole::Numero1.as_str().to_string(),
+            },
+        });
+        save_preseason_plan(&save_dir, &plan).expect("save mutated plan");
+
+        let response = respond_to_proposal_in_base_dir(
+            &base_dir,
+            "career_001",
+            &format!("MP-{}-{}", target_team.id, player.id),
+            true,
+        )
+        .expect("accept proposal");
+
+        assert!(response.success);
+
+        let plan = crate::market::preseason::load_preseason_plan(&save_dir)
+            .expect("reload plan")
+            .expect("preseason plan");
+        assert!(
+            !plan.planned_events.iter().any(|event| {
+                !event.executed
+                    && matches!(
+                        &event.event,
+                        PendingAction::PlaceRookie { team_id, role, .. }
+                            if team_id == &target_team.id
+                                && role == TeamRole::Numero1.as_str()
+                    )
+            }),
+            "a vaga preenchida pelo aceite nao deve manter PlaceRookie pendente"
+        );
 
         let _ = fs::remove_dir_all(base_dir);
     }
@@ -3475,6 +5123,7 @@ mod tests {
         let refreshed_db = Database::open_existing(&db_path).expect("db reopen");
         let proposal = crate::db::queries::market_proposals::get_market_proposal_by_id(
             &refreshed_db.conn,
+            &season.id,
             "MP-T001-P001",
         )
         .expect("proposal query")
@@ -3508,7 +5157,7 @@ mod tests {
     }
 
     #[test]
-    fn test_finalize_blocks_without_team() {
+    fn test_finalize_allows_player_without_team_when_plan_is_resolved() {
         let base_dir = create_test_career_dir("finalize_without_team");
         mark_all_races_completed(&base_dir, "career_001");
         advance_season_in_base_dir(&base_dir, "career_001").expect("advance season");
@@ -3531,10 +5180,14 @@ mod tests {
         }
         force_complete_preseason_plan(&config.saves_dir().join("career_001"));
 
-        let error = finalize_preseason_in_base_dir(&base_dir, "career_001")
-            .expect_err("should block without team");
+        finalize_preseason_in_base_dir(&base_dir, "career_001")
+            .expect("should allow advancing even without an active player team");
 
-        assert!(error.contains("nao tem equipe"));
+        let save_dir = config.saves_dir().join("career_001");
+        assert!(
+            !save_dir.join("preseason_plan.json").exists(),
+            "finalizacao deve limpar o plano da pre-temporada"
+        );
 
         let _ = fs::remove_dir_all(base_dir);
     }
@@ -3546,7 +5199,6 @@ mod tests {
         advance_season_in_base_dir(&base_dir, "career_001").expect("advance season");
         let config = AppConfig::load_or_default(&base_dir);
         let save_dir = config.saves_dir().join("career_001");
-        let db_path = save_dir.join("career.db");
         force_complete_preseason_plan(&save_dir);
         persist_resume_context_in_base_dir(
             &base_dir,
@@ -3559,11 +5211,176 @@ mod tests {
         finalize_preseason_in_base_dir(&base_dir, "career_001").expect("finalize preseason");
 
         assert!(!save_dir.join("preseason_plan.json").exists());
+        assert!(read_resume_context(&save_dir)
+            .expect("read resume context")
+            .is_none());
+
+        let _ = fs::remove_dir_all(base_dir);
+    }
+
+    #[test]
+    fn test_can_advance_from_second_season_after_finalizing_preseason() {
+        let base_dir = create_test_career_dir("advance_second_season");
+        mark_all_races_completed(&base_dir, "career_001");
+
+        advance_season_in_base_dir(&base_dir, "career_001").expect("advance to season 2");
+        let config = AppConfig::load_or_default(&base_dir);
+        let save_dir = config.saves_dir().join("career_001");
+        let db_path = save_dir.join("career.db");
+        let db = Database::open_existing(&db_path).expect("db");
+        let player = driver_queries::get_player_driver(&db.conn).expect("player");
+        let season = season_queries::get_active_season(&db.conn)
+            .expect("active season query")
+            .expect("active season");
+        if contract_queries::get_active_regular_contract_for_pilot(&db.conn, &player.id)
+            .expect("active regular contract query")
+            .is_none()
+        {
+            let mut news_items = Vec::new();
+            force_place_player(&db.conn, &player, &season, &mut news_items)
+                .expect("force place player for season 2");
+        }
+
+        force_complete_preseason_plan(&save_dir);
+        finalize_preseason_in_base_dir(&base_dir, "career_001").expect("finalize preseason");
+
+        mark_all_races_completed(&base_dir, "career_001");
+        let result = advance_season_in_base_dir(&base_dir, "career_001")
+            .expect("advance to season 3 should work");
+
+        let refreshed_db = Database::open_existing(&db_path).expect("db");
+        let active_season = season_queries::get_active_season(&refreshed_db.conn)
+            .expect("active season query")
+            .expect("active season");
+
+        assert_eq!(result.new_year, 2026);
+        assert_eq!(active_season.numero, 3);
+        assert_eq!(active_season.ano, 2026);
+
+        let _ = fs::remove_dir_all(base_dir);
+    }
+
+    #[test]
+    fn test_skip_all_pending_races_allows_teamless_player_to_reach_next_preseason() {
+        let base_dir = create_test_career_dir("skip_teamless_second_season");
+        mark_all_races_completed(&base_dir, "career_001");
+
+        advance_season_in_base_dir(&base_dir, "career_001").expect("advance to season 2");
+        let config = AppConfig::load_or_default(&base_dir);
+        let save_dir = config.saves_dir().join("career_001");
+        let db_path = save_dir.join("career.db");
+        let db = Database::open_existing(&db_path).expect("db");
+        let player = driver_queries::get_player_driver(&db.conn).expect("player");
+
+        if let Some(contract) =
+            contract_queries::get_active_regular_contract_for_pilot(&db.conn, &player.id)
+                .expect("active regular contract")
+        {
+            contract_queries::update_contract_status(
+                &db.conn,
+                &contract.id,
+                &crate::models::enums::ContractStatus::Rescindido,
+            )
+            .expect("rescind old contract");
+            team_queries::remove_pilot_from_team(&db.conn, &player.id, &contract.equipe_id)
+                .expect("remove from team");
+        }
+
+        force_complete_preseason_plan(&save_dir);
+        finalize_preseason_in_base_dir(&base_dir, "career_001")
+            .expect("finalize preseason without team");
+
+        skip_all_pending_races_in_base_dir(&base_dir, "career_001")
+            .expect("teamless player should be able to skip season");
+        let result = advance_season_in_base_dir(&base_dir, "career_001")
+            .expect("advance to season 3 should work after skipping teamless season");
+
+        let refreshed_db = Database::open_existing(&db_path).expect("db");
+        let active_season = season_queries::get_active_season(&refreshed_db.conn)
+            .expect("active season query")
+            .expect("active season");
+
+        assert_eq!(result.new_year, 2026);
+        assert_eq!(active_season.numero, 3);
+        assert_eq!(active_season.ano, 2026);
+
+        let _ = fs::remove_dir_all(base_dir);
+    }
+
+    #[test]
+    fn test_teamless_player_skip_path_keeps_special_grids_assignable() {
+        let base_dir = create_test_career_dir("skip_teamless_special_grid");
+        mark_all_races_completed(&base_dir, "career_001");
+
+        advance_season_in_base_dir(&base_dir, "career_001").expect("advance to season 2");
+        let config = AppConfig::load_or_default(&base_dir);
+        let save_dir = config.saves_dir().join("career_001");
+        let db_path = save_dir.join("career.db");
+        let mut db = Database::open_existing(&db_path).expect("db");
+        let player = driver_queries::get_player_driver(&db.conn).expect("player");
+
+        if let Some(contract) =
+            contract_queries::get_active_regular_contract_for_pilot(&db.conn, &player.id)
+                .expect("active regular contract")
+        {
+            contract_queries::update_contract_status(
+                &db.conn,
+                &contract.id,
+                &crate::models::enums::ContractStatus::Rescindido,
+            )
+            .expect("rescind old contract");
+            team_queries::remove_pilot_from_team(&db.conn, &player.id, &contract.equipe_id)
+                .expect("remove from team");
+        }
+
+        force_complete_preseason_plan(&save_dir);
+        finalize_preseason_in_base_dir(&base_dir, "career_001")
+            .expect("finalize preseason without team");
+
+        let season = season_queries::get_active_season(&db.conn)
+            .expect("season query")
+            .expect("active season");
+        let pending_regular =
+            calendar_queries::get_pending_races(&db.conn, &season.id).expect("pending races");
+        for race in &pending_regular {
+            crate::commands::race::simulate_category_race(&mut db, race, false)
+                .expect("simulate regular race while skipping");
+        }
+
+        crate::convocation::advance_to_convocation_window(&db.conn)
+            .expect("advance to convocation");
+        let convocation = crate::convocation::run_convocation_window(&db.conn)
+            .expect("run convocation");
         assert!(
-            read_resume_context(&save_dir)
-                .expect("read resume context")
-                .is_none()
+            convocation.errors.is_empty(),
+            "convocation should not report structural errors: {:?}",
+            convocation.errors
         );
+        crate::convocation::iniciar_bloco_especial(&db.conn).expect("start special block");
+
+        for category_id in ["production_challenger", "endurance"] {
+            let active_drivers = driver_queries::get_drivers_by_active_category(&db.conn, category_id)
+                .expect("active special drivers");
+            let teams =
+                team_queries::get_teams_by_category(&db.conn, category_id).expect("special teams");
+            let assigned_ids: std::collections::HashSet<String> = teams
+                .iter()
+                .flat_map(|team| [team.piloto_1_id.clone(), team.piloto_2_id.clone()])
+                .flatten()
+                .collect();
+            let orphaned: Vec<String> = active_drivers
+                .iter()
+                .filter(|driver| !assigned_ids.contains(&driver.id))
+                .map(|driver| format!("{} ({})", driver.nome, driver.id))
+                .collect();
+
+            assert!(
+                orphaned.is_empty(),
+                "special category '{}' should not contain drivers without lineup: {}",
+                category_id,
+                orphaned.join(", ")
+            );
+        }
 
         let _ = fs::remove_dir_all(base_dir);
     }
@@ -3786,5 +5603,21 @@ mod tests {
         plan.state.phase = crate::market::preseason::PreSeasonPhase::Complete;
         plan.state.player_has_pending_proposals = false;
         crate::market::preseason::save_preseason_plan(save_dir, &plan).expect("save plan");
+    }
+
+    fn latest_regular_contract_for_driver(
+        conn: &rusqlite::Connection,
+        driver_id: &str,
+    ) -> crate::models::contract::Contract {
+        contract_queries::get_contracts_for_pilot(conn, driver_id)
+            .expect("driver contracts query")
+            .into_iter()
+            .filter(|contract| contract.tipo == crate::models::enums::ContractType::Regular)
+            .max_by(|a, b| {
+                a.temporada_inicio
+                    .cmp(&b.temporada_inicio)
+                    .then_with(|| a.created_at.cmp(&b.created_at))
+            })
+            .expect("latest regular contract")
     }
 }

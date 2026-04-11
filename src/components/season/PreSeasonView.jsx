@@ -1,505 +1,1042 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import useCareerStore from "../../stores/useCareerStore";
 import { formatSalary } from "../../utils/formatters";
 
-// ─── Category Definitions ────────────────────────────────────────────────────
+// ─── Category Definitions ─────────────────────────────────────────────────────
+
 const CATEGORIES = [
-  { id: "all",        label: "Todas",      color: "rgba(255,255,255,0.3)" },
-  { id: "mazda",      dbIds: ["production_challenger","mazda_rookie","mazda_amador"],   label: "Mazda",      color: "#C8102E", filterClass: "mazda" },
-  { id: "toyota",     dbIds: ["production_challenger","toyota_rookie","toyota_amador"], label: "Toyota",     color: "#EB0A1E", filterClass: "toyota" },
-  { id: "bmw",        dbIds: ["production_challenger","bmw_m2"],                        label: "BMW M2",     color: "#6B4FBB", filterClass: "bmw" },
-  { id: "production", dbIds: ["production_challenger"],                                 label: "Production", color: "#1DB954" },
+  { id: "all",        label: "Todas",      color: "rgba(255,255,255,0.35)" },
+  { id: "mazda",      dbIds: ["mazda_rookie", "mazda_amador"],   label: "Mazda",      color: "#C8102E" },
+  { id: "toyota",     dbIds: ["toyota_rookie", "toyota_amador"], label: "Toyota",     color: "#E8841A" },
+  { id: "bmw",        dbIds: ["bmw_m2"],                         label: "BMW M2",     color: "#bc8cff" },
   { id: "sep1", isSeparator: true },
-  { id: "gt4",       dbIds: ["gt4"],       label: "GT4",      color: "#FF8000" },
-  { id: "gt3",       dbIds: ["gt3"],       label: "GT3",      color: "#E73F47" },
-  { id: "endurance", dbIds: ["endurance"], label: "Endurance", color: "#3671C6" },
+  { id: "gt4",       dbIds: ["gt4"],       label: "GT4",       color: "#FF8000" },
+  { id: "gt3",       dbIds: ["gt3"],       label: "GT3",       color: "#E73F47" },
 ];
 
 const SUBCAT_LABELS = {
-  mazda: "Mazda Cup · Principal", toyota: "Toyota Cup · Principal", bmw: "BMW M2 Cup · Principal",
-  mazda_rookie: "Mazda Rookie Series", mazda_amador: "Mazda Amador",
-  toyota_rookie: "Toyota Rookie Series", toyota_amador: "Toyota Amador",
-  bmw_m2: "BMW M2 Cup", production_challenger: "Production Challenger",
-  gt3: "GT3 Championship", gt4: "GT4 Championship", endurance: "Endurance Championship",
+  mazda: "Mazda Cup Principal",
+  toyota: "Toyota Cup Principal",
+  bmw: "BMW M2 Cup Principal",
+  mazda_amador: "Mazda Cup",
+  mazda_rookie: "Mazda Rookie",
+  toyota_amador: "Toyota Cup",
+  toyota_rookie: "Toyota Rookie",
+  bmw_m2: "BMW M2 Cup",
+  production_challenger: "Production Challenger",
+  gt3: "GT3 Championship",
+  gt4: "GT4 Championship",
+  endurance: "Endurance Championship",
 };
-const CLASS_PRIORITY = ["mazda","toyota","bmw","gt3","gt4","endurance"];
 
-// Vibrant accent color for each subcategory separator glow
 const SUBCAT_COLORS = {
-  mazda:                "#C8102E",
-  mazda_rookie:         "#C8102E",
-  mazda_amador:         "#C8102E",
-  toyota:               "#EB0A1E",
-  toyota_rookie:        "#EB0A1E",
-  toyota_amador:        "#EB0A1E",
-  bmw:                  "#6B82FF",
-  bmw_m2:               "#6B82FF",
-  production_challenger:"#1DB954",
-  gt4:                  "#FF8000",
-  gt3:                  "#E73F47",
-  endurance:            "#3671C6",
+  mazda: "#C8102E",
+  mazda_rookie: "#C8102E",
+  mazda_amador: "#C8102E",
+  toyota: "#E8841A",
+  toyota_rookie: "#E8841A",
+  toyota_amador: "#E8841A",
+  bmw: "#bc8cff",
+  bmw_m2: "#bc8cff",
+  production_challenger: "#3fb950",
+  gt4: "#FF8000",
+  gt3: "#E73F47",
+  endurance: "#3671C6",
 };
-function subcatLabel(key) {
-  return SUBCAT_LABELS[key] || key.split("_").map(w => w[0].toUpperCase() + w.slice(1)).join(" ");
-}
-function subcatColor(key) {
-  return SUBCAT_COLORS[key] || "#3B82F6";
-}
 
-// ─── Event helpers ────────────────────────────────────────────────────────────
-const EVENT_ICONS = {
-  ContractExpired:"📋", ContractRenewed:"✍️", TransferCompleted:"📝",
-  TransferRejected:"✖", RookieSigned:"🎓", PlayerProposalReceived:"💼",
-  HierarchyUpdated:"⚡", PreSeasonComplete:"🏁",
-};
-const EVENT_COLORS = {
-  ContractRenewed:"#34D399", TransferCompleted:"#60A5FA", TransferRejected:"#F87171",
-  RookieSigned:"#A78BFA", PlayerProposalReceived:"#60A5FA", PreSeasonComplete:"#34D399",
-};
-function evIcon(t) { return EVENT_ICONS[t] || "📰"; }
-function evColor(t) { return EVENT_COLORS[t] || "#94A3B8"; }
+// Ordem usada no grid central (menor → maior)
+const CLASS_PRIORITY = [
+  "mazda", "mazda_amador", "mazda_rookie",
+  "toyota", "toyota_amador", "toyota_rookie",
+  "bmw", "bmw_m2",
+  "production_challenger",
+  "gt3", "gt4", "endurance",
+];
 
-// ─── Rank badge ───────────────────────────────────────────────────────────────
-function getRank(pos) {
-  if (pos === 1) return { text:"1º", grad:"linear-gradient(135deg,#F59E0B,#FCD34D)", color:"#1a1000", glow:"rgba(245,158,11,0.5)", label:"Campeã" };
-  if (pos === 2) return { text:"2º", grad:"linear-gradient(135deg,#9CA3AF,#E5E7EB)", color:"#1a1a1a", glow:null,                    label:"Vice-Campeã" };
-  if (pos === 3) return { text:"3º", grad:"linear-gradient(135deg,#CD7F32,#E5A85A)", color:"#1a0d00", glow:null,                    label:"3º Lugar" };
-  if (pos  > 0) return { text:`${pos}º`, grad:"rgba(255,255,255,0.12)", color:"#fff", glow:null, label:null };
+// Ordem do painel "Mercado de Pilotos": maior categoria primeiro,
+// dentro de cada marca Cup > Amador > Rookie
+const FREE_AGENT_ORDER = [
+  "gt3",
+  "gt4",
+  "bmw_m2", "bmw",
+  "toyota", "toyota_amador", "toyota_rookie",
+  "mazda", "mazda_amador", "mazda_rookie",
+];
+
+const REGULAR_MARKET_CATEGORY_IDS = new Set([
+  "mazda_rookie",
+  "mazda_amador",
+  "toyota_rookie",
+  "toyota_amador",
+  "bmw_m2",
+  "gt4",
+  "gt3",
+]);
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function getMovementBadge(categoriaAnterior, categoriaAtual) {
+  if (!categoriaAnterior || categoriaAnterior === categoriaAtual) return null;
+
+  const TIER = {
+    mazda_rookie: 1, toyota_rookie: 1,
+    mazda_amador: 2, toyota_amador: 2, bmw_m2: 2,
+    production_challenger: 3,
+    gt4: 4,
+    gt3: 5,
+    endurance: 6,
+  };
+
+  const from = TIER[categoriaAnterior] ?? 0;
+  const to   = TIER[categoriaAtual]    ?? 0;
+
+  if (to > from) return { label: "Promovida", arrow: "↑", color: "#3fb950", bg: "rgba(63,185,80,0.12)", border: "rgba(63,185,80,0.35)" };
+  if (to < from) return { label: "Rebaixada",  arrow: "↓", color: "#f85149", bg: "rgba(248,81,73,0.12)", border: "rgba(248,81,73,0.35)" };
   return null;
 }
 
-// ─── Grid Slot ────────────────────────────────────────────────────────────────
-function GridSlot({ driverName, role, color }) {
-  if (!driverName) {
-    return (
-      <div style={{
-        display:"flex", alignItems:"center", gap:8, padding:"8px 10px",
-        borderRadius:10, background:"rgba(255,255,255,0.015)",
-        border:"1px dashed rgba(255,255,255,0.1)",
-      }}>
-        <div style={{ width:3, height:24, borderRadius:2, flexShrink:0, background:"rgba(255,255,255,0.08)" }} />
-        <p style={{ flex:1, fontSize:12, color:"rgba(255,255,255,0.2)", fontStyle:"italic" }}>Vaga Aberta</p>
-        <span style={{ fontSize:10, fontWeight:700, color:"#334155" }}>{role}</span>
-      </div>
-    );
+function getRankStyle(pos) {
+  if (pos === 1) return { border: "#ffd700", glow: "rgba(255, 215, 0, 0.24)" };
+  if (pos === 2) return { border: "#c0c0c0", glow: "rgba(192, 192, 192, 0.2)" };
+  if (pos === 3) return { border: "#cd7f32", glow: "rgba(205, 127, 50, 0.2)" };
+  return null;
+}
+
+function subcatLabel(key) {
+  return SUBCAT_LABELS[key] ?? key;
+}
+
+function subcatColor(key) {
+  return SUBCAT_COLORS[key] ?? "#58a6ff";
+}
+
+function is_regular_market_category(category) {
+  return REGULAR_MARKET_CATEGORY_IDS.has(category);
+}
+
+// ─── Mapeamento categoria do jogador → filtro inicial ─────────────────────────
+
+function playerCatToFilter(categoria) {
+  if (!categoria) return "all";
+  if (categoria === "mazda_rookie" || categoria === "mazda_amador") return "mazda";
+  if (categoria === "toyota_rookie" || categoria === "toyota_amador") return "toyota";
+  if (categoria === "bmw_m2") return "bmw";
+  if (categoria === "gt4") return "gt4";
+  if (categoria === "gt3") return "gt3";
+  return "all";
+}
+
+// ─── GridSlot ─────────────────────────────────────────────────────────────────
+
+function formatTenureBadge(tenureSeasons) {
+  if (!tenureSeasons || tenureSeasons <= 0) return null;
+  if (tenureSeasons === 1) return { label: "Novo", color: "#58a6ff", bg: "rgba(88,166,255,0.12)" };
+  return {
+    label: `${tenureSeasons}ª temp.`,
+    color: "#f2cc60",
+    bg: "rgba(242,204,96,0.12)",
+  };
+}
+
+function formatTenureCounter(tenureSeasons) {
+  if (!tenureSeasons || tenureSeasons <= 0) return null;
+  return {
+    label: tenureSeasons === 1 ? "New" : `${tenureSeasons} anos`,
+    isNewcomer: tenureSeasons === 1,
+  };
+}
+
+function getTeamMovementBadge(categoriaAnterior, categoriaAtual) {
+  const movement = getMovementBadge(categoriaAnterior, categoriaAtual);
+  if (!movement) return null;
+
+  if (movement.color === "#3fb950") {
+    return { ...movement, label: "Promovido" };
   }
+
+  if (movement.color === "#f85149") {
+    return { ...movement, label: "Relegado" };
+  }
+
+  return movement;
+}
+
+function getTeamMovementOrder(team) {
+  const movement = getTeamMovementBadge(team.categoria_anterior, team._categoria || team.classe);
+  if (!movement) return 0;
+  if (movement.label === "Promovido") return 1;
+  if (movement.label === "Relegado") return 2;
+  return 0;
+}
+
+function getTeamMappingSortValue(team) {
+  return team.temp_posicao && team.temp_posicao > 0 ? team.temp_posicao : 999;
+}
+
+function count_team_vacancies(team) {
+  let total = 0;
+  if (!team.piloto_1_nome) total += 1;
+  if (!team.piloto_2_nome) total += 1;
+  return total;
+}
+
+function TeamDriverRow({ driverName, tenureSeasons, isPrimarySlot = false }) {
+  const isOpenSlot = !driverName;
+  const tenureCounter = !isOpenSlot ? formatTenureCounter(tenureSeasons) : null;
   return (
-    <div style={{
-      display:"flex", alignItems:"center", gap:8, padding:"8px 10px",
-      borderRadius:10, background:"rgba(52,211,153,0.03)",
-      borderTop:"1px solid rgba(255,255,255,0.04)",
-      borderRight:"1px solid rgba(255,255,255,0.04)",
-      borderBottom:"1px solid rgba(255,255,255,0.04)",
-      borderLeft:`2px solid ${color || "#3B82F6"}`,
-    }}>
-      <div style={{ width:3, height:24, borderRadius:2, flexShrink:0, background: color || "#3B82F6", boxShadow:`0 0 6px ${color || "#3B82F6"}80` }} />
-      <div style={{ flex:1, minWidth:0 }}>
-        <p style={{ fontSize:12, fontWeight:600, color:"#e2e8f0", letterSpacing:"-0.01em", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{driverName}</p>
-        <p style={{ fontSize:10, color:"#475569" }}>Confirmado</p>
+    <div className="flex items-center justify-between gap-3 py-2.5">
+      <div className="flex min-w-0 flex-1 items-center">
+        <p className={`truncate leading-[1.1] ${isOpenSlot ? "text-body font-semibold text-[#f85149]" : isPrimarySlot ? "text-[15px] font-bold text-[color:var(--text-primary)]" : "text-[14px] font-semibold text-[color:var(--text-primary)]"}`}>
+            {driverName ?? "Sem piloto"}
+        </p>
       </div>
-      <span style={{ fontSize:10, fontWeight:700, color:"#475569" }}>{role}</span>
+      {tenureCounter && (
+        tenureCounter.isNewcomer ? (
+          <span className="shrink-0 rounded-md border border-[#58a6ff55] bg-[#58a6ff1f] px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.08em] text-[#79b8ff]">
+            {tenureCounter.label}
+          </span>
+        ) : (
+          <span className="shrink-0 text-[11px] font-semibold text-[color:var(--text-muted)]">
+            {tenureCounter.label}
+          </span>
+        )
+      )}
+    </div>
+  );
+}
+
+// ─── FreeAgentCard ────────────────────────────────────────────────────────────
+
+const LICENSE_COLORS = {
+  R:  { text: "#9ba3ae", bg: "rgba(155,163,174,0.12)" },
+  A:  { text: "#3fb950", bg: "rgba(63,185,80,0.12)"   },
+  P:  { text: "#58a6ff", bg: "rgba(88,166,255,0.12)"  },
+  SP: { text: "#FF8000", bg: "rgba(255,128,0,0.12)"   },
+  E:  { text: "#bc8cff", bg: "rgba(188,140,255,0.12)" },
+  SE: { text: "#ffd700", bg: "rgba(255,215,0,0.12)"   },
+};
+
+function FreeAgentCard({ driver, color, isRookie }) {
+  const lic = LICENSE_COLORS[driver.license_sigla] ?? LICENSE_COLORS.R;
+  return (
+    <div className="glass-light flex items-center gap-2 rounded-xl px-2.5 py-2">
+      {isRookie ? (
+        <span className="shrink-0 rounded-md bg-[#bc8cff22] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-[0.12em] text-[#bc8cff]">
+          Novo
+        </span>
+      ) : (
+        <span
+          className="shrink-0 rounded-md px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-[0.1em]"
+          style={{ background: `${color}22`, color }}
+        >
+          {driver.previous_team_abbr ?? "—"}
+        </span>
+      )}
+      <p className="min-w-0 flex-1 truncate text-body text-[color:var(--text-primary)]">
+        {driver.driver_name}
+      </p>
+      <span
+        className="shrink-0 rounded-md px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-[0.1em]"
+        style={{ background: lic.bg, color: lic.text }}
+      >
+        {driver.license_sigla}
+      </span>
     </div>
   );
 }
 
 // ─── Main Component ───────────────────────────────────────────────────────────
-export default function PreSeasonView() {
-  const preseasonState      = useCareerStore(s => s.preseasonState);
-  const preseasonWeeks      = useCareerStore(s => s.preseasonWeeks);
-  const playerProposals     = useCareerStore(s => s.playerProposals);
-  const isAdvancingWeek     = useCareerStore(s => s.isAdvancingWeek);
-  const isRespondingProposal= useCareerStore(s => s.isRespondingProposal);
-  const advanceMarketWeek   = useCareerStore(s => s.advanceMarketWeek);
-  const respondToProposal   = useCareerStore(s => s.respondToProposal);
-  const finalizePreseason   = useCareerStore(s => s.finalizePreseason);
-  const careerId            = useCareerStore(s => s.careerId);
 
-  const [selectedCat, setSelectedCat] = useState("all");
-  const [gridData, setGridData]       = useState([]);
-  const [loadingGrid, setLoadingGrid] = useState(false);
+export default function PreSeasonView() {
+  const careerId             = useCareerStore((s) => s.careerId);
+  const preseasonState       = useCareerStore((s) => s.preseasonState);
+  const playerProposals      = useCareerStore((s) => s.playerProposals);
+  const preseasonFreeAgents  = useCareerStore((s) => s.preseasonFreeAgents);
+  const isAdvancingWeek      = useCareerStore((s) => s.isAdvancingWeek);
+  const isRespondingProposal = useCareerStore((s) => s.isRespondingProposal);
+  const advanceMarketWeek    = useCareerStore((s) => s.advanceMarketWeek);
+  const respondToProposal    = useCareerStore((s) => s.respondToProposal);
+  const finalizePreseason    = useCareerStore((s) => s.finalizePreseason);
+  const playerTeam           = useCareerStore((s) => s.playerTeam);
+
+  const [selectedCat, setSelectedCat]           = useState(() => playerCatToFilter(playerTeam?.categoria));
+  const [gridData, setGridData]                 = useState([]);
+  const [loadingGrid, setLoadingGrid]           = useState(false);
+  const [showDisplacedModal, setShowDisplacedModal] = useState(false);
+  const [showFreeAgentWarning, setShowFreeAgentWarning] = useState(false);
+  const [startError, setStartError] = useState("");
+
+  const freeAgentContainerRef = useRef(null);
+  const freeAgentSectionRefs  = useRef({});
+
+  // Semana atual e total
+  const currentWeek = Math.min(preseasonState?.current_week ?? 1, preseasonState?.total_weeks ?? 1);
+  const totalWeeks  = preseasonState?.total_weeks ?? 1;
+  const isComplete  = preseasonState?.is_complete ?? false;
+  const isMarketOpen = !isComplete;
+  const weekProgress = Math.min(100, (currentWeek / totalWeeks) * 100);
+
+  const currentDateLabel = useMemo(
+    () => {
+      const preseasonDate = preseasonState?.current_display_date;
+      if (!preseasonDate) return "-";
+
+      return new Intl.DateTimeFormat("pt-BR", {
+        day: "numeric",
+        month: "long",
+      }).format(new Date(`${preseasonDate}T12:00:00`));
+    },
+    [preseasonState?.current_display_date],
+  );
 
   // ── Fetch grid ──────────────────────────────────────────────────────────────
   useEffect(() => {
     if (!careerId) return;
+    let mounted = true;
+
     async function fetchGrid() {
       setLoadingGrid(true);
       try {
         const dbIds = new Set();
         if (selectedCat === "all") {
-          CATEGORIES.filter(c => !c.isSeparator && c.id !== "all").forEach(c => c.dbIds.forEach(id => dbIds.add(id)));
+          CATEGORIES.filter((c) => !c.isSeparator && c.id !== "all").forEach((c) =>
+            c.dbIds?.forEach((id) => dbIds.add(id)),
+          );
         } else {
-          const cfg = CATEGORIES.find(c => c.id === selectedCat);
-          if (cfg) cfg.dbIds.forEach(id => dbIds.add(id));
+          const cfg = CATEGORIES.find((c) => c.id === selectedCat);
+          if (cfg) cfg.dbIds?.forEach((id) => dbIds.add(id));
         }
 
         const all = [];
         for (const dbId of dbIds) {
-          try { all.push(...await invoke("get_teams_standings", { careerId, category: dbId })); }
-          catch { /* category may not exist */ }
+          try {
+            const teams = await invoke("get_teams_standings", { careerId, category: dbId });
+            // Tag cada equipe com o dbId usado — TeamStanding não tem campo categoria
+            teams.forEach((t) => all.push({ ...t, _categoria: dbId }));
+          } catch {
+            /* categoria pode não existir ainda */
+          }
         }
 
+        // Filtrar por classe quando categoria tem filterClass
         let final = all;
         if (selectedCat !== "all") {
-          const cfg = CATEGORIES.find(c => c.id === selectedCat);
+          const cfg = CATEGORIES.find((c) => c.id === selectedCat);
           if (cfg?.filterClass) {
-            final = all.filter(t => {
+            final = all.filter((t) => {
               if (t.classe === cfg.filterClass) return true;
-              if (t.categoria?.startsWith(cfg.filterClass)) return true;
-              if (cfg.filterClass === "bmw" && t.categoria === "bmw_m2") return true;
+              if (t._categoria?.startsWith(cfg.filterClass)) return true;
+              if (cfg.filterClass === "bmw" && t._categoria === "bmw_m2") return true;
               return false;
             });
           }
         }
-        setGridData(final);
-      } finally { setLoadingGrid(false); }
+
+        if (mounted) setGridData(final);
+      } finally {
+        if (mounted) setLoadingGrid(false);
+      }
     }
+
     fetchGrid();
-  }, [careerId, selectedCat, preseasonState?.current_week]);
+    return () => { mounted = false; };
+  }, [careerId, selectedCat, currentWeek]);
 
-  // ── Actions ─────────────────────────────────────────────────────────────────
-  const handleAdvance = async () => {
+  // ── Agrupamento e ordenação ─────────────────────────────────────────────────
+  const groupedTeams = useMemo(() => {
+    const grouped = {};
+    gridData.forEach((team) => {
+      const key = team.classe || team._categoria || "outras";
+      grouped[key] = grouped[key] ?? [];
+      grouped[key].push(team);
+    });
+    return grouped;
+  }, [gridData]);
+
+  const sortedClasses = useMemo(() => {
+    return Object.keys(groupedTeams).sort((a, b) => {
+      const pa = CLASS_PRIORITY.indexOf(a);
+      const pb = CLASS_PRIORITY.indexOf(b);
+      if (pa !== -1 && pb !== -1) return pa - pb;
+      if (pa !== -1) return -1;
+      if (pb !== -1) return 1;
+      return a.localeCompare(b);
+    });
+  }, [groupedTeams]);
+
+  // ── Free agents agrupados por categoria ────────────────────────────────────
+  const freeAgentsByCategory = useMemo(() => {
+    const grouped = {};
+    (preseasonFreeAgents ?? []).forEach((d) => {
+      const cat = d.categoria || "outras";
+      if (!is_regular_market_category(cat)) return;
+      grouped[cat] = grouped[cat] ?? { veterans: [], rookies: [] };
+      if (d.is_rookie) grouped[cat].rookies.push(d);
+      else grouped[cat].veterans.push(d);
+    });
+    return grouped;
+  }, [preseasonFreeAgents]);
+
+  // Endurance → GT3 → GT4 → ... → Toyota Cup → Rookie → Mazda Cup → Rookie → outras
+  const freeAgentCategoryOrder = useMemo(() => {
+    return Object.keys(freeAgentsByCategory).sort((a, b) => {
+      const pa = FREE_AGENT_ORDER.indexOf(a);
+      const pb = FREE_AGENT_ORDER.indexOf(b);
+      if (pa !== -1 && pb !== -1) return pa - pb;
+      if (pa !== -1) return -1;
+      if (pb !== -1) return 1;
+      return a.localeCompare(b);
+    });
+  }, [freeAgentsByCategory]);
+
+  const displacedVeterans = useMemo(
+    () => (preseasonFreeAgents ?? []).filter((d) => !d.is_rookie),
+    [preseasonFreeAgents],
+  );
+
+  const displacedVeteransByCategory = useMemo(() => {
+    const grouped = {};
+
+    displacedVeterans.forEach((driver) => {
+      const category = driver.categoria || "outras";
+      if (!is_regular_market_category(category)) return;
+      grouped[category] = grouped[category] ?? [];
+      grouped[category].push(driver);
+    });
+
+    return Object.entries(grouped)
+      .sort(([a], [b]) => {
+        const pa = FREE_AGENT_ORDER.indexOf(a);
+        const pb = FREE_AGENT_ORDER.indexOf(b);
+        if (pa !== -1 && pb !== -1) return pa - pb;
+        if (pa !== -1) return -1;
+        if (pb !== -1) return 1;
+        return a.localeCompare(b);
+      })
+      .map(([category, drivers]) => ({
+        category,
+        color: subcatColor(category),
+        label: subcatLabel(category),
+        drivers,
+      }));
+  }, [displacedVeterans]);
+
+  // ── Auto-scroll para categoria do jogador ao carregar ──────────────────────
+  useEffect(() => {
+    if (!freeAgentCategoryOrder.length || !playerTeam?.categoria) return;
+    const playerCat = playerTeam.categoria;
+    const el = freeAgentSectionRefs.current[playerCat];
+    const container = freeAgentContainerRef.current;
+    if (el && container) {
+      requestAnimationFrame(() => {
+        container.scrollTop = Math.max(0, el.offsetTop - container.offsetTop - 8);
+      });
+    }
+  }, [freeAgentCategoryOrder.length]); // dispara quando a lista carrega
+
+  // ── Ações ───────────────────────────────────────────────────────────────────
+  const handleAdvanceWeek = async () => {
     if (isAdvancingWeek) return;
-    if (preseasonState?.is_complete) {
+    setStartError("");
+    if (isComplete) {
       if (playerProposals.length > 0) return;
-      try { await finalizePreseason(); } catch(e) { console.error(e); }
+      if (displacedVeterans.length > 0) {
+        setShowDisplacedModal(true);
+        return;
+      }
+      // Jogador sem equipe: exibe aviso antes de confirmar
+      if (!preseasonState?.player_has_team) {
+        setShowFreeAgentWarning(true);
+        return;
+      }
+      try {
+        await finalizePreseason();
+      } catch (e) {
+        setStartError(typeof e === "string" ? e : e?.message ?? "Erro ao iniciar a temporada.");
+      }
     } else {
-      try { await advanceMarketWeek(); } catch(e) { console.error(e); }
+      try { await advanceMarketWeek(); } catch (e) { console.error(e); }
     }
   };
-  const handleProposal = async (id, accept) => {
-    try { await respondToProposal(id, accept); } catch(e) { console.error(e); }
+
+  const handleConfirmStartSeason = async () => {
+    setShowDisplacedModal(false);
+    setStartError("");
+    try { await finalizePreseason(); } catch (e) {
+      setStartError(typeof e === "string" ? e : e?.message ?? "Erro ao iniciar a temporada.");
+    }
   };
 
-  // ── Derived ─────────────────────────────────────────────────────────────────
-  const isComplete   = preseasonState?.is_complete;
-  const currentWeek  = Math.min(preseasonState?.current_week || 1, preseasonState?.total_weeks || 1);
-  const totalWeeks   = preseasonState?.total_weeks || 1;
-  const allEvents    = [...preseasonWeeks].reverse();
-  const hasNews      = allEvents.some(w => w.events?.length > 0);
-
-  const teamsBySubcat = gridData.reduce((acc, t) => {
-    const key = t.classe || t.categoria || "Outras";
-    (acc[key] = acc[key] || []).push(t);
-    return acc;
-  }, {});
-  const sortedClasses = Object.keys(teamsBySubcat).sort((a, b) => {
-    const pa = CLASS_PRIORITY.indexOf(a), pb = CLASS_PRIORITY.indexOf(b);
-    if (pa !== -1 && pb !== -1) return pa - pb;
-    if (pa !== -1) return -1; if (pb !== -1) return 1;
-    return a.localeCompare(b);
-  });
-
-  // ── Shared glass styles ──────────────────────────────────────────────────────
-  const glass = {
-    background: "rgba(28,28,30,0.80)",
-    backdropFilter: "blur(20px) saturate(120%)",
-    WebkitBackdropFilter: "blur(20px) saturate(120%)",
-    border: "1px solid rgba(255,255,255,0.08)",
-  };
-  const glassGlow = {
-    ...glass,
-    border: "1px solid rgba(59,130,246,0.30)",
-    boxShadow: "0 0 0 1px rgba(59,130,246,0.08), inset 0 1px 0 rgba(255,255,255,0.06)",
-  };
-  const innerCard = {
-    background: "rgba(255,255,255,0.04)",
-    border: "1px solid rgba(255,255,255,0.07)",
-    borderRadius: 12,
-    padding: "12px 14px",
-  };
-  const bgAtmosphere = {
-    background: "#0E0E10",
-    backgroundImage: `
-      radial-gradient(ellipse 70% 50% at 10% 60%, rgba(30,64,175,0.10) 0%, transparent 60%),
-      radial-gradient(ellipse 50% 60% at 90% 20%, rgba(59,130,246,0.07) 0%, transparent 55%)
-    `,
+  const handleConfirmFreeAgentStart = async () => {
+    setShowFreeAgentWarning(false);
+    setStartError("");
+    try {
+      await finalizePreseason();
+    } catch (e) {
+      setStartError(typeof e === "string" ? e : e?.message ?? "Erro ao iniciar a temporada.");
+    }
   };
 
-  // ── Render ───────────────────────────────────────────────────────────────────
+  const handleProposal = async (proposalId, accept) => {
+    try { await respondToProposal(proposalId, accept); } catch (e) { console.error(e); }
+  };
+
+  // ── Render ──────────────────────────────────────────────────────────────────
   return (
-    <div style={{ ...bgAtmosphere, display:"flex", flexDirection:"column", height:"100vh", overflow:"hidden", color:"#ffffff" }}>
+    <div className="app-shell relative h-screen w-full overflow-hidden text-[color:var(--text-primary)]">
+      <div className="app-backdrop pointer-events-none absolute inset-0" />
 
-      {/* ══ HEADER ══ */}
-      <header style={{ ...glass, display:"flex", alignItems:"center", justifyContent:"space-between", gap:24, padding:"14px 32px", borderTop:"none", borderLeft:"none", borderRight:"none", flexShrink:0, zIndex:10 }}>
-        {/* Identity + week */}
-        <div style={{ display:"flex", alignItems:"center", gap:20, flexShrink:0 }}>
-          <div>
-            <p style={{ fontSize:9, textTransform:"uppercase", letterSpacing:"0.22em", color:"#60A5FA", fontWeight:700, marginBottom:2 }}>Pré-Temporada</p>
-            <h1 style={{ fontSize:20, fontWeight:700, letterSpacing:"-0.02em", color:"#ffffff", margin:0 }}>Mercado de Transferências</h1>
-          </div>
-          <div style={{ ...glass, borderRadius:12, padding:"10px 16px", display:"flex", alignItems:"center", gap:16 }}>
-            <div>
-              <p style={{ fontSize:9, textTransform:"uppercase", letterSpacing:"0.12em", color:"#475569", marginBottom:2 }}>Semana</p>
-              <p style={{ fontSize:18, fontWeight:700, letterSpacing:"-0.02em", lineHeight:1, margin:0 }}>
-                {currentWeek} <span style={{ fontSize:12, fontWeight:400, color:"#475569" }}>/ {totalWeeks}</span>
-              </p>
-            </div>
-          </div>
-        </div>
+      <div className="relative z-10 mx-auto flex h-full max-w-[1680px] flex-col px-3 pb-3 pt-3 sm:px-4 lg:px-5 xl:px-6">
 
-        {/* Category filter pills */}
-        <div style={{ ...glass, borderRadius:9999, padding:"6px 8px", display:"flex", alignItems:"center", gap:4, overflow:"hidden", flexShrink:1, minWidth:0 }}>
-          {CATEGORIES.map((cat, i) => {
-            if (cat.isSeparator) return <div key={i} style={{ width:1, height:18, background:"rgba(255,255,255,0.07)", margin:"0 4px" }} />;
-            const active = selectedCat === cat.id;
-            return (
-              <button key={cat.id} onClick={() => setSelectedCat(cat.id)} style={{
-                display:"flex", alignItems:"center", gap:6, padding:"6px 14px", borderRadius:9999, fontSize:11, fontWeight:600, cursor:"pointer", fontFamily:"inherit",
-                background: active ? "rgba(59,130,246,0.2)" : "transparent",
-                border: active ? "1px solid rgba(59,130,246,0.4)" : "1px solid transparent",
-                color: active ? "#60A5FA" : "#64748B",
-                boxShadow: active ? "0 0 12px rgba(59,130,246,0.15)" : "none",
-                transition:"all 0.15s",
-              }}>
-                <span style={{ width:6, height:6, borderRadius:"50%", background: cat.color, flexShrink:0 }} />
-                {cat.label}
-              </button>
-            );
-          })}
-        </div>
+        {/* ══ HEADER ══ */}
+        <header className="glass-strong animate-fade-in mb-3 rounded-2xl px-5 py-2 lg:px-6">
+          <div className="grid items-start gap-3 lg:grid-cols-[1fr_auto]">
 
-        {/* Advance button */}
-        <button onClick={handleAdvance}
-          disabled={isAdvancingWeek || (isComplete && playerProposals.length > 0)}
-          style={{
-            flexShrink:0,
-            position:"relative", zIndex:20,
-            padding:"10px 24px", borderRadius:9999, fontSize:13, fontWeight:700, fontFamily:"inherit",
-            background: isComplete ? "#22C55E" : "#3B82F6",
-            color:"#fff",
-            border:"none",
-            cursor: (isAdvancingWeek || (isComplete && playerProposals.length > 0)) ? "not-allowed" : "pointer",
-            boxShadow: isComplete ? "0 0 20px rgba(34,197,94,0.3)" : "0 0 0 1px rgba(59,130,246,0.4), 0 0 20px rgba(59,130,246,0.25)",
-            opacity: (isAdvancingWeek || (isComplete && playerProposals.length > 0)) ? 0.5 : 1,
-            transition:"all 0.2s",
-            pointerEvents:"all",
-          }}>
-          {isAdvancingWeek ? "⏳ Processando..." : isComplete ? "🚀 Iniciar Temporada" : "⏭ Avançar Semana"}
-        </button>
-      </header>
+            {/* Título + filtros */}
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <p className="text-body-sm font-bold uppercase tracking-[0.28em] text-[color:var(--accent-primary)]">
+                  Pré-temporada
+                </p>
+                {playerProposals.length > 0 && (
+                  <span className="glass-light rounded-full px-2.5 py-1 text-body-sm font-bold tracking-[0.14em] text-[color:var(--accent-primary)]">
+                    {playerProposals.length} proposta{playerProposals.length > 1 ? "s" : ""}
+                  </span>
+                )}
+              </div>
+              <h1 className="mt-1 text-[20px] font-bold leading-[1.05] tracking-[-0.02em] text-[color:var(--text-primary)] lg:text-[26px]">
+                Mercado de Transferências
+              </h1>
 
-      {/* ══ MAIN 3 COLUMNS ══ */}
-      <div style={{ display:"flex", flex:1, overflow:"hidden" }}>
-
-        {/* ── ESQUERDA: Feed de Notícias ── */}
-        <aside style={{ width:300, flexShrink:0, borderRight:"1px solid rgba(255,255,255,0.06)", overflowY:"auto", padding:20, background:"rgba(14,14,16,0.6)" }}>
-          <p style={{ fontSize:10, textTransform:"uppercase", letterSpacing:"0.2em", color:"#3B82F6", fontWeight:700, marginBottom:16 }}>📰 Feed do Paddock</p>
-          
-          {!hasNews ? (
-            <div style={{ padding:"40px 0", textAlign:"center" }}>
-              <p style={{ fontSize:12, color:"#334155" }}>Sem movimentações relatadas.</p>
-            </div>
-          ) : allEvents.map(week => {
-            if (!week.events?.length) return null;
-            return (
-              <div key={week.week_number} style={{ marginBottom:20 }}>
-                <p style={{ fontSize:9, fontWeight:700, color:"#334155", textTransform:"uppercase", letterSpacing:"0.15em", paddingLeft:4, marginBottom:10 }}>Semana {week.week_number}</p>
-                <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
-                  {week.events.map((evt, i) => (
-                    <div key={i} style={{ ...innerCard, borderLeft:`2px solid ${evColor(evt.event_type)}` }}>
-                      <p style={{ fontSize:10, fontWeight:700, color: evColor(evt.event_type), marginBottom:4 }}>{evIcon(evt.event_type)} {evt.headline}</p>
-                      <p style={{ fontSize:11, color:"#94A3B8", lineHeight:1.5 }}>{evt.description}</p>
-                    </div>
-                  ))}
+              {/* Filtros de categoria */}
+              <div className="mt-2 max-w-full overflow-x-auto">
+                <div className="glass inline-flex w-fit items-center gap-0.5 whitespace-nowrap rounded-full p-1">
+                  {CATEGORIES.map((cat, i) => {
+                    if (cat.isSeparator) {
+                      return <span key={i} className="mx-1 h-4 w-px bg-white/10" />;
+                    }
+                    const active = selectedCat === cat.id;
+                    return (
+                      <button
+                        key={cat.id}
+                        onClick={() => setSelectedCat(cat.id)}
+                        className={`transition-glass cursor-pointer rounded-full border px-2.5 py-1 text-body-sm font-semibold ${
+                          active
+                            ? "border-white/30 bg-white/14 text-[color:var(--accent-primary)]"
+                            : "border-transparent bg-white/3 text-[color:var(--text-secondary)] hover:bg-white/8 hover:text-[color:var(--text-primary)]"
+                        }`}
+                      >
+                        <span
+                          className="mr-2 inline-block h-1.5 w-1.5 rounded-full"
+                          style={{ backgroundColor: cat.color }}
+                        />
+                        {cat.label}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
-            );
-          })}
-        </aside>
+            </div>
 
-        {/* ── CENTRO: Grid ── */}
-        <main style={{ flex:1, overflowY:"auto", padding:24, background:"rgba(14,14,16,0.3)" }}>
-          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:20 }}>
-            <p style={{ fontSize:10, textTransform:"uppercase", letterSpacing:"0.2em", color:"#475569", fontWeight:600 }}>Mapeamento das Equipes · Classificação Anterior</p>
-            <div style={{ display:"flex", gap:16, fontSize:10, color:"#475569" }}>
-              <span style={{ display:"flex", alignItems:"center", gap:6 }}>
-                <span style={{ width:8, height:8, borderRadius:3, background:"rgba(52,211,153,0.25)", border:"1px solid rgba(52,211,153,0.5)", display:"inline-block" }} />
-                Renovado
+            {/* Status + semana + botão */}
+            <div className="flex items-center gap-3 self-center lg:justify-self-end">
+              <span
+                className={`shrink-0 rounded-full border px-2.5 py-1 text-body-sm font-bold uppercase tracking-[0.14em] ${
+                  isMarketOpen
+                    ? "border-[#3fb95066] bg-[#3fb9501a] text-[color:var(--status-green)]"
+                    : "border-[#d2992266] bg-[#d2992218] text-[color:var(--status-yellow)]"
+                }`}
+              >
+                {isMarketOpen ? "Mercado aberto" : "Última semana"}
               </span>
-              <span style={{ display:"flex", alignItems:"center", gap:6 }}>
-                <span style={{ width:8, height:8, borderRadius:3, border:"1px dashed rgba(255,255,255,0.2)", display:"inline-block" }} />
-                Vaga Aberta
-              </span>
+
+              <div className="w-[220px] px-1 lg:w-[280px]">
+                <div className="mb-1 flex items-center justify-between gap-2">
+                  <p className="text-body-sm font-bold uppercase tracking-[0.2em] text-[color:var(--text-secondary)]">
+                    Semana{" "}
+                    <span className="text-[color:var(--text-primary)]">{currentWeek}</span>
+                    /{totalWeeks}
+                  </p>
+                  <p className="text-body-sm text-[color:var(--text-secondary)]">{currentDateLabel}</p>
+                </div>
+                <div className="h-[3px] w-full rounded-full bg-[#2a3240]">
+                  <div
+                    className="h-full rounded-full bg-[color:var(--accent-primary)] transition-all duration-500"
+                    style={{ width: `${weekProgress}%` }}
+                  />
+                </div>
+              </div>
+
+              <button
+                onClick={handleAdvanceWeek}
+                disabled={isAdvancingWeek || (isComplete && playerProposals.length > 0)}
+                className={`transition-glass rounded-full border px-6 py-2.5 text-body-lg font-bold uppercase tracking-[0.16em] disabled:cursor-not-allowed disabled:opacity-50 ${
+                  isComplete
+                    ? "border-[#3fb95099] bg-[#3fb950] text-[#06101f] hover:bg-[#52d16a]"
+                    : "glow-blue border-[#58a6ff99] bg-[#58a6ff] text-[#06101f] hover:bg-[#79b8ff]"
+                }`}
+              >
+                {isAdvancingWeek
+                  ? "Processando..."
+                  : isComplete
+                    ? "Iniciar Temporada"
+                    : "Avançar Semana"}
+              </button>
             </div>
           </div>
+          {startError && (
+            <p className="mt-2 text-center text-body-sm text-[color:var(--status-red)]">{startError}</p>
+          )}
+        </header>
 
-          {loadingGrid ? (
-            <div style={{ padding:"80px 0", textAlign:"center", color:"#334155", fontSize:13 }}>Carregando grid...</div>
-          ) : gridData.length === 0 ? (
-            <div style={{ padding:"40px 0", textAlign:"center", color:"#334155", fontSize:13 }}>Nenhuma equipe encontrada para esta categoria.</div>
-          ) : (
-            <div style={{ display:"flex", flexDirection:"column", gap:32 }}>
-              {sortedClasses.map(cls => {
-                const teams = [...teamsBySubcat[cls]].sort((a, b) => (a.temp_posicao || 999) - (b.temp_posicao || 999));
-                const lineCol = teams[0]?.cor_primaria || "#3B82F6";
-                const accentCol = subcatColor(cls); // always vivid color for glow
-                return (
-                  <div key={cls}>
-                    {/* Section separator */}
-                    <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:16 }}>
-                      <span style={{ fontSize:11, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.12em", color: accentCol, textShadow:`0 0 14px ${accentCol}, 0 0 24px ${accentCol}60`, whiteSpace:"nowrap" }}>
-                        {subcatLabel(cls)}
-                      </span>
-                      <div style={{ flex:1, height:1, background:`linear-gradient(to right, ${accentCol}40, transparent)` }} />
-                    </div>
+        {/* ══ 3 COLUNAS ══ */}
+        <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 xl:grid-cols-[20%_62%_18%]">
 
-                    {/* Teams grid */}
-                    <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill, minmax(280px,1fr))", gap:16 }}>
-                      {teams.map(team => {
-                        const rank = getRank(team.temp_posicao);
-                        const abbr = (team.nome_curto || team.nome).substring(0,2).toUpperCase();
-                        return (
-                          <div key={team.id} style={{
-                            ...glass,
-                            borderRadius:16, padding:16, position:"relative", overflow:"hidden",
-                            transition:"border-color 0.2s",
+          {/* ── ESQUERDA: Mercado de Pilotos ── */}
+          <aside ref={freeAgentContainerRef} className="glass-strong scroll-area animate-edge-rail-in min-h-0 overflow-y-auto rounded-2xl px-3 py-4 lg:px-4 lg:py-5">
+            <div className="mb-4 flex h-6 items-center justify-between">
+              <p className="text-body-sm font-bold uppercase tracking-[0.22em] text-[color:var(--accent-primary)]">
+                Mercado de Pilotos
+              </p>
+              {(preseasonFreeAgents ?? []).length > 0 && (
+                <span className="text-body-sm text-[color:var(--text-muted)]">
+                  {(preseasonFreeAgents ?? []).length} livres
+                </span>
+              )}
+            </div>
+
+            {(preseasonFreeAgents ?? []).length === 0 ? (
+              <div className="py-10 text-center text-body text-[color:var(--text-muted)]">
+                Todos os pilotos têm equipe.
+              </div>
+            ) : (
+              <div className="space-y-5">
+                {freeAgentCategoryOrder.map((cat) => {
+                  const { veterans, rookies } = freeAgentsByCategory[cat];
+                  const color = SUBCAT_COLORS[cat] ?? "#58a6ff";
+                  return (
+                    <section key={cat} ref={(el) => { freeAgentSectionRefs.current[cat] = el; }}>
+                      <div className="mb-2 flex items-center gap-2">
+                        <span
+                          className="text-[9px] font-bold uppercase tracking-[0.2em]"
+                          style={{ color }}
+                        >
+                          {subcatLabel(cat)}
+                        </span>
+                        <div
+                          className="h-px flex-1"
+                          style={{ background: `linear-gradient(to right, ${color}55, transparent)` }}
+                        />
+                        <span className="text-[9px] text-[color:var(--text-muted)]">
+                          {veterans.length + rookies.length}
+                        </span>
+                      </div>
+                      <div className="space-y-1.5">
+                        {veterans.map((d) => (
+                          <FreeAgentCard key={d.driver_id} driver={d} color={color} />
+                        ))}
+                        {rookies.map((d) => (
+                          <FreeAgentCard key={d.driver_id} driver={d} color={color} isRookie />
+                        ))}
+                      </div>
+                    </section>
+                  );
+                })}
+              </div>
+            )}
+          </aside>
+
+          {/* ── CENTRO: Grid de Equipes ── */}
+          <main className="glass scroll-area animate-fade-in min-h-0 overflow-y-auto rounded-2xl px-5 py-4 lg:px-6 lg:py-5">
+            <div className="mb-5 flex h-6 items-center justify-between">
+              <p className="text-body-sm font-bold uppercase tracking-[0.2em] text-[color:var(--text-secondary)]">
+                Mapeamento das equipes
+              </p>
+              <p className="text-body text-[color:var(--text-muted)]">Classificação anterior</p>
+            </div>
+
+            {loadingGrid ? (
+              <div className="py-20 text-center text-body text-[color:var(--text-muted)]">
+                Carregando grid...
+              </div>
+            ) : gridData.length === 0 ? (
+              <div className="py-20 text-center text-body text-[color:var(--text-muted)]">
+                Nenhuma equipe encontrada.
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {sortedClasses.map((teamClass, classIndex) => {
+                  const teams = [...groupedTeams[teamClass]].sort((a, b) => {
+                    const movementOrderDiff = getTeamMovementOrder(a) - getTeamMovementOrder(b);
+                    if (movementOrderDiff !== 0) return movementOrderDiff;
+
+                    const previousPositionDiff = getTeamMappingSortValue(a) - getTeamMappingSortValue(b);
+                    if (previousPositionDiff !== 0) return previousPositionDiff;
+
+                    return a.nome.localeCompare(b.nome);
+                  });
+                  const accent = subcatColor(teamClass);
+                  const totalVacancies = teams.reduce((sum, team) => sum + count_team_vacancies(team), 0);
+
+                  return (
+                    <section key={teamClass} className={classIndex > 0 ? "mt-10" : ""}>
+                      <div
+                        className="mb-5 flex items-center justify-between gap-3 rounded-xl px-4 py-3.5"
+                        style={{
+                          background: `linear-gradient(135deg, ${accent}22 0%, ${accent}0a 100%)`,
+                          borderLeft: `3px solid ${accent}`,
+                          boxShadow: `0 0 18px ${accent}18`,
+                        }}
+                      >
+                        <span
+                          className="text-[17px] font-bold uppercase tracking-[0.18em]"
+                          style={{ color: accent }}
+                        >
+                          {subcatLabel(teamClass)}
+                        </span>
+                        <span
+                          className="shrink-0 rounded-full border px-3 py-1 text-[11px] font-bold uppercase tracking-[0.12em]"
+                          style={{
+                            color: accent,
+                            borderColor: `${accent}55`,
+                            backgroundColor: `${accent}14`,
                           }}
-                          onMouseEnter={e => e.currentTarget.style.borderColor = `${team.cor_primaria || lineCol}50`}
-                          onMouseLeave={e => e.currentTarget.style.borderColor = "rgba(255,255,255,0.07)"}
-                          >
-                            {/* Top glow line */}
-                            <div style={{ position:"absolute", top:0, left:0, right:0, height:1, background:`linear-gradient(to right, transparent, ${team.cor_primaria || lineCol}60, transparent)` }} />
+                        >
+                          {totalVacancies} {totalVacancies === 1 ? "vaga" : "vagas"}
+                        </span>
+                      </div>
 
-                            {/* Header */}
-                            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:14 }}>
-                              <div style={{ display:"flex", alignItems:"center", gap:12 }}>
-                                <div style={{ position:"relative" }}>
-                                  <div style={{
-                                    width:34, height:34, borderRadius:10,
-                                    background:`${team.cor_primaria || lineCol}18`,
-                                    border:`1px solid ${team.cor_primaria || lineCol}35`,
-                                    display:"flex", alignItems:"center", justifyContent:"center",
-                                    fontWeight:700, fontSize:12, color: team.cor_primaria || lineCol,
-                                    boxShadow:`0 0 10px ${team.cor_primaria || lineCol}20`,
-                                  }}>{abbr}</div>
-                                  {rank && (
-                                    <span style={{
-                                      position:"absolute", top:-8, right:-8,
-                                      background: rank.grad, color: rank.color,
-                                      fontWeight:800, fontSize:9, padding:"2px 6px", borderRadius:4,
-                                      boxShadow: rank.glow ? `0 0 8px ${rank.glow}` : undefined,
-                                    }}>{rank.text}</span>
+                      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+                        {teams.map((team) => {
+                          const rankStyle = getRankStyle(team.temp_posicao);
+                          const abbr = (team.nome_curto || team.nome).substring(0, 2).toUpperCase();
+                          const movement = getTeamMovementBadge(team.categoria_anterior, team._categoria || team.classe);
+                          const teamBadgeColor = movement?.color ?? "#ffffff";
+                          const teamBadgeBorder = movement?.border ?? "rgba(255,255,255,0.22)";
+                          const teamBadgeBg = movement?.bg ?? "rgba(255,255,255,0.08)";
+
+                          return (
+                            <article
+                              key={team.id}
+                              className="glass transition-glass relative overflow-hidden rounded-xl border p-3 hover:-translate-y-0.5 hover:scale-[1.01]"
+                              style={{
+                                borderColor: movement
+                                  ? movement.border
+                                  : rankStyle?.border
+                                    ? `${rankStyle.border}88`
+                                    : "rgba(255,255,255,0.11)",
+                              }}
+                            >
+                              {rankStyle && !movement && (
+                                <div
+                                  className="pointer-events-none absolute right-0 top-0 h-full w-28"
+                                  style={{
+                                    background: `radial-gradient(circle at 94% 14%, ${rankStyle.glow} 0%, transparent 68%)`,
+                                  }}
+                                />
+                              )}
+                              {movement && (
+                                <div
+                                  className="pointer-events-none absolute right-0 top-0 h-full w-32"
+                                  style={{
+                                    background: `radial-gradient(circle at 94% 14%, ${movement.bg.replace("0.12", "0.18")} 0%, transparent 68%)`,
+                                  }}
+                                />
+                              )}
+
+                              <div className="relative mb-3 flex items-start gap-3">
+                                <div className="flex min-w-0 flex-1 items-center gap-3">
+                                  <div
+                                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border text-body font-bold"
+                                    style={{
+                                      borderColor: teamBadgeBorder,
+                                      backgroundColor: teamBadgeBg,
+                                      color: teamBadgeColor,
+                                    }}
+                                  >
+                                    {abbr}
+                                  </div>
+                                  <div className="min-w-0 flex-1">
+                                    <p className="truncate text-[19px] font-bold leading-[1.05]">{team.nome}</p>
+                                  </div>
+                                  {movement && (
+                                    <span
+                                      className="ml-auto shrink-0 rounded-md border px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.08em]"
+                                      style={{ color: movement.color, backgroundColor: movement.bg, borderColor: movement.border }}
+                                    >
+                                      {movement.label}
+                                    </span>
                                   )}
                                 </div>
-                                <div>
-                                  <p style={{ fontWeight:700, fontSize:13, letterSpacing:"-0.02em", color:"#ffffff", margin:0, maxWidth:160, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }} title={team.nome}>{team.nome}</p>
-                                  {rank?.label && <p style={{ fontSize:9, fontWeight:600, textTransform:"uppercase", letterSpacing:"0.1em", color: rank.text === "1º" ? "#F59E0B" : "#64748B", marginTop:2, textShadow: rank.text === "1º" ? "0 0 8px rgba(245,158,11,0.4)" : undefined }}>{rank.label}</p>}
-                                </div>
                               </div>
-                            </div>
 
-                            {/* Slots */}
-                            <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
-                              <GridSlot driverName={team.piloto_1_nome} role="N1" color={team.cor_primaria} />
-                              <GridSlot driverName={team.piloto_2_nome} role="N2" color={team.cor_primaria} />
+                              <div className="relative divide-y divide-white/8">
+                                <TeamDriverRow
+                                  driverName={team.piloto_1_nome}
+                                  tenureSeasons={team.piloto_1_tenure_seasons}
+                                  isPrimarySlot
+                                />
+                                <TeamDriverRow
+                                  driverName={team.piloto_2_nome}
+                                  tenureSeasons={team.piloto_2_tenure_seasons}
+                                />
+                              </div>
+                            </article>
+                          );
+                        })}
+                      </div>
+                    </section>
+                  );
+                })}
+              </div>
+            )}
+          </main>
+
+          {/* ── DIREITA: Decisões Pendentes ── */}
+          <aside className="glass scroll-area animate-drawer-in self-start overflow-y-auto rounded-2xl px-4 py-4 lg:px-5 lg:py-5 xl:max-h-[calc(100vh-96px)]">
+            <div className="mb-4 flex h-6 items-center gap-2">
+              <span className="relative inline-flex h-2.5 w-2.5">
+                {playerProposals.length > 0 && (
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#58a6ff]/80" />
+                )}
+                <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-[color:var(--accent-primary)]" />
+              </span>
+              <p className="text-body-sm font-bold uppercase tracking-[0.22em] text-[color:var(--accent-primary)]">
+                Decisões pendentes
+              </p>
+            </div>
+
+            {playerProposals.length === 0 ? (
+              <div className="glass-light rounded-xl border-dashed p-6 text-center text-body text-[color:var(--text-secondary)]">
+                Nenhuma proposta pendente.
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {playerProposals.map((prop) => (
+                  <article key={prop.proposal_id} className="glass animate-scale-in rounded-xl px-4 py-3.5">
+                    <p
+                      className="text-body-sm font-bold uppercase tracking-[0.16em]"
+                      style={{ color: prop.equipe_cor_primaria }}
+                    >
+                      {prop.papel} | {prop.categoria_nome || prop.categoria}
+                    </p>
+                    <p className="mt-1 text-title-md">{prop.equipe_nome}</p>
+
+                    <div className="my-3 grid grid-cols-2 gap-2">
+                      <div className="glass-light rounded-lg p-2.5">
+                        <p className="text-[8px] uppercase tracking-[0.2em] text-[color:var(--text-muted)]">
+                          Salário
+                        </p>
+                        <p className="num-medium mt-0.5 font-bold text-[color:var(--status-green)]">
+                          {formatSalary(prop.salario_oferecido)}
+                        </p>
+                      </div>
+                      <div className="glass-light rounded-lg p-2.5">
+                        <p className="text-[8px] uppercase tracking-[0.2em] text-[color:var(--text-muted)]">
+                          Duração
+                        </p>
+                        <p className="num-medium mt-0.5 font-bold text-[color:var(--text-primary)]">
+                          {prop.duracao_anos} ano{prop.duracao_anos > 1 ? "s" : ""}
+                        </p>
+                      </div>
+                      {prop.companheiro_nome && (
+                        <div className="glass-light rounded-lg p-2.5">
+                          <p className="text-[8px] uppercase tracking-[0.2em] text-[color:var(--text-muted)]">
+                            Companheiro
+                          </p>
+                          <p className="text-body mt-0.5 font-semibold text-[color:var(--text-primary)] truncate">
+                            {prop.companheiro_nome}
+                          </p>
+                        </div>
+                      )}
+                      <div className={`glass-light rounded-lg p-2.5 ${prop.companheiro_nome ? "" : "col-span-2"}`}>
+                        <p className="text-[8px] uppercase tracking-[0.2em] text-[color:var(--text-muted)]">
+                          Carro
+                        </p>
+                        <div className="mt-1.5 flex items-center gap-2">
+                          <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-[#21262d]">
+                            <div
+                              className="h-full rounded-full"
+                              style={{
+                                width: `${prop.car_performance_rating ?? 0}%`,
+                                backgroundColor: prop.equipe_cor_primaria,
+                              }}
+                            />
+                          </div>
+                          <span className="text-body font-bold">{prop.car_performance_rating}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => handleProposal(prop.proposal_id, true)}
+                        disabled={isRespondingProposal}
+                        className="transition-glass glow-blue flex-1 rounded-lg border border-[#58a6ff66] bg-[#58a6ff33] px-3 py-2 text-body font-bold text-[color:var(--accent-primary)] hover:bg-[#58a6ff55] disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        Aceitar
+                      </button>
+                      <button
+                        onClick={() => handleProposal(prop.proposal_id, false)}
+                        disabled={isRespondingProposal}
+                        className="transition-glass flex-1 rounded-lg border border-white/15 bg-white/5 px-3 py-2 text-body font-bold text-[color:var(--text-secondary)] hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        Recusar
+                      </button>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            )}
+          </aside>
+
+        </div>
+      </div>
+
+      {/* ══ MODAL: Pilotos sem vaga ══ */}
+      {showDisplacedModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+          onClick={(e) => { if (e.target === e.currentTarget) setShowDisplacedModal(false); }}
+        >
+          <div className="glass-strong animate-fade-in mx-4 w-full max-w-4xl rounded-2xl p-6 md:p-7">
+            <div className="mb-1 text-body-sm font-bold uppercase tracking-[0.22em] text-[#f85149]">
+              Fim da pré-temporada
+            </div>
+            <h2 className="mb-1 text-[18px] font-bold leading-tight text-[color:var(--text-primary)]">
+              Pilotos sem vaga
+            </h2>
+            <p className="mb-5 text-body text-[color:var(--text-secondary)]">
+              {displacedVeterans.length === 1
+                ? "Este piloto encerrou a pré-temporada sem equipe."
+                : `Estes ${displacedVeterans.length} pilotos encerraram a pré-temporada sem equipe.`}
+            </p>
+
+            <div className="mb-6 max-h-[70vh] space-y-4 overflow-y-auto pr-1">
+              {displacedVeteransByCategory.map((group) => (
+                <section key={group.category} className="space-y-2.5">
+                  <div
+                    className="flex items-center gap-3 rounded-xl px-3 py-2"
+                    style={{
+                      background: `linear-gradient(135deg, ${group.color}22 0%, rgba(255,255,255,0.03) 100%)`,
+                      borderLeft: `3px solid ${group.color}`,
+                    }}
+                  >
+                    <span
+                      className="text-[13px] font-bold uppercase tracking-[0.16em]"
+                      style={{ color: group.color }}
+                    >
+                      {group.label}
+                    </span>
+                    <div
+                      className="h-px flex-1"
+                      style={{ background: `linear-gradient(to right, ${group.color}55, transparent)` }}
+                    />
+                    <span className="text-body-sm text-[color:var(--text-muted)]">
+                      {group.drivers.length}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-2 xl:grid-cols-2">
+                    {group.drivers.map((d) => {
+                      const lic = LICENSE_COLORS[d.license_sigla] ?? LICENSE_COLORS.R;
+
+                      return (
+                        <div key={d.driver_id} className="glass-light flex items-center gap-3 rounded-xl px-3 py-2.5">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <p className="text-[15px] font-semibold text-[color:var(--text-primary)]">
+                                {d.driver_name}
+                              </p>
+                              <span
+                                className="rounded-full px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.12em]"
+                                style={{ background: `${group.color}22`, color: group.color }}
+                              >
+                                {group.label}
+                              </span>
+                            </div>
+                            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-body-sm text-[color:var(--text-muted)]">
+                              {d.previous_team_name && d.seasons_at_last_team > 0 && (
+                                <>
+                                  <span style={{ color: d.previous_team_color ?? "var(--text-secondary)" }}>
+                                    {d.previous_team_name}
+                                  </span>
+                                  <span>{`${d.seasons_at_last_team} ${d.seasons_at_last_team === 1 ? "temporada" : "temporadas"}`}</span>
+                                </>
+                              )}
                             </div>
                           </div>
-                        );
-                      })}
-                    </div>
+                          <span
+                            className="shrink-0 rounded-md px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-[0.1em]"
+                            style={{ background: lic.bg, color: lic.text }}
+                          >
+                            {d.license_sigla}
+                          </span>
+                        </div>
+                      );
+                    })}
                   </div>
-                );
-              })}
+                </section>
+              ))}
             </div>
-          )}
-        </main>
 
-        {/* ── DIREITA: Decisões Pendentes ── */}
-        <aside style={{ width:300, flexShrink:0, borderLeft:"1px solid rgba(255,255,255,0.06)", overflowY:"auto", padding:20, background:"rgba(14,14,16,0.6)" }}>
-          {/* Header com ping */}
-          <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:20 }}>
-            <span style={{ position:"relative", display:"inline-flex", width:10, height:10 }}>
-              {playerProposals.length > 0 && (
-                <span style={{ position:"absolute", display:"inline-flex", width:"100%", height:"100%", borderRadius:"50%", background:"#3B82F6", opacity:0.5, animation:"ping 2s ease-in-out infinite" }} />
-              )}
-              <span style={{ position:"relative", display:"inline-flex", borderRadius:"50%", width:10, height:10, background:"#3B82F6", boxShadow:"0 0 8px rgba(59,130,246,0.8)" }} />
-            </span>
-            <p style={{ fontSize:10, textTransform:"uppercase", letterSpacing:"0.2em", color:"#60A5FA", fontWeight:700 }}>Decisões Pendentes</p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowDisplacedModal(false)}
+                className="transition-glass flex-1 rounded-xl border border-white/15 bg-white/5 px-4 py-2.5 text-body font-semibold text-[color:var(--text-secondary)] hover:bg-white/10"
+              >
+                Voltar
+              </button>
+              <button
+                onClick={handleConfirmStartSeason}
+                className="transition-glass glow-blue flex-1 rounded-xl border border-[#3fb95099] bg-[#3fb950] px-4 py-2.5 text-body font-bold text-[#06101f] hover:bg-[#52d16a]"
+              >
+                Iniciar Temporada
+              </button>
+            </div>
           </div>
+        </div>
+      )}
 
-          <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
-            {playerProposals.length === 0 ? (
-              <div style={{ padding:"40px 16px", textAlign:"center", border:"1px dashed rgba(255,255,255,0.08)", borderRadius:16 }}>
-                <p style={{ fontSize:12, color:"#334155" }}>Nenhuma proposta pendente.</p>
-              </div>
-            ) : playerProposals.map(prop => (
-              <div key={prop.proposal_id} style={{ ...glassGlow, borderRadius:18, padding:16, position:"relative", overflow:"hidden" }}>
-                {/* Top glow */}
-                <div style={{ position:"absolute", top:0, left:0, right:0, height:1, background:"linear-gradient(to right, transparent, rgba(59,130,246,0.5), transparent)" }} />
-                {/* Role badge */}
-                <div style={{
-                  position:"absolute", top:0, right:0, padding:"4px 12px",
-                  borderBottomLeftRadius:12, borderBottom:`1px solid ${prop.equipe_cor_primaria || "#3B82F6"}40`,
-                  borderLeft:`1px solid ${prop.equipe_cor_primaria || "#3B82F6"}40`,
-                  background:`${prop.equipe_cor_primaria || "#3B82F6"}18`,
-                  color: prop.equipe_cor_primaria || "#60A5FA", fontSize:10, fontWeight:700,
-                }}>
-                  {prop.papel} · {prop.categoria_nome || prop.categoria}
-                </div>
-
-                {/* Team */}
-                <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:16, marginTop:8 }}>
-                  <div style={{
-                    width:42, height:42, borderRadius:12, flexShrink:0,
-                    background:`${prop.equipe_cor_primaria || "#3B82F6"}20`,
-                    border:`1px solid ${prop.equipe_cor_primaria || "#3B82F6"}40`,
-                    display:"flex", alignItems:"center", justifyContent:"center",
-                    fontWeight:700, fontSize:14, color: prop.equipe_cor_primaria || "#60A5FA",
-                    boxShadow:`0 0 12px ${prop.equipe_cor_primaria || "#3B82F6"}25`,
-                  }}>{prop.equipe_nome?.substring(0,2).toUpperCase()}</div>
-                  <div>
-                    <p style={{ fontSize:14, fontWeight:700, letterSpacing:"-0.02em", color:"#ffffff", margin:0 }}>{prop.equipe_nome}</p>
-                    <p style={{ fontSize:10, fontWeight:600, color:"#60A5FA", marginTop:2 }}>{prop.papel === "N1" ? "Piloto Principal" : "Segundo Piloto"}</p>
-                  </div>
-                </div>
-
-                {/* Details grid */}
-                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, marginBottom:16 }}>
-                  {[
-                    { label:"Salário",     value: formatSalary(prop.salario_oferecido), color:"#34D399" },
-                    { label:"Duração",     value: `${prop.duracao_anos} ano${prop.duracao_anos > 1 ? "s" : ""}` },
-                    { label:"Companheiro", value: prop.companheiro_nome || "Vaga em aberto" },
-                  ].map(d => (
-                    <div key={d.label} style={{ background:"rgba(0,0,0,0.3)", border:"1px solid rgba(255,255,255,0.05)", borderRadius:10, padding:"10px 12px" }}>
-                      <p style={{ fontSize:9, color:"#334155", textTransform:"uppercase", letterSpacing:"0.1em", marginBottom:3 }}>{d.label}</p>
-                      <p style={{ fontSize:12, fontWeight:700, color: d.color || "#ffffff", margin:0 }}>{d.value}</p>
-                    </div>
-                  ))}
-                  <div style={{ background:"rgba(0,0,0,0.3)", border:"1px solid rgba(255,255,255,0.05)", borderRadius:10, padding:"10px 12px" }}>
-                    <p style={{ fontSize:9, color:"#334155", textTransform:"uppercase", letterSpacing:"0.1em", marginBottom:6 }}>Carro</p>
-                    <div style={{ display:"flex", alignItems:"center", gap:6 }}>
-                      <div style={{ flex:1, height:4, background:"rgba(255,255,255,0.08)", borderRadius:99, overflow:"hidden" }}>
-                        <div style={{ width:`${prop.car_performance_rating || 0}%`, height:"100%", background: prop.equipe_cor_primaria || "#3B82F6", boxShadow:`0 0 6px ${prop.equipe_cor_primaria || "#3B82F6"}80`, borderRadius:99 }} />
-                      </div>
-                      <p style={{ fontSize:10, fontWeight:700, color:"#ffffff", margin:0 }}>{prop.car_performance_rating}</p>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Actions */}
-                <div style={{ display:"flex", gap:8 }}>
-                  <button onClick={() => handleProposal(prop.proposal_id, true)} disabled={isRespondingProposal}
-                    style={{ flex:1, padding:"9px 0", fontSize:12, fontWeight:700, fontFamily:"inherit", cursor:"pointer", borderRadius:12, border:"none",
-                      background:"#3B82F6", color:"#fff",
-                      boxShadow:"0 0 0 1px rgba(59,130,246,0.4), 0 0 16px rgba(59,130,246,0.25)",
-                      opacity: isRespondingProposal ? 0.5 : 1,
-                    }}>Aceitar</button>
-                  <button onClick={() => handleProposal(prop.proposal_id, false)} disabled={isRespondingProposal}
-                    style={{ flex:1, padding:"9px 0", fontSize:12, fontWeight:700, fontFamily:"inherit", cursor:"pointer", borderRadius:12,
-                      background:"rgba(255,255,255,0.06)", border:"1px solid rgba(255,255,255,0.1)", color:"rgba(255,255,255,0.7)",
-                      opacity: isRespondingProposal ? 0.5 : 1,
-                    }}>Recusar</button>
-                </div>
-              </div>
-            ))}
+      {/* ── Modal: Iniciar temporada sem equipe ── */}
+      {showFreeAgentWarning && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+          onClick={(e) => { if (e.target === e.currentTarget) setShowFreeAgentWarning(false); }}
+        >
+          <div className="glass-strong animate-fade-in mx-4 w-full max-w-md rounded-2xl p-6 md:p-7">
+            <div className="mb-1 text-body-sm font-bold uppercase tracking-[0.22em] text-[#f85149]">
+              Atenção
+            </div>
+            <h2 className="mb-3 text-[18px] font-bold leading-tight text-[color:var(--text-primary)]">
+              Você está sem equipe
+            </h2>
+            <p className="mb-2 text-body text-[color:var(--text-secondary)]">
+              A pré-temporada encerrou sem que você fechasse um contrato. Se confirmar, iniciará
+              a temporada como <span className="font-semibold text-[color:var(--text-primary)]">agente livre</span> — sem correr nenhuma etapa.
+            </p>
+            <p className="mb-6 text-body text-[color:var(--text-secondary)]">
+              Ao final da temporada, você poderá tentar o mercado novamente. Após uma temporada
+              inteira sem equipe, uma proposta de reserva será garantida na pré-temporada seguinte.
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowFreeAgentWarning(false)}
+                className="transition-glass flex-1 rounded-xl border border-white/15 bg-white/5 px-4 py-2.5 text-body font-semibold text-[color:var(--text-secondary)] hover:bg-white/10"
+              >
+                Voltar
+              </button>
+              <button
+                onClick={handleConfirmFreeAgentStart}
+                className="transition-glass flex-1 rounded-xl border border-[#f8514999] bg-[#f85149]/20 px-4 py-2.5 text-body font-bold text-[#f85149] hover:bg-[#f85149]/30"
+              >
+                Confirmar mesmo assim
+              </button>
+            </div>
           </div>
-
-          {/* Ping keyframes */}
-          <style>{`@keyframes ping { 0%,100%{transform:scale(1);opacity:.8} 50%{transform:scale(1.8);opacity:0} }`}</style>
-        </aside>
-
-      </div>
+        </div>
+      )}
     </div>
   );
 }

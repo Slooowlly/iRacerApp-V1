@@ -78,9 +78,12 @@ describe("useCareerStore startCalendarAdvance", () => {
       preseasonState: null,
       preseasonWeeks: [],
       playerProposals: [],
+      playerSpecialOffers: [],
+      acceptedSpecialOffer: null,
       endOfSeasonResult: null,
       showEndOfSeason: false,
       showPreseason: false,
+      showConvocation: false,
     });
   });
 
@@ -329,6 +332,70 @@ describe("useCareerStore loadCareer", () => {
     expect(useCareerStore.getState().playerProposals).toEqual([{ proposal_id: "proposal-1" }]);
     expect(useCareerStore.getState().preseasonWeeks).toHaveLength(1);
   });
+
+  it("restores the convocation screen when the save is in JanelaConvocacao", async () => {
+    invoke.mockImplementation((command) => {
+      if (command === "load_career") {
+        return Promise.resolve({
+          career_id: "career-77",
+          difficulty: "medio",
+          player: {
+            id: "drv-player",
+            nome: "R. Silva",
+            categoria_especial_ativa: "endurance",
+          },
+          player_team: {
+            id: "team-regular",
+            nome: "Roadster Cup",
+            categoria: "mazda_rookie",
+            classe: "mazda",
+          },
+          season: { id: "season-2", numero: 2, fase: "JanelaConvocacao" },
+          accepted_special_offer: {
+            id: "offer-accepted",
+            team_id: "team-special",
+            team_name: "Solar GT4",
+            special_category: "endurance",
+            class_name: "gt4",
+            papel: "Numero2",
+          },
+          next_race: null,
+          next_race_briefing: null,
+          total_drivers: 16,
+          total_teams: 8,
+        });
+      }
+
+      if (command === "get_temporal_summary") {
+        return Promise.resolve(null);
+      }
+
+      if (command === "get_player_special_offers") {
+        return Promise.resolve([
+          {
+            id: "offer-1",
+            team_id: "team-special",
+            team_name: "Solar GT4",
+            special_category: "endurance",
+            class_name: "gt4",
+          },
+        ]);
+      }
+
+      return Promise.resolve(null);
+    });
+
+    await useCareerStore.getState().loadCareer("career-77");
+
+    expect(useCareerStore.getState().showConvocation).toBe(true);
+    expect(useCareerStore.getState().playerSpecialOffers).toHaveLength(1);
+    expect(useCareerStore.getState().acceptedSpecialOffer).toMatchObject({
+      team_id: "team-special",
+      team_name: "Solar GT4",
+      special_category: "endurance",
+      class_name: "gt4",
+    });
+  });
 });
 
 describe("useCareerStore enterPreseason", () => {
@@ -338,12 +405,25 @@ describe("useCareerStore enterPreseason", () => {
       careerId: "career-1",
       showEndOfSeason: true,
       showPreseason: false,
+      showConvocation: true,
       endOfSeasonResult: {
         new_year: 2027,
       },
       preseasonState: null,
       preseasonWeeks: [],
       playerProposals: [],
+      playerSpecialOffers: [
+        {
+          id: "offer-1",
+          team_name: "Solar GT4",
+          special_category: "endurance",
+        },
+      ],
+      acceptedSpecialOffer: {
+        id: "offer-accepted",
+        team_name: "Solar GT4",
+        special_category: "endurance",
+      },
       error: null,
     });
   });
@@ -383,5 +463,84 @@ describe("useCareerStore enterPreseason", () => {
     });
     expect(useCareerStore.getState().showPreseason).toBe(true);
     expect(useCareerStore.getState().showEndOfSeason).toBe(false);
+  });
+
+  it("clears special convocation state when returning to the normal preseason market", async () => {
+    invoke.mockImplementation((command) => {
+      if (command === "get_preseason_state") {
+        return Promise.resolve({
+          season_number: 2,
+          current_week: 1,
+          total_weeks: 6,
+          is_complete: false,
+        });
+      }
+
+      if (command === "get_player_proposals") {
+        return Promise.resolve([]);
+      }
+
+      if (command === "get_news") {
+        return Promise.resolve([]);
+      }
+
+      if (command === "set_career_resume_context") {
+        return Promise.resolve(null);
+      }
+
+      return Promise.resolve(null);
+    });
+
+    await useCareerStore.getState().enterPreseason();
+
+    expect(useCareerStore.getState().showPreseason).toBe(true);
+    expect(useCareerStore.getState().showConvocation).toBe(false);
+    expect(useCareerStore.getState().playerSpecialOffers).toEqual([]);
+    expect(useCareerStore.getState().acceptedSpecialOffer).toBe(null);
+  });
+});
+
+describe("useCareerStore respondToSpecialOffer", () => {
+  beforeEach(() => {
+    invoke.mockReset();
+    useCareerStore.setState({
+      careerId: "career-1",
+      playerSpecialOffers: [
+        {
+          id: "offer-1",
+          team_name: "Solar GT4",
+          special_category: "endurance",
+          class_name: "gt4",
+        },
+      ],
+      acceptedSpecialOffer: null,
+      isConvocating: false,
+      error: null,
+    });
+  });
+
+  it("stores the accepted special offer and clears pending offers", async () => {
+    invoke.mockImplementation((command) => {
+      if (command === "respond_player_special_offer") {
+        return Promise.resolve({
+          success: true,
+          action: "accepted",
+          message: "ok",
+          special_category: "endurance",
+          remaining_offers: 0,
+        });
+      }
+
+      return Promise.resolve([]);
+    });
+
+    await useCareerStore.getState().respondToSpecialOffer("offer-1", true);
+
+    expect(useCareerStore.getState().playerSpecialOffers).toEqual([]);
+    expect(useCareerStore.getState().acceptedSpecialOffer).toMatchObject({
+      id: "offer-1",
+      team_name: "Solar GT4",
+      special_category: "endurance",
+    });
   });
 });

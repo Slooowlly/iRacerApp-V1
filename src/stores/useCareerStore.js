@@ -32,11 +32,14 @@ const initialState = {
   preseasonState: null,
   preseasonWeeks: [],
   playerProposals: [],
+  preseasonFreeAgents: [],
   endOfSeasonResult: null,
   showEndOfSeason: false,
   showPreseason: false,
   convocationResult: null,
   showConvocation: false,
+  playerSpecialOffers: [],
+  acceptedSpecialOffer: null,
 };
 
 function getErrorMessage(error, fallback) {
@@ -164,6 +167,25 @@ function buildTemporalUiState(temporalSummary) {
   };
 }
 
+function deriveAcceptedSpecialOffer(data) {
+  if (data?.accepted_special_offer) {
+    return data.accepted_special_offer;
+  }
+
+  if (data?.player?.categoria_especial_ativa && data?.player_team) {
+    return {
+      id: "accepted-active-special",
+      team_id: data.player_team.id,
+      team_name: data.player_team.nome,
+      special_category: data.player.categoria_especial_ativa,
+      class_name: data.player_team.classe ?? "",
+      papel: null,
+    };
+  }
+
+  return null;
+}
+
 async function buildResumeUiState(careerId, resumeContext) {
   if (!careerId || !resumeContext?.active_view) {
     return {
@@ -173,6 +195,9 @@ async function buildResumeUiState(careerId, resumeContext) {
       preseasonState: null,
       preseasonWeeks: [],
       playerProposals: [],
+      preseasonFreeAgents: [],
+      playerSpecialOffers: [],
+      acceptedSpecialOffer: null,
     };
   }
 
@@ -184,13 +209,16 @@ async function buildResumeUiState(careerId, resumeContext) {
       preseasonState: null,
       preseasonWeeks: [],
       playerProposals: [],
+      playerSpecialOffers: [],
+      acceptedSpecialOffer: null,
     };
   }
 
   if (resumeContext.active_view === "preseason") {
-    const [state, proposals] = await Promise.all([
+    const [state, proposals, freeAgents] = await Promise.all([
       invoke("get_preseason_state", { careerId }),
       invoke("get_player_proposals", { careerId }).catch(() => []),
+      invoke("get_preseason_free_agents", { careerId }).catch(() => []),
     ]);
     const news = await invoke("get_news", {
       careerId,
@@ -206,6 +234,7 @@ async function buildResumeUiState(careerId, resumeContext) {
       preseasonState: state,
       preseasonWeeks: buildWeeksFromNews(news),
       playerProposals: proposals,
+      preseasonFreeAgents: freeAgents,
     };
   }
 
@@ -216,6 +245,8 @@ async function buildResumeUiState(careerId, resumeContext) {
     preseasonState: null,
     preseasonWeeks: [],
     playerProposals: [],
+    playerSpecialOffers: [],
+    acceptedSpecialOffer: null,
   };
 }
 
@@ -257,8 +288,11 @@ const useCareerStore = create((set, get) => ({
       preseasonState: null,
       preseasonWeeks: [],
       playerProposals: [],
+      preseasonFreeAgents: [],
       showConvocation: false,
       convocationResult: null,
+      playerSpecialOffers: [],
+      acceptedSpecialOffer: null,
     });
 
     try {
@@ -287,10 +321,19 @@ const useCareerStore = create((set, get) => ({
       });
 
       // Se a carreira foi salva no meio da janela de convocação, restaura a tela.
-      const convocationResumeState =
-        data.season?.fase === "JanelaConvocacao"
-          ? { showConvocation: true, convocationResult: null }
-          : {};
+      let convocationResumeState = {};
+      if (data.season?.fase === "JanelaConvocacao") {
+        const pendingOffers = await invoke("get_player_special_offers", {
+          careerId: data.career_id,
+        }).catch(() => []);
+
+        convocationResumeState = {
+          showConvocation: true,
+          convocationResult: null,
+          playerSpecialOffers: pendingOffers,
+          acceptedSpecialOffer: deriveAcceptedSpecialOffer(data),
+        };
+      }
 
       set({
         ...applyCareerData(data),
@@ -394,6 +437,8 @@ const useCareerStore = create((set, get) => ({
         preseasonState: null,
         preseasonWeeks: [],
         playerProposals: [],
+        playerSpecialOffers: [],
+        acceptedSpecialOffer: null,
         nextRace: null,
         nextRaceBriefing: null,
         temporalSummary: null,
@@ -413,6 +458,20 @@ const useCareerStore = create((set, get) => ({
     }
   },
 
+  skipAllPendingRaces: async () => {
+    const { careerId } = get();
+    if (!careerId) throw new Error("Carreira nao carregada.");
+    set({ isAdvancing: true, error: null });
+    try {
+      await invoke("skip_all_pending_races", { careerId });
+    } catch (error) {
+      set({ isAdvancing: false, error: getErrorMessage(error, "Erro ao pular corridas.") });
+      throw error;
+    }
+    // Após simular todas as corridas, avança a temporada normalmente.
+    return get().advanceSeason();
+  },
+
   // ── Bloco Especial ───────────────────────────────────────────────────────────
 
   /**
@@ -428,10 +487,13 @@ const useCareerStore = create((set, get) => ({
     try {
       await invoke("advance_to_convocation_window", { careerId });
       const result = await invoke("run_convocation_window", { careerId });
+      const offers = await invoke("get_player_special_offers", { careerId }).catch(() => []);
       set({
         isConvocating: false,
         convocationResult: result,
         showConvocation: true,
+        playerSpecialOffers: offers,
+        acceptedSpecialOffer: null,
         isDirty: true,
       });
       return result;
@@ -456,7 +518,12 @@ const useCareerStore = create((set, get) => ({
 
     try {
       await invoke("iniciar_bloco_especial", { careerId });
-      set({ showConvocation: false, convocationResult: null });
+      set({
+        showConvocation: false,
+        convocationResult: null,
+        playerSpecialOffers: [],
+        acceptedSpecialOffer: null,
+      });
       const data = await loadCareer(careerId);
       set({ isConvocating: false });
       return data;
@@ -496,6 +563,52 @@ const useCareerStore = create((set, get) => ({
     }
   },
 
+  respondToSpecialOffer: async (offerId, accept) => {
+    const { careerId, playerSpecialOffers, acceptedSpecialOffer } = get();
+    if (!careerId) {
+      throw new Error("Carreira nao carregada.");
+    }
+
+    const selectedOffer =
+      playerSpecialOffers.find((offer) => offer.id === offerId) ?? null;
+
+    set({ isConvocating: true, error: null });
+
+    try {
+      const response = await invoke("respond_player_special_offer", {
+        careerId,
+        offerId,
+        accept,
+      });
+      const pendingOffers =
+        response.remaining_offers > 0
+          ? await invoke("get_player_special_offers", { careerId }).catch(() => [])
+          : [];
+
+      set({
+        isConvocating: false,
+        playerSpecialOffers: pendingOffers,
+        acceptedSpecialOffer:
+          accept && selectedOffer
+            ? {
+                ...selectedOffer,
+                special_category:
+                  response.special_category ?? selectedOffer.special_category,
+              }
+            : acceptedSpecialOffer,
+        isDirty: true,
+      });
+
+      return response;
+    } catch (error) {
+      set({
+        isConvocating: false,
+        error: getErrorMessage(error, "Erro ao responder convocacao especial."),
+      });
+      throw error;
+    }
+  },
+
   enterPreseason: async () => {
     const { careerId } = get();
     if (!careerId) {
@@ -503,9 +616,10 @@ const useCareerStore = create((set, get) => ({
     }
 
     try {
-      const [state, proposals] = await Promise.all([
+      const [state, proposals, freeAgents] = await Promise.all([
         invoke("get_preseason_state", { careerId }),
         invoke("get_player_proposals", { careerId }).catch(() => []),
+        invoke("get_preseason_free_agents", { careerId }).catch(() => []),
       ]);
       const news = await invoke("get_news", {
         careerId,
@@ -523,9 +637,14 @@ const useCareerStore = create((set, get) => ({
         showEndOfSeason: false,
         showRaceBriefing: false,
         showPreseason: true,
+        showConvocation: false,
+        convocationResult: null,
         preseasonState: state,
         preseasonWeeks: buildWeeksFromNews(news),
         playerProposals: proposals,
+        preseasonFreeAgents: freeAgents,
+        playerSpecialOffers: [],
+        acceptedSpecialOffer: null,
         error: null,
       });
 
@@ -553,7 +672,13 @@ const useCareerStore = create((set, get) => ({
         proposals = await invoke("get_player_proposals", { careerId });
       }
 
-      const state = await invoke("get_preseason_state", { careerId });
+      const [state, freeAgents] = await Promise.all([
+        invoke("get_preseason_state", { careerId }),
+        invoke("get_preseason_free_agents", { careerId }).catch((e) => {
+          console.error("[preseason] get_preseason_free_agents falhou:", e);
+          return get().preseasonFreeAgents ?? [];
+        }),
+      ]);
       const news = await invoke("get_news", {
         careerId,
         season: state.season_number,
@@ -565,6 +690,7 @@ const useCareerStore = create((set, get) => ({
         preseasonWeeks: buildWeeksFromNews(news),
         preseasonState: state,
         playerProposals: proposals,
+        preseasonFreeAgents: freeAgents,
         isAdvancingWeek: false,
         isDirty: true,
       });
