@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use rand::Rng;
 
 use crate::common::time::current_timestamp;
@@ -36,8 +38,20 @@ impl TeamHierarchyClimate {
             "inversao" => TeamHierarchyClimate::Inversao,
             "crise" => TeamHierarchyClimate::Crise,
             // Compatibilidade com o schema antigo.
-            "n1" | "n2" | "independente" | "estavel" => TeamHierarchyClimate::Estavel,
+            "n1" | "n2" | "independente" | "estavel" | "claro" => TeamHierarchyClimate::Estavel,
             _ => TeamHierarchyClimate::Estavel,
+        }
+    }
+
+    pub fn from_str_strict(value: &str) -> Result<Self, String> {
+        match value.trim().to_lowercase().as_str() {
+            "estavel" | "n1" | "n2" | "independente" | "claro" => Ok(TeamHierarchyClimate::Estavel),
+            "competitivo" => Ok(TeamHierarchyClimate::Competitivo),
+            "tensao" => Ok(TeamHierarchyClimate::Tensao),
+            "reavaliacao" => Ok(TeamHierarchyClimate::Reavaliacao),
+            "inversao" => Ok(TeamHierarchyClimate::Inversao),
+            "crise" => Ok(TeamHierarchyClimate::Crise),
+            other => Err(format!("TeamHierarchyClimate invalido: '{other}'")),
         }
     }
 
@@ -113,6 +127,8 @@ pub struct Team {
     pub aceita_rookies: bool,
     pub meta_posicao: i32,
     pub temp_posicao: i32,
+    /// Categoria da equipe na temporada anterior (Some se foi promovida/rebaixada, None caso contrário).
+    pub categoria_anterior: Option<String>,
 }
 
 impl Team {
@@ -194,6 +210,7 @@ impl Team {
             aceita_rookies: true,
             meta_posicao: 10,
             temp_posicao: 0,
+            categoria_anterior: None,
         }
     }
 }
@@ -302,6 +319,7 @@ pub fn placeholder_team_from_db(
         aceita_rookies: true,
         meta_posicao: 10,
         temp_posicao: 0,
+        categoria_anterior: None,
     }
 }
 

@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 pub struct CarInfo {
     pub nome: &'static str,
     pub car_path: &'static str,

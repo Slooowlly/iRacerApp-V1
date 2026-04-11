@@ -1,9 +1,12 @@
+#![allow(dead_code)]
+
 use rusqlite::Connection;
 
 use crate::common::time::current_timestamp;
 
 use crate::db::connection::DbError;
 use crate::db::queries::drivers::get_driver;
+use crate::db::queries::news::insert_news;
 use crate::db::queries::rivalries::{
     delete_rivalry, get_all_rivalries, get_rivalries_for_pilot, get_rivalry_by_pair,
     insert_rivalry, update_rivalry_axes,
@@ -12,7 +15,7 @@ use crate::generators::ids::{next_id, IdType};
 use crate::models::rivalry::{
     normalize_pair, perceived_intensity, rivalry_lifecycle, Rivalry, RivalryLifecycle, RivalryType,
 };
-use crate::news::NewsItem;
+use crate::news::{NewsImportance, NewsItem, NewsType};
 
 // ── Constantes de domínio ─────────────────────────────────────────────────────
 
@@ -146,10 +149,12 @@ pub fn apply_rivalry_event(
             let new_historical = clamp(event.historical_delta);
             let new_recent = clamp(event.recent_delta);
             let new_perceived = perceived_intensity(new_historical, new_recent);
+            let piloto1_id = pair.piloto1_id.clone();
+            let piloto2_id = pair.piloto2_id.clone();
             let rivalry = Rivalry {
                 id: id.clone(),
-                piloto1_id: pair.piloto1_id,
-                piloto2_id: pair.piloto2_id,
+                piloto1_id: piloto1_id.clone(),
+                piloto2_id: piloto2_id.clone(),
                 historical_intensity: new_historical,
                 recent_activity: new_recent,
                 tipo: event.tipo.clone(),
@@ -157,12 +162,41 @@ pub fn apply_rivalry_event(
                 ultima_atualizacao: now,
                 temporada_update: event.temporada,
             };
-            insert_rivalry(conn, &rivalry)?;
-            Ok(RivalryApplied {
-                rivalry_id: id,
-                old_perceived: 0.0,
-                new_perceived,
-            })
+            match insert_rivalry(conn, &rivalry) {
+                Ok(()) => Ok(RivalryApplied {
+                    rivalry_id: id,
+                    old_perceived: 0.0,
+                    new_perceived,
+                }),
+                Err(err) if is_rivalry_pair_constraint(&err) => {
+                    let existing = get_rivalry_by_pair(conn, &piloto1_id, &piloto2_id)?
+                        .ok_or_else(|| {
+                            DbError::InvalidData(format!(
+                                "Par de rivalidade '{}' x '{}' conflitou no insert, mas nao foi encontrado no reload",
+                                piloto1_id, piloto2_id
+                            ))
+                        })?;
+                    let old_perceived = existing.perceived_intensity();
+                    let new_historical =
+                        clamp(existing.historical_intensity + event.historical_delta);
+                    let new_recent = clamp(existing.recent_activity + event.recent_delta);
+                    let new_perceived = perceived_intensity(new_historical, new_recent);
+                    update_rivalry_axes(
+                        conn,
+                        &existing.id,
+                        new_historical,
+                        new_recent,
+                        &current_timestamp(),
+                        event.temporada,
+                    )?;
+                    Ok(RivalryApplied {
+                        rivalry_id: existing.id,
+                        old_perceived,
+                        new_perceived,
+                    })
+                }
+                Err(err) => Err(err),
+            }
         }
     }
 }
@@ -216,19 +250,55 @@ pub fn remove_rivalry(conn: &Connection, rivalry_id: &str) -> Result<(), DbError
 // ── Passo 10: Geração de notícia (atualizado para percebida) ──────────────────
 
 fn build_rivalry_news_item(
-    _applied: &RivalryApplied,
-    _tipo: &RivalryType,
-    _nome_a: &str,
-    _nome_b: &str,
-    _categoria_id: &str,
-    _temporada: i32,
-    _rodada: i32,
-    _piloto_a_id: &str,
-    _piloto_b_id: &str,
-    _team_id: Option<&str>,
+    id: String,
+    applied: &RivalryApplied,
+    tipo: &RivalryType,
+    nome_a: &str,
+    nome_b: &str,
+    categoria_id: &str,
+    temporada: i32,
+    rodada: i32,
+    piloto_a_id: &str,
+    piloto_b_id: &str,
+    team_id: Option<&str>,
     _driver_midia: &std::collections::HashMap<String, f64>,
 ) -> Option<NewsItem> {
-    None
+    let crossed = crossed_threshold(applied.old_perceived, applied.new_perceived)?;
+    let importance = match crossed {
+        RivalryIntensityLevel::Inicial => NewsImportance::Media,
+        RivalryIntensityLevel::Clara => NewsImportance::Alta,
+        RivalryIntensityLevel::Forte | RivalryIntensityLevel::Intensa => NewsImportance::Destaque,
+        RivalryIntensityLevel::AtritoLeve => NewsImportance::Media,
+    };
+    let origem = match tipo {
+        RivalryType::Companheiros => "companheiros de equipe",
+        RivalryType::Campeonato => "disputa de campeonato",
+        RivalryType::Colisao => "incidente em pista",
+        RivalryType::Pista => "duelos em pista",
+    };
+    let nivel_label = crossed.label();
+    let titulo = format!("{nome_a} x {nome_b}: {nivel_label}");
+    let texto = format!(
+        "{nome_a} e {nome_b} elevaram a tensao da rivalidade após {origem} na rodada {rodada}."
+    );
+
+    Some(NewsItem {
+        id,
+        tipo: NewsType::Rivalidade,
+        icone: NewsType::Rivalidade.icone().to_string(),
+        titulo,
+        texto,
+        rodada: Some(rodada),
+        semana_pretemporada: None,
+        temporada,
+        categoria_id: Some(categoria_id.to_string()),
+        categoria_nome: None,
+        importancia: importance,
+        timestamp: chrono::Local::now().timestamp(),
+        driver_id: Some(piloto_a_id.to_string()),
+        driver_id_secondary: Some(piloto_b_id.to_string()),
+        team_id: team_id.map(str::to_string),
+    })
 }
 
 fn load_rivalry_driver_midia(
@@ -245,6 +315,41 @@ fn load_rivalry_driver_midia(
     }
 
     driver_midia
+}
+
+fn persist_rivalry_news(
+    conn: &Connection,
+    applied: &RivalryApplied,
+    tipo: &RivalryType,
+    nome_a: &str,
+    nome_b: &str,
+    categoria_id: &str,
+    temporada: i32,
+    rodada: i32,
+    piloto_a_id: &str,
+    piloto_b_id: &str,
+    team_id: Option<&str>,
+    driver_midia: &std::collections::HashMap<String, f64>,
+) -> Result<(), DbError> {
+    let Some(item) = build_rivalry_news_item(
+        next_id(conn, IdType::News)?,
+        applied,
+        tipo,
+        nome_a,
+        nome_b,
+        categoria_id,
+        temporada,
+        rodada,
+        piloto_a_id,
+        piloto_b_id,
+        team_id,
+        driver_midia,
+    ) else {
+        return Ok(());
+    };
+
+    insert_news(conn, &item)?;
+    Ok(())
 }
 
 // ── Passo 6: Rivalidade por hierarquia interna ────────────────────────────────
@@ -309,7 +414,8 @@ pub fn process_hierarchy_rivalry(
             .unwrap_or_else(|_| n2_id.to_string());
         let driver_midia = load_rivalry_driver_midia(conn, n1_id, n2_id);
 
-        let _ = build_rivalry_news_item(
+        persist_rivalry_news(
+            conn,
             &applied,
             &RivalryType::Companheiros,
             &nome_a,
@@ -321,7 +427,7 @@ pub fn process_hierarchy_rivalry(
             n2_id,
             Some(team_id),
             &driver_midia,
-        );
+        )?;
     }
 
     Ok(())
@@ -353,7 +459,7 @@ pub fn process_championship_rivalry(
             .partial_cmp(&a.stats_temporada.pontos)
             .unwrap_or(std::cmp::Ordering::Equal)
     });
-    drivers.truncate(4);
+    drivers.truncate(3);
 
     for i in 0..drivers.len() {
         for j in (i + 1)..drivers.len() {
@@ -376,7 +482,8 @@ pub fn process_championship_rivalry(
 
             if crossed_threshold(applied.old_perceived, applied.new_perceived).is_some() {
                 let driver_midia = load_rivalry_driver_midia(conn, &drivers[i].id, &drivers[j].id);
-                let _ = build_rivalry_news_item(
+                persist_rivalry_news(
+                    conn,
                     &applied,
                     &RivalryType::Campeonato,
                     &drivers[i].nome,
@@ -388,7 +495,7 @@ pub fn process_championship_rivalry(
                     &drivers[j].id,
                     None,
                     &driver_midia,
-                );
+                )?;
             }
         }
     }
@@ -448,6 +555,14 @@ pub fn apply_season_end_rivalry_decay(
 
 fn clamp(v: f64) -> f64 {
     v.clamp(AXIS_MIN, AXIS_MAX)
+}
+
+fn is_rivalry_pair_constraint(err: &DbError) -> bool {
+    matches!(
+        err,
+        DbError::Sqlite(rusqlite::Error::SqliteFailure(inner, _))
+            if inner.code == rusqlite::ErrorCode::ConstraintViolation
+    )
 }
 
 // ── Passo 15: Mapeamento Factual de Colisão ───────────────────────────────────
@@ -514,7 +629,8 @@ pub fn process_collisions_rivalry(
                 .unwrap_or_else(|_| p2.clone());
             let driver_midia = load_rivalry_driver_midia(conn, &p1, &p2);
 
-            let _ = build_rivalry_news_item(
+            persist_rivalry_news(
+                conn,
                 &applied,
                 &RivalryType::Colisao,
                 &nome_a,
@@ -526,7 +642,7 @@ pub fn process_collisions_rivalry(
                 &p2,
                 None,
                 &driver_midia,
-            );
+            )?;
         }
     }
 
@@ -542,11 +658,16 @@ mod tests {
     use super::*;
     use crate::db::migrations;
     use crate::db::queries::drivers::insert_driver;
+    use crate::db::queries::news::get_news_by_type;
+    use crate::db::queries::seasons::insert_season;
     use crate::models::driver::Driver;
+    use crate::models::season::Season;
+    use crate::news::NewsType;
 
     fn setup_db() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
         migrations::run_all(&conn).unwrap();
+        insert_season(&conn, &Season::new("S001".to_string(), 1, 2024)).unwrap();
         for (id, nome) in [
             ("P001", "Piloto1"),
             ("P002", "Piloto2"),
@@ -825,6 +946,30 @@ mod tests {
         assert!(get_pilot_rivalries(&conn, "P001").unwrap().is_empty());
     }
 
+    #[test]
+    fn championship_rivalry_limita_ao_top3() {
+        let conn = setup_db();
+        for (id, pontos) in [
+            ("P001", 60.0),
+            ("P002", 55.0),
+            ("P003", 50.0),
+            ("P020", 49.0),
+        ] {
+            conn.execute(
+                "UPDATE drivers SET categoria_atual = 'gt3', temp_pontos = ?2 WHERE id = ?1",
+                rusqlite::params![id, pontos],
+            )
+            .unwrap();
+        }
+
+        process_championship_rivalry(&conn, "gt3", 9, 10, 1).unwrap();
+
+        assert!(
+            get_pilot_rivalries(&conn, "P020").unwrap().is_empty(),
+            "o 4o colocado nao deve entrar na regra de rivalidade de campeonato"
+        );
+    }
+
     // ── Passo 14: Decaimento ──────────────────────────────────────────────────
 
     #[test]
@@ -881,4 +1026,47 @@ mod tests {
         assert!(get_pilot_rivalries(&conn, "P001").unwrap().is_empty());
     }
 
+    #[test]
+    fn hierarchy_rivalry_crossing_threshold_persists_news() {
+        let conn = setup_db();
+        apply_rivalry_event(
+            &conn,
+            &event("P001", "P002", RivalryType::Companheiros, 15.0, 20.0),
+        )
+        .unwrap();
+
+        process_hierarchy_rivalry(
+            &conn, "P001", "P002", "tensao", "crise", false, "gt3", "T001", 5, 1,
+        )
+        .unwrap();
+
+        let news = get_news_by_type(&conn, &NewsType::Rivalidade, 10).unwrap();
+        assert_eq!(news.len(), 1);
+        assert_eq!(news[0].driver_id.as_deref(), Some("P001"));
+        assert_eq!(news[0].driver_id_secondary.as_deref(), Some("P002"));
+        assert_eq!(news[0].team_id.as_deref(), Some("T001"));
+    }
+
+    #[test]
+    fn rivalries_table_rejects_duplicate_pair() {
+        let conn = setup_db();
+        conn.execute(
+            "INSERT INTO rivalries
+                 (id, piloto1_id, piloto2_id, intensidade, historical_intensity,
+                  recent_activity, tipo, criado_em, ultima_atualizacao, temporada_update)
+             VALUES ('R001', 'P001', 'P002', 10.0, 10.0, 10.0, 'Campeonato', '1', '1', 1)",
+            [],
+        )
+        .unwrap();
+
+        let duplicate = conn.execute(
+            "INSERT INTO rivalries
+                 (id, piloto1_id, piloto2_id, intensidade, historical_intensity,
+                  recent_activity, tipo, criado_em, ultima_atualizacao, temporada_update)
+             VALUES ('R002', 'P001', 'P002', 20.0, 20.0, 20.0, 'Colisao', '2', '2', 1)",
+            [],
+        );
+
+        assert!(duplicate.is_err(), "par duplicado nao deve ser permitido");
+    }
 }

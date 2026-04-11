@@ -2,7 +2,6 @@ pub mod calendar;
 pub mod contracts;
 pub mod drivers;
 pub mod injuries;
-pub mod market;
 pub mod market_proposals;
 pub mod meta;
 pub mod news;

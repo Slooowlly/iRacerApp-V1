@@ -18,7 +18,8 @@ fn score_fonte_a(driver: &Driver) -> f64 {
     let desempenho = score_desempenho(driver) * 0.45;
     let perfil = score_perfil(driver) * 0.25;
     let disponibilidade = score_disponibilidade(driver) * 0.10;
-    (desempenho + perfil + disponibilidade).clamp(0.0, 100.0)
+    let base = 20.0;
+    (desempenho + perfil + disponibilidade + base).clamp(0.0, 100.0)
 }
 
 // ── Fonte B: ContinuidadeHistorica ────────────────────────────────────────────
@@ -137,6 +138,13 @@ mod tests {
     }
 
     #[test]
+    fn test_score_merito_regular_includes_base_component() {
+        let driver = make_driver(0.0, 0.0, 0.0, 0.0, 0, 25);
+        let score = calcular_score(&driver, &FonteConvocacao::MeritoRegular, 0);
+        assert_eq!(score, 20.0, "Fonte A deve manter a base fixa de 20 pontos");
+    }
+
+    #[test]
     fn test_score_continuidade_uses_historico() {
         let driver = make_driver(70.0, 70.0, 70.0, 100.0, 1, 30);
         let score_sem = calcular_score(&driver, &FonteConvocacao::ContinuidadeHistorica, 0);
@@ -179,5 +187,16 @@ mod tests {
             let score = calcular_score(&driver, fonte, 10);
             assert!(score <= 100.0, "score {:?} excedeu 100: {}", fonte, score);
         }
+    }
+
+    #[test]
+    fn test_score_merito_regular_beats_zero_profile_pool_global() {
+        let driver = make_driver(0.0, 0.0, 0.0, 0.0, 0, 25);
+        let merit_score = calcular_score(&driver, &FonteConvocacao::MeritoRegular, 0);
+        let pool_score = calcular_score(&driver, &FonteConvocacao::PoolGlobal, 0);
+        assert!(
+            merit_score > pool_score,
+            "Fonte A deve preservar a vantagem da base sobre o pool em caso neutro"
+        );
     }
 }

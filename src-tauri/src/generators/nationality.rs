@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use rand::Rng;
 
 static NATIONALITIES: [NationalityInfo; 23] = [

@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 pub struct TeamTemplate {
     pub nome: &'static str,
     pub nome_curto: &'static str,

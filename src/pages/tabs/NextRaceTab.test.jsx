@@ -4,6 +4,8 @@ import { invoke } from "@tauri-apps/api/core";
 import NextRaceTab from "./NextRaceTab";
 
 const mockSimulateRace = vi.fn();
+const mockFinishSpecialBlock = vi.fn();
+const mockSkipAllPendingRaces = vi.fn();
 let mockState = {};
 
 vi.mock("@tauri-apps/api/core", () => ({
@@ -17,6 +19,8 @@ vi.mock("../../stores/useCareerStore", () => ({
 describe("NextRaceTab", () => {
   beforeEach(() => {
     mockSimulateRace.mockReset();
+    mockFinishSpecialBlock.mockReset();
+    mockSkipAllPendingRaces.mockReset();
     invoke.mockReset();
     invoke.mockImplementation((command, args) => {
       if (command === "get_drivers_by_category") {
@@ -252,14 +256,14 @@ describe("NextRaceTab", () => {
         weekend_stories: [
           {
             id: "story-1",
-            icon: "⚔",
+            icon: "X",
             title: "Duelo esquenta a abertura",
             summary: "O paddock trata a disputa pela ponta como o assunto central desta rodada.",
             importance: "Alta",
           },
           {
             id: "story-2",
-            icon: "📈",
+            icon: "+",
             title: "Aurora quer encostar nos lideres",
             summary: "A equipe chega tratando esta etapa como chance real de mexer na tabela.",
             importance: "Media",
@@ -268,13 +272,16 @@ describe("NextRaceTab", () => {
       },
       isSimulating: false,
       isAdvancing: false,
+      isConvocating: false,
       simulateRace: mockSimulateRace,
+      finishSpecialBlock: mockFinishSpecialBlock,
+      skipAllPendingRaces: mockSkipAllPendingRaces,
       advanceSeason: vi.fn(),
       enterPreseason: vi.fn(),
     };
   });
 
-  it("shows the simplified event summary and handles simulate and export actions", async () => {
+  it("shows the current race dashboard and handles simulate and export actions", async () => {
     render(<NextRaceTab />);
 
     await waitFor(() => {
@@ -284,77 +291,23 @@ describe("NextRaceTab", () => {
       });
     });
 
-    expect(screen.getByText(/^resumo do evento$/i)).toBeInTheDocument();
-    expect(screen.queryByText(/briefing de equipe/i)).not.toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: /interlagos/i, level: 2 })).not.toBeInTheDocument();
-    expect(screen.queryByText(/interlagos .* etapa 5 de 20/i)).not.toBeInTheDocument();
-    const stageLabels = screen.getAllByText(/^etapa 5 de 20$/i);
-    expect(stageLabels.length).toBeGreaterThan(0);
-    expect(stageLabels[0].className).toContain("text-[12px]");
-    expect(screen.getByText(/^interlagos$/i)).toBeInTheDocument();
-    expect(screen.queryByText(/data do evento/i)).not.toBeInTheDocument();
-    expect(screen.getByText(/horario local/i)).toBeInTheDocument();
-    expect(screen.getByText(/^publico$/i)).toBeInTheDocument();
-    expect(screen.getByText(/^cobertura$/i)).toBeInTheDocument();
-    expect(screen.getByText(/^historico$/i)).toBeInTheDocument();
-    expect(screen.getByText(/^previa da corrida$/i)).toBeInTheDocument();
-    expect(screen.getByText(/^o que esta em jogo$/i)).toBeInTheDocument();
-    expect(screen.getByText(/^leitura do paddock$/i)).toBeInTheDocument();
-    expect(screen.getByText(/^condicoes$/i)).toBeInTheDocument();
-    expect(screen.getByText(/^tempo$/i)).toBeInTheDocument();
-    expect(screen.getByText(/^temperatura$/i)).toBeInTheDocument();
-    expect(screen.getByText("🌧")).toBeInTheDocument();
-    expect(screen.getByText("🌡")).toBeInTheDocument();
-    expect(screen.getByText("📻")).toBeInTheDocument();
-    expect(screen.getByText(/pista pedindo paciencia na entrada e tracao limpa/i)).toBeInTheDocument();
-    expect(screen.getByText(/temperatura equilibrada para stints consistentes/i)).toBeInTheDocument();
-    expect(screen.getByText(/trajetoria molhada e janela sensivel/i)).toBeInTheDocument();
+    expect(screen.getByText(/sala de estrat.gia/i)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /^interlagos$/i })).toBeInTheDocument();
+    expect(screen.getByText(/etapa 5 de 20/i)).toBeInTheDocument();
+    expect(screen.getByText(/25\/03/i)).toBeInTheDocument();
+    expect(screen.getByText(/condi..o de pista/i)).toBeInTheDocument();
+    expect(screen.getByText(/^p.blico$/i)).toBeInTheDocument();
+    expect(screen.getByText(/narrativa da etapa/i)).toBeInTheDocument();
+    expect(screen.getByText(/voz da equipe/i)).toBeInTheDocument();
+    expect(screen.getByText(/meta equipe/i)).toBeInTheDocument();
+    expect(screen.getByText(/meta pessoal/i)).toBeInTheDocument();
+    expect(screen.getByText(/meta t.tulo/i)).toBeInTheDocument();
+    expect(screen.getByText(/os 5 favoritos ao p.dio/i)).toBeInTheDocument();
+    expect(screen.getByText(/tabela geral do campeonato/i)).toBeInTheDocument();
     expect(screen.getAllByText(/84\.200/i).length).toBeGreaterThan(0);
-    expect(screen.getByText(/3º maior publico da temporada/i)).toBeInTheDocument();
-    expect(screen.getByText(/^ao vivo$/i)).toBeInTheDocument();
-    expect(screen.getByText(/4 largadas/i)).toBeInTheDocument();
-    expect(screen.getByText(/ha velocidade para reagir aqui, mas o retrospecto inclui 1 abandono/i)).toBeInTheDocument();
     expect(screen.getAllByText(/equipe aurora/i).length).toBeGreaterThan(0);
-    expect(screen.getByText(/^expectativa$/i)).toBeInTheDocument();
-    expect(screen.getByText(/^forma recente$/i)).toBeInTheDocument();
-    expect(screen.getByText(/^expectativa$/i).parentElement.className).toContain(
-      "md:grid-cols-[72px_0.95fr_0.85fr_1.35fr]",
-    );
-    expect(screen.queryByText(/^voce$/i)).not.toBeInTheDocument();
-    const expectationCells = Array.from(document.querySelectorAll("p")).filter((element) =>
-      element.className.includes("text-[13px] leading-5 text-text-primary"),
-    );
-    expect(expectationCells).toHaveLength(5);
-    expect(expectationCells.every((element) => (element.textContent ?? "").length > 40)).toBe(true);
-    expect(
-      expectationCells.some((element) => /batido|referencia|parametro|ponta/i.test(element.textContent ?? "")),
-    ).toBe(true);
-    expect(
-      expectationCells.some((element) => /primeira fila|perseguidor|largada|ataque/i.test(element.textContent ?? "")),
-    ).toBe(true);
-    expect(
-      expectationCells.some((element) => /podio|top 5|outsider|ameaca/i.test(element.textContent ?? "")),
-    ).toBe(true);
-    expect(screen.queryByText(/^sem dado$/i)).not.toBeInTheDocument();
     expect(screen.getByText(/^sierra racing$/i)).toBeInTheDocument();
-    expect(screen.queryByText(/favoritismo da etapa/i)).not.toBeInTheDocument();
-    expect(screen.queryByText(/momento da etapa/i)).not.toBeInTheDocument();
-    expect(screen.getByText(/^14:00$/i)).toBeInTheDocument();
-    expect(
-      screen.getAllByText((_, element) => /inicio da\s+tarde/i.test(element?.textContent ?? ""))
-        .length,
-    ).toBeGreaterThan(0);
-    expect(screen.queryByText(/^voz do box$/i)).not.toBeInTheDocument();
-    expect(screen.queryByText(/^publico estimado$/i)).not.toBeInTheDocument();
-    expect(screen.queryByText(/interesse do evento/i)).not.toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: /tabela de pilotos/i })).toBeInTheDocument();
-    expect(screen.queryByText(/^contexto da etapa$/i)).not.toBeInTheDocument();
-    expect(screen.queryByText(/progresso da temporada/i)).not.toBeInTheDocument();
-    expect(screen.queryByText(/^para o lider$/i)).not.toBeInTheDocument();
-    expect(screen.queryByText(/^para tras$/i)).not.toBeInTheDocument();
-    expect(screen.queryByText(/^cenario$/i)).not.toBeInTheDocument();
-    expect(screen.queryByText(/^mini tabela$/i)).not.toBeInTheDocument();
-    const championshipTable = screen.getByRole("table", { name: /tabela do campeonato/i });
+    const championshipTable = screen.getByRole("table");
     const championshipRows = within(championshipTable).getAllByRole("row");
     expect(championshipRows).toHaveLength(6);
     expect(within(championshipTable).getByText(/^r\. silva$/i)).toBeInTheDocument();
@@ -365,25 +318,46 @@ describe("NextRaceTab", () => {
     expect(within(championshipTable).getByText(/^94$/i)).toBeInTheDocument();
     expect(within(championshipTable).getByText(/^88$/i)).toBeInTheDocument();
     expect(within(championshipTable).getByText(/^58$/i)).toBeInTheDocument();
-    expect(screen.getByText(/^fim de semana$/i)).toBeInTheDocument();
-    expect(screen.getByText(/^rival principal$/i)).toBeInTheDocument();
-    expect(
-      screen.getAllByText((_, element) => {
-        const content = element?.textContent ?? "";
-        return (
-          /m\. costa/i.test(content) &&
-          /(referencia|comparacao|parametro|espelho|vantagem|margem)/i.test(content)
-        );
-      }).length,
-    ).toBeGreaterThan(0);
-    expect(screen.getByText(/duelo esquenta a abertura/i)).toBeInTheDocument();
-    expect(screen.getByText(/aurora quer encostar nos lideres/i)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /simular corrida/i }));
     expect(mockSimulateRace).toHaveBeenCalledTimes(1);
 
     fireEvent.click(screen.getByRole("button", { name: /exportar/i }));
     expect(screen.getByText(/exportacao para o iracing chega em breve/i)).toBeInTheDocument();
+  });
+
+  it("pula o bloco especial pelo CTA principal quando nao ha corrida jogavel do jogador", async () => {
+    mockState.nextRace = null;
+    mockState.season = {
+      ...mockState.season,
+      fase: "BlocoEspecial",
+    };
+
+    render(<NextRaceTab />);
+
+    fireEvent.click(screen.getByRole("button", { name: /pular bloco especial/i }));
+
+    await waitFor(() => {
+      expect(mockFinishSpecialBlock).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("mostra o erro detalhado ao falhar ao pular a temporada sem equipe", async () => {
+    mockState.nextRace = null;
+    mockState.playerTeam = null;
+    mockSkipAllPendingRaces.mockRejectedValue({
+      toString() {
+        return "Falha detalhada do backend";
+      },
+    });
+
+    render(<NextRaceTab />);
+
+    fireEvent.click(screen.getByRole("button", { name: /pular temporada/i }));
+
+    expect(
+      await screen.findByText(/falha detalhada do backend/i),
+    ).toBeInTheDocument();
   });
 
   it("uses a more realistic briefing when the title fight is already unlikely", async () => {
@@ -489,7 +463,7 @@ describe("NextRaceTab", () => {
     render(<NextRaceTab />);
 
     await waitFor(() => {
-      expect(screen.getAllByText(/forma recente/i).length).toBeGreaterThan(0);
+      expect(screen.getByText(/os 5 favoritos ao p.dio/i)).toBeInTheDocument();
     });
 
     expect(
@@ -497,12 +471,9 @@ describe("NextRaceTab", () => {
         /dignidade competitiva|salvar lastro esportivo|reagir com maturidade|pe firme|resposta honesta/i,
       ),
     ).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        /buscar um top 8 limpo|corrida madura e eficiente|oportunismo e controle de perdas|prova limpa e firme|pontos fortes e poucos danos/i,
-      ),
-    ).toBeInTheDocument();
-    const championshipTable = screen.getByRole("table", { name: /tabela do campeonato/i });
+    expect(screen.getByText(/tabela geral do campeonato/i)).toBeInTheDocument();
+
+    const championshipTable = screen.getByRole("table");
     expect(within(championshipTable).getAllByRole("row")).toHaveLength(3);
     expect(within(championshipTable).getByText(/^r\. silva$/i)).toBeInTheDocument();
     expect(within(championshipTable).getByText(/^m\. costa$/i)).toBeInTheDocument();

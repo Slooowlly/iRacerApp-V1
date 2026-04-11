@@ -44,7 +44,7 @@ pub fn coletar_candidatos(
 
     // ── Fonte A: MeritoRegular ────────────────────────────────────────────────
     let feeder_drivers = driver_queries::get_drivers_by_category(conn, feeder_category)?;
-    let mut wildcards: Vec<Candidato> = Vec::new();
+    let mut wildcard_candidates: Vec<Driver> = Vec::new();
 
     for driver in feeder_drivers {
         if driver.status != DriverStatus::Ativo {
@@ -59,12 +59,8 @@ pub fn coletar_candidatos(
         let driver_id = driver.id.clone();
 
         // Verificar se é wildcard (reclassificação interna de A)
-        if is_wildcard_candidate(&driver) && wildcards.is_empty() {
-            wildcards.push(Candidato {
-                driver_id: driver_id.clone(),
-                fonte: FonteConvocacao::Wildcard,
-                driver,
-            });
+        if is_wildcard_candidate(&driver) {
+            wildcard_candidates.push(driver);
         } else {
             candidatos.push(Candidato {
                 driver_id: driver_id.clone(),
@@ -75,6 +71,34 @@ pub fn coletar_candidatos(
         seen_ids.insert(driver_id);
     }
 
+    let selected_wildcard_id = wildcard_candidates
+        .iter()
+        .max_by(|a, b| {
+            wildcard_sort_score(a)
+                .total_cmp(&wildcard_sort_score(b))
+                .then_with(|| b.atributos.skill.total_cmp(&a.atributos.skill))
+                .then_with(|| b.stats_temporada.vitorias.cmp(&a.stats_temporada.vitorias))
+                .then_with(|| a.nome.cmp(&b.nome))
+        })
+        .map(|driver| driver.id.clone());
+
+    let mut wildcards: Vec<Candidato> = Vec::new();
+    for driver in wildcard_candidates {
+        if selected_wildcard_id.as_deref() == Some(driver.id.as_str()) {
+            wildcards.push(Candidato {
+                driver_id: driver.id.clone(),
+                fonte: FonteConvocacao::Wildcard,
+                driver,
+            });
+        } else {
+            candidatos.push(Candidato {
+                driver_id: driver.id.clone(),
+                fonte: FonteConvocacao::MeritoRegular,
+                driver,
+            });
+        }
+    }
+
     // ── Fonte B: ContinuidadeHistorica ────────────────────────────────────────
     let historico_ids =
         contract_queries::get_pilots_with_especial_history(conn, special_category, class_name)?;
@@ -83,10 +107,7 @@ pub fn coletar_candidatos(
         if seen_ids.contains(&pid) {
             continue;
         }
-        let driver = match driver_queries::get_driver(conn, &pid) {
-            Ok(d) => d,
-            Err(_) => continue,
-        };
+        let driver = driver_queries::get_driver(conn, &pid)?;
         if driver.status != DriverStatus::Ativo {
             continue;
         }
@@ -130,6 +151,20 @@ fn is_wildcard_candidate(driver: &Driver) -> bool {
     let campiao_recente =
         driver.melhor_resultado_temp == Some(1) && driver.stats_temporada.vitorias >= 3;
     muito_jovem_e_talentoso || campiao_recente
+}
+
+fn wildcard_sort_score(driver: &Driver) -> f64 {
+    let age_score = if driver.idade < 21 {
+        (21_u32.saturating_sub(driver.idade)) as f64 * 100.0
+    } else {
+        0.0
+    };
+    let champion_score = if driver.melhor_resultado_temp == Some(1) {
+        10_000.0 + driver.stats_temporada.vitorias as f64 * 100.0
+    } else {
+        0.0
+    };
+    champion_score + age_score + driver.atributos.skill
 }
 
 #[cfg(test)]
@@ -267,5 +302,72 @@ mod tests {
                 c.driver.nome
             );
         }
+    }
+
+    #[test]
+    fn test_wildcard_selects_best_candidate_not_first_name() {
+        let (conn, _) = setup_world_db();
+
+        let mut gt4_drivers =
+            driver_queries::get_drivers_by_category(&conn, "gt4").expect("gt4 drivers should load");
+        gt4_drivers.sort_by(|a, b| a.nome.cmp(&b.nome));
+        let first_id = gt4_drivers[0].id.clone();
+        let second_id = gt4_drivers[1].id.clone();
+
+        let mut alpha = driver_queries::get_driver(&conn, &first_id).expect("alpha");
+        alpha.nome = "Alpha Driver".to_string();
+        alpha.idade = 20;
+        alpha.atributos.skill = 76.0;
+        alpha.stats_temporada.vitorias = 0;
+        alpha.melhor_resultado_temp = None;
+        driver_queries::update_driver(&conn, &alpha).expect("update alpha");
+
+        let mut zulu = driver_queries::get_driver(&conn, &second_id).expect("zulu");
+        zulu.nome = "Zulu Driver".to_string();
+        zulu.idade = 18;
+        zulu.atributos.skill = 92.0;
+        zulu.stats_temporada.vitorias = 4;
+        zulu.melhor_resultado_temp = Some(1);
+        driver_queries::update_driver(&conn, &zulu).expect("update zulu");
+
+        let candidatos =
+            coletar_candidatos(&conn, "endurance", "gt4", "gt4").expect("coletar candidatos");
+        let wildcard = candidatos
+            .iter()
+            .find(|c| c.fonte == FonteConvocacao::Wildcard)
+            .expect("wildcard");
+
+        assert_eq!(wildcard.driver_id, second_id);
+    }
+
+    #[test]
+    fn test_historical_candidate_load_error_is_propagated() {
+        let (conn, _) = setup_world_db();
+
+        let driver = driver_queries::get_drivers_by_category(&conn, "gt3")
+            .expect("gt3 drivers")
+            .into_iter()
+            .next()
+            .expect("at least one gt3 driver");
+
+        conn.execute(
+            "UPDATE contracts
+             SET tipo = 'Especial', categoria = 'endurance', classe = 'gt3', status = 'Expirado'
+             WHERE piloto_id = ?1",
+            rusqlite::params![&driver.id],
+        )
+        .expect("mutate history contract");
+        conn.execute(
+            "UPDATE drivers SET status = 'Quebrado' WHERE id = ?1",
+            rusqlite::params![&driver.id],
+        )
+        .expect("corrupt driver status");
+
+        let err = coletar_candidatos(&conn, "endurance", "gt3", "gt3").expect_err("should fail");
+        assert!(
+            err.to_string().contains("DriverStatus inválido")
+                || err.to_string().contains("Quebrado"),
+            "erro deveria propagar falha real de leitura: {err}"
+        );
     }
 }

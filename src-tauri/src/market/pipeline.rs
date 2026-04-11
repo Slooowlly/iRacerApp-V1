@@ -13,11 +13,16 @@ use crate::market::driver_ai::evaluate_proposal;
 use crate::market::evaluation::{estimate_expected_position, evaluate_driver_performance};
 use crate::market::proposals::{MarketProposal, MarketReport, SigningInfo, Vacancy};
 use crate::market::renewal::should_renew_contract;
+use crate::market::sync::sync_team_slots_from_active_regular_contracts;
 use crate::market::team_ai::{generate_team_proposals, AvailableDriver};
 use crate::market::visibility::calculate_visibility;
 use crate::models::contract::Contract;
 use crate::models::driver::Driver;
 use crate::models::enums::{ContractStatus, DriverStatus, TeamRole};
+use crate::models::license::{
+    driver_has_required_license_for_category, ensure_driver_can_join_category,
+    grant_driver_license_for_category_if_needed, repair_missing_licenses_for_current_categories,
+};
 use crate::models::team::TeamHierarchyClimate;
 
 #[derive(Debug, Clone)]
@@ -32,244 +37,288 @@ struct DriverMarketContext {
     papel: TeamRole,
 }
 
+fn with_savepoint<T, F>(conn: &Connection, name: &str, action: F) -> Result<T, String>
+where
+    F: FnOnce() -> Result<T, String>,
+{
+    conn.execute_batch(&format!("SAVEPOINT {name}"))
+        .map_err(|e| format!("Falha ao abrir savepoint '{name}': {e}"))?;
+
+    match action() {
+        Ok(value) => {
+            conn.execute_batch(&format!("RELEASE SAVEPOINT {name}"))
+                .map_err(|e| format!("Falha ao confirmar savepoint '{name}': {e}"))?;
+            Ok(value)
+        }
+        Err(err) => {
+            conn.execute_batch(&format!(
+                "ROLLBACK TO SAVEPOINT {name}; RELEASE SAVEPOINT {name};"
+            ))
+            .map_err(|rollback_err| {
+                format!("{err}; alem disso falhou o rollback do savepoint '{name}': {rollback_err}")
+            })?;
+            Err(err)
+        }
+    }
+}
+
 pub fn run_market(
     conn: &Connection,
     new_season_number: i32,
     rng: &mut impl Rng,
 ) -> Result<MarketReport, String> {
-    let new_season = get_season_by_number(conn, new_season_number)?
-        .ok_or_else(|| format!("Temporada {new_season_number} nao encontrada"))?;
-    let previous_season = get_season_by_number(conn, new_season_number - 1)?;
+    with_savepoint(conn, "market_run", || {
+        let new_season = get_season_by_number(conn, new_season_number)?
+            .ok_or_else(|| format!("Temporada {new_season_number} nao encontrada"))?;
+        let previous_season = get_season_by_number(conn, new_season_number - 1)?;
 
-    let mut report = MarketReport::default();
-    reset_market_state(conn, &new_season.id)?;
+        let mut report = MarketReport::default();
+        reset_market_state(conn, &new_season.id)?;
+        repair_missing_licenses_for_current_categories(conn)?;
 
-    let all_drivers = driver_queries::get_all_drivers(conn)
-        .map_err(|e| format!("Falha ao carregar pilotos: {e}"))?;
-    let drivers_by_id: HashMap<String, Driver> = all_drivers
-        .iter()
-        .cloned()
-        .map(|driver| (driver.id.clone(), driver))
-        .collect();
-    let teams =
-        team_queries::get_all_teams(conn).map_err(|e| format!("Falha ao carregar equipes: {e}"))?;
-    let teams_by_id: HashMap<String, crate::models::team::Team> = teams
-        .iter()
-        .cloned()
-        .map(|team| (team.id.clone(), team))
-        .collect();
-    let team_count_by_category = build_team_count_map(&teams);
-
-    let active_contracts_before = contract_queries::get_all_active_contracts(conn)
-        .map_err(|e| format!("Falha ao carregar contratos ativos: {e}"))?;
-    let expiring_contracts: Vec<Contract> = active_contracts_before
-        .iter()
-        .filter(|contract| contract.temporada_fim < new_season_number)
-        .cloned()
-        .collect();
-    let expiring_by_driver: HashMap<String, Contract> = expiring_contracts
-        .iter()
-        .cloned()
-        .map(|contract| (contract.piloto_id.clone(), contract))
-        .collect();
-
-    report.contracts_expired =
-        contract_queries::expire_ending_contracts(conn, new_season_number - 1)
-            .map_err(|e| format!("Falha ao expirar contratos: {e}"))?;
-
-    let retired_contract_ids: Vec<String> = active_contracts_before
-        .iter()
-        .filter(|contract| {
-            drivers_by_id
-                .get(&contract.piloto_id)
-                .is_some_and(|driver| driver.status == DriverStatus::Aposentado)
-        })
-        .map(|contract| contract.id.clone())
-        .collect();
-    for contract_id in &retired_contract_ids {
-        contract_queries::update_contract_status(conn, contract_id, &ContractStatus::Rescindido)
-            .map_err(|e| format!("Falha ao rescindir contrato de aposentado: {e}"))?;
-    }
-    report.retirements_replaced = retired_contract_ids.len() as i32;
-
-    let standings_by_driver = load_market_contexts(
-        conn,
-        previous_season.as_ref().map(|season| season.id.as_str()),
-        &drivers_by_id,
-        &expiring_by_driver,
-    )?;
-    let mut player_was_expiring = false;
-
-    for contract in &expiring_contracts {
-        let Some(driver) = drivers_by_id.get(&contract.piloto_id) else {
-            continue;
-        };
-        if driver.status != DriverStatus::Ativo {
-            continue;
-        }
-        if driver.is_jogador {
-            player_was_expiring = true;
-            continue;
-        }
-
-        let Some(team) = teams_by_id.get(&contract.equipe_id) else {
-            continue;
-        };
-        let context = standings_by_driver
-            .get(&driver.id)
+        let all_drivers = driver_queries::get_all_drivers(conn)
+            .map_err(|e| format!("Falha ao carregar pilotos: {e}"))?;
+        let drivers_by_id: HashMap<String, Driver> = all_drivers
+            .iter()
             .cloned()
-            .unwrap_or_else(|| default_market_context(driver));
-        let total_teams = team_count_by_category
-            .get(&team.categoria)
-            .copied()
-            .unwrap_or(1);
-        let expected_position = estimate_expected_position(team.car_performance, total_teams);
-        let performance_score = evaluate_driver_performance(
-            context.posicao_campeonato,
-            context.total_pilotos,
-            context.vitorias,
-            driver.atributos.consistencia,
-            expected_position,
-        );
-        let decision = should_renew_contract(driver, performance_score, contract, team.budget, rng);
-        if !decision.should_renew {
-            continue;
+            .map(|driver| (driver.id.clone(), driver))
+            .collect();
+        let teams = team_queries::get_all_teams(conn)
+            .map_err(|e| format!("Falha ao carregar equipes: {e}"))?;
+        let teams_by_id: HashMap<String, crate::models::team::Team> = teams
+            .iter()
+            .cloned()
+            .map(|team| (team.id.clone(), team))
+            .collect();
+        let active_contracts_before = contract_queries::get_all_active_regular_contracts(conn)
+            .map_err(|e| format!("Falha ao carregar contratos ativos: {e}"))?;
+        let expiring_contracts: Vec<Contract> = active_contracts_before
+            .iter()
+            .filter(|contract| contract.temporada_fim < new_season_number)
+            .cloned()
+            .collect();
+        let expiring_by_driver: HashMap<String, Contract> = expiring_contracts
+            .iter()
+            .cloned()
+            .map(|contract| (contract.piloto_id.clone(), contract))
+            .collect();
+
+        report.contracts_expired =
+            contract_queries::expire_ending_contracts(conn, new_season_number - 1)
+                .map_err(|e| format!("Falha ao expirar contratos: {e}"))?;
+
+        let retired_contract_ids: Vec<String> = active_contracts_before
+            .iter()
+            .filter(|contract| {
+                drivers_by_id
+                    .get(&contract.piloto_id)
+                    .is_some_and(|driver| driver.status == DriverStatus::Aposentado)
+            })
+            .map(|contract| contract.id.clone())
+            .collect();
+        for contract_id in &retired_contract_ids {
+            contract_queries::update_contract_status(
+                conn,
+                contract_id,
+                &ContractStatus::Rescindido,
+            )
+            .map_err(|e| format!("Falha ao rescindir contrato de aposentado: {e}"))?;
         }
+        report.retirements_replaced = retired_contract_ids.len() as i32;
 
-        let new_contract = Contract::new(
-            next_id(conn, IdType::Contract)
-                .map_err(|e| format!("Falha ao gerar ID de contrato: {e}"))?,
-            driver.id.clone(),
-            driver.nome.clone(),
-            team.id.clone(),
-            team.nome.clone(),
-            new_season_number,
-            decision.new_duration.unwrap_or(1),
-            decision.new_salary.unwrap_or(contract.salario_anual),
-            decision
-                .new_role
-                .clone()
-                .unwrap_or_else(|| contract.papel.clone()),
-            team.categoria.clone(),
-        );
-        contract_queries::insert_contract(conn, &new_contract)
-            .map_err(|e| format!("Falha ao inserir renovacao: {e}"))?;
-        report.contracts_renewed += 1;
-        report.new_signings.push(SigningInfo {
-            driver_id: driver.id.clone(),
-            driver_name: driver.nome.clone(),
-            team_id: team.id.clone(),
-            team_name: team.nome.clone(),
-            categoria: team.categoria.clone(),
-            papel: new_contract.papel.as_str().to_string(),
-            tipo: "renovacao".to_string(),
-        });
-    }
+        let standings_by_driver = load_market_contexts(
+            conn,
+            previous_season.as_ref().map(|season| season.id.as_str()),
+            &drivers_by_id,
+            &expiring_by_driver,
+        )?;
+        let mut player_was_expiring = false;
 
-    let mut refreshed_drivers = driver_queries::get_all_drivers(conn)
-        .map_err(|e| format!("Falha ao recarregar pilotos: {e}"))?;
-    let mut refreshed_by_id: HashMap<String, Driver> = refreshed_drivers
-        .iter()
-        .cloned()
-        .map(|driver| (driver.id.clone(), driver))
-        .collect();
-    sync_team_slots(conn, &teams, &refreshed_by_id)?;
-    let initial_vacancies = find_vacancies(conn)?;
-    let mut available = find_available_drivers(conn, &standings_by_driver)?;
-
-    for vacancy in &initial_vacancies {
-        let proposals = generate_team_proposals(vacancy, &available, new_season_number, rng);
-        report.proposals_made += proposals.len() as i32;
-
-        for proposal in proposals {
-            let Some(index) = available
-                .iter()
-                .position(|candidate| candidate.driver.id == proposal.piloto_id)
-            else {
+        for contract in &expiring_contracts {
+            let Some(driver) = drivers_by_id.get(&contract.piloto_id) else {
                 continue;
             };
-            let candidate = available[index].clone();
-            let previous_contract = expiring_by_driver.get(&candidate.driver.id);
-            let decision = evaluate_proposal(
-                &candidate.driver,
-                &proposal,
-                previous_contract,
-                candidate.category_tier,
-                vacancy.category_tier,
-                vacancy.car_performance,
-                vacancy.reputacao,
-                rng,
-            );
-
-            if !decision.accepted {
-                report.proposals_rejected += 1;
+            if driver.status != DriverStatus::Ativo {
+                continue;
+            }
+            if driver.is_jogador {
+                player_was_expiring = true;
                 continue;
             }
 
-            sign_driver_to_team(
-                conn,
-                &candidate.driver,
-                vacancy,
-                new_season_number,
-                proposal.salario_oferecido,
-                proposal.duracao_anos,
-                proposal.papel.clone(),
-            )?;
-            let tipo = if candidate.driver.categoria_atual.is_none() {
-                report.rookies_placed += 1;
-                "rookie"
-            } else {
-                "transferencia"
+            let Some(team) = teams_by_id.get(&contract.equipe_id) else {
+                continue;
             };
-            report.proposals_accepted += 1;
-            report.new_signings.push(SigningInfo {
-                driver_id: candidate.driver.id.clone(),
-                driver_name: candidate.driver.nome.clone(),
-                team_id: vacancy.team_id.clone(),
-                team_name: vacancy.team_name.clone(),
-                categoria: vacancy.categoria.clone(),
-                papel: proposal.papel.as_str().to_string(),
-                tipo: tipo.to_string(),
-            });
-            available.remove(index);
-
-            refreshed_drivers = driver_queries::get_all_drivers(conn)
-                .map_err(|e| format!("Falha ao recarregar pilotos apos assinatura: {e}"))?;
-            refreshed_by_id = refreshed_drivers
-                .iter()
+            let context = standings_by_driver
+                .get(&driver.id)
                 .cloned()
-                .map(|driver| (driver.id.clone(), driver))
-                .collect();
-            sync_team_slots(conn, &teams, &refreshed_by_id)?;
-            break;
+                .unwrap_or_else(|| default_market_context(driver));
+            let expected_position =
+                estimate_expected_position(team.car_performance, context.total_pilotos.max(1));
+            let performance_score = evaluate_driver_performance(
+                context.posicao_campeonato,
+                context.total_pilotos,
+                context.vitorias,
+                driver.atributos.consistencia,
+                expected_position,
+            );
+            let decision =
+                should_renew_contract(driver, performance_score, contract, team.budget, rng);
+            if !decision.should_renew {
+                continue;
+            }
+
+            let new_contract = Contract::new(
+                next_id(conn, IdType::Contract)
+                    .map_err(|e| format!("Falha ao gerar ID de contrato: {e}"))?,
+                driver.id.clone(),
+                driver.nome.clone(),
+                team.id.clone(),
+                team.nome.clone(),
+                new_season_number,
+                decision.new_duration.unwrap_or(1),
+                decision.new_salary.unwrap_or(contract.salario_anual),
+                decision
+                    .new_role
+                    .clone()
+                    .unwrap_or_else(|| contract.papel.clone()),
+                team.categoria.clone(),
+            );
+            contract_queries::insert_contract(conn, &new_contract)
+                .map_err(|e| format!("Falha ao inserir renovacao: {e}"))?;
+            report.contracts_renewed += 1;
+            report.new_signings.push(SigningInfo {
+                driver_id: driver.id.clone(),
+                driver_name: driver.nome.clone(),
+                team_id: team.id.clone(),
+                team_name: team.nome.clone(),
+                categoria: team.categoria.clone(),
+                papel: new_contract.papel.as_str().to_string(),
+                tipo: "renovacao".to_string(),
+            });
         }
+
+        let mut refreshed_drivers = driver_queries::get_all_drivers(conn)
+            .map_err(|e| format!("Falha ao recarregar pilotos: {e}"))?;
+        let mut refreshed_by_id: HashMap<String, Driver> = refreshed_drivers
+            .iter()
+            .cloned()
+            .map(|driver| (driver.id.clone(), driver))
+            .collect();
+        sync_team_slots(conn, &teams, &refreshed_by_id)?;
+        let initial_vacancies = find_vacancies(conn)?;
+        let mut available = find_available_drivers(conn, &standings_by_driver)?;
+
+        for vacancy in &initial_vacancies {
+            let proposals = generate_team_proposals(vacancy, &available, new_season_number, rng);
+            report.proposals_made += proposals.len() as i32;
+
+            for proposal in proposals {
+                let Some(index) = available
+                    .iter()
+                    .position(|candidate| candidate.driver.id == proposal.piloto_id)
+                else {
+                    continue;
+                };
+                let candidate = available[index].clone();
+                let previous_contract = expiring_by_driver.get(&candidate.driver.id);
+                let decision = evaluate_proposal(
+                    &candidate.driver,
+                    &proposal,
+                    previous_contract,
+                    candidate.category_tier,
+                    vacancy.category_tier,
+                    vacancy.car_performance,
+                    vacancy.reputacao,
+                    rng,
+                );
+
+                if !decision.accepted {
+                    report.proposals_rejected += 1;
+                    continue;
+                }
+
+                sign_driver_to_team(
+                    conn,
+                    &candidate.driver,
+                    vacancy,
+                    new_season_number,
+                    proposal.salario_oferecido,
+                    proposal.duracao_anos,
+                    proposal.papel.clone(),
+                )?;
+                let tipo = if is_rookie_signing_candidate(&candidate, &expiring_by_driver) {
+                    report.rookies_placed += 1;
+                    "rookie"
+                } else {
+                    "transferencia"
+                };
+                report.proposals_accepted += 1;
+                report.new_signings.push(SigningInfo {
+                    driver_id: candidate.driver.id.clone(),
+                    driver_name: candidate.driver.nome.clone(),
+                    team_id: vacancy.team_id.clone(),
+                    team_name: vacancy.team_name.clone(),
+                    categoria: vacancy.categoria.clone(),
+                    papel: proposal.papel.as_str().to_string(),
+                    tipo: tipo.to_string(),
+                });
+                available.remove(index);
+
+                refreshed_drivers = driver_queries::get_all_drivers(conn)
+                    .map_err(|e| format!("Falha ao recarregar pilotos apos assinatura: {e}"))?;
+                refreshed_by_id = refreshed_drivers
+                    .iter()
+                    .cloned()
+                    .map(|driver| (driver.id.clone(), driver))
+                    .collect();
+                sync_team_slots(conn, &teams, &refreshed_by_id)?;
+                break;
+            }
+        }
+
+        let player_proposals = generate_player_proposals(
+            conn,
+            &new_season.id,
+            new_season_number,
+            &find_vacancies(conn)?,
+            player_was_expiring,
+            &standings_by_driver,
+            rng,
+        )?;
+        report.proposals_made += player_proposals.len() as i32;
+        report.player_proposals = player_proposals;
+
+        fill_remaining_vacancies_with_rookies(conn, &teams, new_season_number, &mut report, rng)?;
+
+        refreshed_drivers = driver_queries::get_all_drivers(conn)
+            .map_err(|e| format!("Falha ao recarregar pilotos finais: {e}"))?;
+        refreshed_by_id = refreshed_drivers
+            .into_iter()
+            .map(|driver| (driver.id.clone(), driver))
+            .collect();
+        refresh_team_hierarchy(conn, &teams, &refreshed_by_id)?;
+        report.unresolved_vacancies = find_vacancies(conn)?.len() as i32;
+
+        persist_market_state(conn, &new_season.id)?;
+        Ok(report)
+    })
+}
+
+fn is_rookie_signing_candidate(
+    candidate: &AvailableDriver,
+    expiring_by_driver: &HashMap<String, Contract>,
+) -> bool {
+    if expiring_by_driver.contains_key(&candidate.driver.id) {
+        return false;
     }
-
-    let player_proposals = generate_player_proposals(
-        conn,
-        &new_season.id,
-        new_season_number,
-        &find_vacancies(conn)?,
-        player_was_expiring,
-        &standings_by_driver,
-        rng,
-    )?;
-    report.proposals_made += player_proposals.len() as i32;
-    report.player_proposals = player_proposals;
-
-    fill_remaining_vacancies_with_rookies(conn, &teams, new_season_number, &mut report, rng)?;
-
-    refreshed_drivers = driver_queries::get_all_drivers(conn)
-        .map_err(|e| format!("Falha ao recarregar pilotos finais: {e}"))?;
-    refreshed_by_id = refreshed_drivers
-        .into_iter()
-        .map(|driver| (driver.id.clone(), driver))
-        .collect();
-    refresh_team_hierarchy(conn, &teams, &refreshed_by_id)?;
-    report.unresolved_vacancies = find_vacancies(conn)?.len() as i32;
-
-    persist_market_state(conn, &new_season.id)?;
-    Ok(report)
+    if !candidate.categoria_atual.is_empty() {
+        return false;
+    }
+    if candidate.posicao_campeonato < 99 {
+        return false;
+    }
+    true
 }
 
 /// Escaneia todas as equipes de categorias regulares e garante que tenham 2 pilotos.
@@ -338,7 +387,8 @@ fn get_season_by_number(
             id: row.get(0)?,
             numero: row.get(1)?,
             ano: row.get(2)?,
-            status: crate::models::enums::SeasonStatus::from_str(&row.get::<_, String>(3)?),
+            status: crate::models::enums::SeasonStatus::from_str_strict(&row.get::<_, String>(3)?)
+                .map_err(rusqlite::Error::InvalidParameterName)?,
             rodada_atual: row.get(4)?,
             fase: crate::models::enums::SeasonPhase::BlocoRegular,
             created_at: row.get(5)?,
@@ -374,14 +424,6 @@ fn persist_market_state(conn: &Connection, season_id: &str) -> Result<(), String
     Ok(())
 }
 
-fn build_team_count_map(teams: &[crate::models::team::Team]) -> HashMap<String, i32> {
-    let mut counts = HashMap::new();
-    for team in teams {
-        *counts.entry(team.categoria.clone()).or_insert(0) += 1;
-    }
-    counts
-}
-
 fn load_market_contexts(
     conn: &Connection,
     previous_season_id: Option<&str>,
@@ -410,9 +452,12 @@ fn load_market_contexts(
             let piloto_id: String = row
                 .get("piloto_id")
                 .map_err(|e| format!("Falha ao ler piloto_id do standings: {e}"))?;
-            let categoria: String = row
-                .get("categoria")
-                .map_err(|e| format!("Falha ao ler categoria do standings: {e}"))?;
+            let categoria: String = row.get("categoria").map_err(|e| {
+                format!(
+                    "Falha ao ler categoria do standings para piloto '{}': {e}",
+                    piloto_id
+                )
+            })?;
             let posicao: i32 = row
                 .get("posicao")
                 .map_err(|e| format!("Falha ao ler posicao do standings: {e}"))?;
@@ -478,65 +523,7 @@ fn sync_team_slots(
     teams: &[crate::models::team::Team],
     drivers_by_id: &HashMap<String, Driver>,
 ) -> Result<(), String> {
-    let active_contracts = contract_queries::get_all_active_contracts(conn)
-        .map_err(|e| format!("Falha ao sincronizar contratos ativos: {e}"))?;
-    let mut valid_contracts: HashMap<String, Vec<Contract>> = HashMap::new();
-
-    for contract in active_contracts {
-        let Some(driver) = drivers_by_id.get(&contract.piloto_id) else {
-            continue;
-        };
-        if driver.status == DriverStatus::Aposentado {
-            contract_queries::update_contract_status(
-                conn,
-                &contract.id,
-                &ContractStatus::Rescindido,
-            )
-            .map_err(|e| format!("Falha ao rescindir contrato invalido: {e}"))?;
-            continue;
-        }
-        valid_contracts
-            .entry(contract.equipe_id.clone())
-            .or_default()
-            .push(contract);
-    }
-
-    for team in teams {
-        let mut contracts = valid_contracts.remove(&team.id).unwrap_or_default();
-        contracts.sort_by(|a, b| {
-            let skill_a = drivers_by_id
-                .get(&a.piloto_id)
-                .map(|driver| driver.atributos.skill)
-                .unwrap_or(0.0);
-            let skill_b = drivers_by_id
-                .get(&b.piloto_id)
-                .map(|driver| driver.atributos.skill)
-                .unwrap_or(0.0);
-            skill_b.total_cmp(&skill_a)
-        });
-        let piloto_1 = contracts
-            .first()
-            .map(|contract| contract.piloto_id.as_str());
-        let piloto_2 = contracts.get(1).map(|contract| contract.piloto_id.as_str());
-        team_queries::update_team_pilots(conn, &team.id, piloto_1, piloto_2).map_err(|e| {
-            format!(
-                "Falha ao sincronizar pilotos da equipe '{}': {e}",
-                team.nome
-            )
-        })?;
-    }
-
-    // Limpa categoria_atual de pilotos sem contrato ativo para evitar órfãos
-    // que aparecem em get_drivers_by_category mas não têm equipe.
-    conn.execute(
-        "UPDATE drivers SET categoria_atual = NULL
-         WHERE categoria_atual IS NOT NULL
-         AND id NOT IN (SELECT piloto_id FROM contracts WHERE status = 'Ativo')",
-        [],
-    )
-    .map_err(|e| format!("Falha ao limpar categoria_atual de pilotos sem contrato: {e}"))?;
-
-    Ok(())
+    sync_team_slots_from_active_regular_contracts(conn, teams, drivers_by_id)
 }
 
 fn find_vacancies(conn: &Connection) -> Result<Vec<Vacancy>, String> {
@@ -629,7 +616,7 @@ fn find_available_drivers(
     conn: &Connection,
     standings_by_driver: &HashMap<String, DriverMarketContext>,
 ) -> Result<Vec<AvailableDriver>, String> {
-    let active_contracts = contract_queries::get_all_active_contracts(conn)
+    let active_contracts = contract_queries::get_all_active_regular_contracts(conn)
         .map_err(|e| format!("Falha ao recarregar contratos ativos: {e}"))?;
     let contracted_ids: HashSet<String> = active_contracts
         .into_iter()
@@ -642,7 +629,10 @@ fn find_available_drivers(
     let mut available = Vec::new();
 
     for driver in drivers {
-        if driver.status != DriverStatus::Ativo || contracted_ids.contains(&driver.id) {
+        if driver.is_jogador
+            || driver.status != DriverStatus::Ativo
+            || contracted_ids.contains(&driver.id)
+        {
             continue;
         }
         let context = standings_by_driver
@@ -683,34 +673,37 @@ pub(crate) fn sign_driver_to_team(
     duration: i32,
     role: TeamRole,
 ) -> Result<(), String> {
-    let team = team_queries::get_team_by_id(conn, &vacancy.team_id)
-        .map_err(|e| format!("Falha ao buscar equipe da assinatura: {e}"))?
-        .ok_or_else(|| format!("Equipe '{}' nao encontrada", vacancy.team_id))?;
-    let new_contract = Contract::new(
-        next_id(conn, IdType::Contract)
-            .map_err(|e| format!("Falha ao gerar ID de contrato: {e}"))?,
-        driver.id.clone(),
-        driver.nome.clone(),
-        vacancy.team_id.clone(),
-        team.nome.clone(),
-        new_season_number,
-        duration,
-        salary,
-        role,
-        vacancy.categoria.clone(),
-    );
-    contract_queries::insert_contract(conn, &new_contract)
-        .map_err(|e| format!("Falha ao inserir contratacao: {e}"))?;
+    with_savepoint(conn, "market_sign_driver", || {
+        let team = team_queries::get_team_by_id(conn, &vacancy.team_id)
+            .map_err(|e| format!("Falha ao buscar equipe da assinatura: {e}"))?
+            .ok_or_else(|| format!("Equipe '{}' nao encontrada", vacancy.team_id))?;
+        ensure_driver_can_join_category(conn, &driver.id, &driver.nome, &vacancy.categoria)?;
+        let new_contract = Contract::new(
+            next_id(conn, IdType::Contract)
+                .map_err(|e| format!("Falha ao gerar ID de contrato: {e}"))?,
+            driver.id.clone(),
+            driver.nome.clone(),
+            vacancy.team_id.clone(),
+            team.nome.clone(),
+            new_season_number,
+            duration,
+            salary,
+            role,
+            vacancy.categoria.clone(),
+        );
+        contract_queries::insert_contract(conn, &new_contract)
+            .map_err(|e| format!("Falha ao inserir contratacao: {e}"))?;
 
-    let mut updated_driver = driver.clone();
-    updated_driver.categoria_atual = Some(vacancy.categoria.clone());
-    driver_queries::update_driver(conn, &updated_driver).map_err(|e| {
-        format!(
-            "Falha ao atualizar piloto contratado '{}': {e}",
-            driver.nome
-        )
-    })?;
-    Ok(())
+        let mut updated_driver = driver.clone();
+        updated_driver.categoria_atual = Some(vacancy.categoria.clone());
+        driver_queries::update_driver(conn, &updated_driver).map_err(|e| {
+            format!(
+                "Falha ao atualizar piloto contratado '{}': {e}",
+                driver.nome
+            )
+        })?;
+        Ok(())
+    })
 }
 
 fn generate_player_proposals(
@@ -724,10 +717,16 @@ fn generate_player_proposals(
 ) -> Result<Vec<MarketProposal>, String> {
     let player = match driver_queries::get_player_driver(conn) {
         Ok(p) => p,
-        Err(_) => return Ok(Vec::new()),
+        Err(crate::db::connection::DbError::NotFound(_)) => return Ok(Vec::new()),
+        Err(e) => {
+            return Err(format!(
+                "Falha ao buscar piloto do jogador para o mercado: {e}"
+            ))
+        }
     };
-    let player_active_contract = contract_queries::get_active_contract_for_pilot(conn, &player.id)
-        .map_err(|e| format!("Falha ao buscar contrato do jogador: {e}"))?;
+    let player_active_contract =
+        contract_queries::get_active_regular_contract_for_pilot(conn, &player.id)
+            .map_err(|e| format!("Falha ao buscar contrato regular do jogador: {e}"))?;
     let player_is_free = player_active_contract.is_none();
     if !player_is_free && !player_was_expiring {
         return Ok(Vec::new());
@@ -786,14 +785,14 @@ fn generate_player_proposals(
         }
     }
 
-    // Garantia de proposta mínima:
-    // - S1 → S2: o jogador teve contrato expirando mas não recebeu nenhuma proposta.
-    // - 1+ temporada sem contrato: já estava livre antes desta pré-temporada.
-    // Nesses casos garante ao menos uma proposta da equipe anterior (se vaga) ou
-    // da pior equipe da categoria, sem filtro de visibilidade.
-    let is_first_season_transition = new_season_number == 2 && player_was_expiring;
+    // Garantia de proposta mínima: dispara APENAS quando o jogador já estava livre
+    // antes desta pré-temporada (ou seja, ficou sem equipe por toda a temporada anterior).
+    // Contratos expirando agora NÃO disparam — o jogador deve tentar o mercado normal
+    // primeiro; a garantia é reservada para quem passou uma temporada inteira sem equipe.
+    // Tenta: 1) equipe anterior na mesma categoria, 2) pior equipe da mesma categoria,
+    // 3) melhor equipe de categoria inferior (salário menor naturalmente).
     let already_free_season = player_is_free && !player_was_expiring;
-    if proposals.is_empty() && (is_first_season_transition || already_free_season) {
+    if proposals.is_empty() && already_free_season {
         // Categoria do jogador: contexto dos standings ou último contrato no DB.
         let player_category = if !context.categoria.is_empty() {
             context.categoria.clone()
@@ -807,13 +806,26 @@ fn generate_player_proposals(
                 .filter(|v| v.categoria == player_category)
                 .collect();
 
-            // Para S1→S2 tenta primeiro a vaga da equipe anterior do jogador.
-            let fallback = if is_first_season_transition {
-                find_previous_team_vacancy(conn, &player.id, &category_vacancies)?
-                    .or_else(|| worst_vacancy(&category_vacancies))
-            } else {
-                worst_vacancy(&category_vacancies)
-            };
+            // Tenta primeiro a vaga da equipe anterior, depois a pior da mesma categoria.
+            let mut fallback = find_previous_team_vacancy(conn, &player.id, &category_vacancies)?
+                .or_else(|| worst_vacancy(&category_vacancies));
+
+            // Se não há vaga na categoria atual, tenta a melhor vaga de tier inferior.
+            if fallback.is_none() {
+                let player_tier =
+                    crate::constants::categories::get_category_config(&player_category)
+                        .map(|c| c.tier)
+                        .unwrap_or(99);
+                let lower_vacancies: Vec<&Vacancy> = vacancies
+                    .iter()
+                    .filter(|v| {
+                        crate::constants::categories::get_category_config(&v.categoria)
+                            .map(|c| c.tier < player_tier)
+                            .unwrap_or(false)
+                    })
+                    .collect();
+                fallback = best_vacancy(&lower_vacancies);
+            }
 
             if let Some(vacancy) = fallback {
                 let proposal = MarketProposal {
@@ -885,6 +897,14 @@ fn worst_vacancy<'a>(category_vacancies: &[&'a Vacancy]) -> Option<&'a Vacancy> 
         .copied()
 }
 
+/// Retorna a vaga da melhor equipe (maior car_performance) da lista.
+fn best_vacancy<'a>(vacancies: &[&'a Vacancy]) -> Option<&'a Vacancy> {
+    vacancies
+        .iter()
+        .max_by(|a, b| a.car_performance.total_cmp(&b.car_performance))
+        .copied()
+}
+
 fn persist_player_proposal(
     conn: &Connection,
     season_id: &str,
@@ -937,6 +957,14 @@ fn fill_remaining_vacancies_with_rookies(
                 .iter()
                 .enumerate()
                 .filter(|(_, candidate)| candidate.driver.categoria_atual.is_none())
+                .filter(|(_, candidate)| {
+                    driver_has_required_license_for_category(
+                        conn,
+                        &candidate.driver.id,
+                        &vacancy.categoria,
+                    )
+                    .unwrap_or(false)
+                })
                 .max_by(|(_, a), (_, b)| {
                     a.driver
                         .atributos
@@ -969,7 +997,7 @@ fn fill_remaining_vacancies_with_rookies(
                 continue;
             }
 
-            let emergency = generate_emergency_rookie(conn, rng)?;
+            let emergency = generate_emergency_rookie(conn, &vacancy.categoria, rng)?;
             sign_driver_to_team(
                 conn,
                 &emergency,
@@ -1007,7 +1035,11 @@ fn calculate_emergency_salary(vacancy: &Vacancy, driver: &Driver) -> f64 {
     (tier_base * (driver.atributos.skill / 75.0).max(0.7)).max(5_000.0)
 }
 
-fn generate_emergency_rookie(conn: &Connection, rng: &mut impl Rng) -> Result<Driver, String> {
+fn generate_emergency_rookie(
+    conn: &Connection,
+    category_id: &str,
+    rng: &mut impl Rng,
+) -> Result<Driver, String> {
     let existing_drivers = driver_queries::get_all_drivers(conn)
         .map_err(|e| format!("Falha ao carregar nomes para rookie emergencial: {e}"))?;
     let mut names: HashSet<String> = existing_drivers
@@ -1022,6 +1054,7 @@ fn generate_emergency_rookie(conn: &Connection, rng: &mut impl Rng) -> Result<Dr
         .map_err(|e| format!("Falha ao gerar ID de rookie emergencial: {e}"))?;
     driver_queries::insert_driver(conn, &rookie)
         .map_err(|e| format!("Falha ao persistir rookie emergencial: {e}"))?;
+    grant_driver_license_for_category_if_needed(conn, &rookie.id, category_id)?;
     Ok(rookie)
 }
 
@@ -1145,6 +1178,146 @@ mod tests {
     }
 
     #[test]
+    fn test_run_market_classifies_existing_free_agent_as_transfer() {
+        let conn = setup_market_fixture();
+        let mut rng = StdRng::seed_from_u64(300);
+
+        let report = run_market(&conn, 2, &mut rng).expect("market should run");
+        let signing = report
+            .new_signings
+            .iter()
+            .find(|signing| signing.driver_id == "P004")
+            .expect("experienced free agent should be signed");
+
+        assert_eq!(
+            signing.tipo, "transferencia",
+            "piloto veterano ja existente no save nao deve ser classificado como rookie"
+        );
+    }
+
+    #[test]
+    fn test_run_market_does_not_auto_sign_player() {
+        let conn = Connection::open_in_memory().expect("in-memory db");
+        migrations::run_all(&conn).expect("schema");
+
+        let previous = Season::new("S001".to_string(), 1, 2024);
+        let next = Season::new("S002".to_string(), 2, 2025);
+        season_queries::insert_season(&conn, &previous).expect("previous season");
+        season_queries::finalize_season(&conn, &previous.id).expect("finalize previous");
+        season_queries::insert_season(&conn, &next).expect("next season");
+
+        let mut team_rng = StdRng::seed_from_u64(404);
+        let current_team = sample_team("mazda_rookie", "T001", &mut team_rng);
+        let vacancy_team = sample_team("mazda_rookie", "T002", &mut team_rng);
+        team_queries::insert_team(&conn, &current_team).expect("current team");
+        team_queries::insert_team(&conn, &vacancy_team).expect("vacancy team");
+
+        let mut player = sample_driver(
+            "P001",
+            "Jogador",
+            Some("mazda_rookie"),
+            80.0,
+            DriverStatus::Ativo,
+        );
+        player.is_jogador = true;
+        let retired = sample_driver(
+            "P002",
+            "Veterano",
+            Some("mazda_rookie"),
+            55.0,
+            DriverStatus::Aposentado,
+        );
+        driver_queries::insert_driver(&conn, &player).expect("insert player");
+        driver_queries::insert_driver(&conn, &retired).expect("insert retired");
+
+        let player_contract = Contract::new(
+            "C001".to_string(),
+            player.id.clone(),
+            player.nome.clone(),
+            current_team.id.clone(),
+            current_team.nome.clone(),
+            1,
+            1,
+            45_000.0,
+            TeamRole::Numero1,
+            "mazda_rookie".to_string(),
+        );
+        let retired_contract = Contract::new(
+            "C002".to_string(),
+            retired.id.clone(),
+            retired.nome.clone(),
+            vacancy_team.id.clone(),
+            vacancy_team.nome.clone(),
+            1,
+            1,
+            20_000.0,
+            TeamRole::Numero1,
+            "mazda_rookie".to_string(),
+        );
+        contract_queries::insert_contract(&conn, &player_contract).expect("insert player contract");
+        contract_queries::insert_contract(&conn, &retired_contract)
+            .expect("insert retired contract");
+
+        team_queries::update_team_pilots(&conn, &current_team.id, Some(&player.id), None)
+            .expect("current team lineup");
+        team_queries::update_team_pilots(&conn, &vacancy_team.id, Some(&retired.id), None)
+            .expect("vacancy team lineup");
+
+        insert_standing(
+            &conn,
+            &previous.id,
+            &player.id,
+            &current_team.id,
+            "mazda_rookie",
+            2,
+            90.0,
+            1,
+            1,
+        );
+
+        conn.execute(
+            "INSERT INTO licenses (piloto_id, nivel, categoria_origem, data_obtencao, temporadas_na_categoria)
+             VALUES ('P001', '1', 'mazda_rookie', '2024-12-31T00:00:00', 1)",
+            [],
+        )
+        .expect("insert player license");
+        conn.execute(
+            "UPDATE meta SET value = '3' WHERE key = 'next_contract_id'",
+            [],
+        )
+        .expect("contract counter");
+        conn.execute(
+            "UPDATE meta SET value = '3' WHERE key = 'next_driver_id'",
+            [],
+        )
+        .expect("driver counter");
+
+        let mut rng = StdRng::seed_from_u64(405);
+        let report = run_market(&conn, 2, &mut rng).expect("market should run");
+        let active_contracts = contract_queries::get_contracts_for_pilot(&conn, &player.id)
+            .expect("player contracts")
+            .into_iter()
+            .filter(|contract| contract.status == ContractStatus::Ativo)
+            .collect::<Vec<_>>();
+
+        assert!(
+            report
+                .new_signings
+                .iter()
+                .all(|signing| signing.driver_id != player.id),
+            "o mercado não deve auto-assinar o jogador"
+        );
+        assert!(
+            active_contracts.is_empty(),
+            "o jogador não deveria ganhar contrato automático; contratos ativos: {:?}",
+            active_contracts
+                .iter()
+                .map(|contract| (&contract.id, &contract.equipe_id, &contract.categoria))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
     fn test_load_market_contexts_fails_on_corrupted_standings_row() {
         let conn = setup_market_fixture();
         conn.execute(
@@ -1166,6 +1339,170 @@ mod tests {
 
         let err = result.expect_err("corrupted standings should fail");
         assert!(err.contains("Falha ao ler categoria do standings"));
+        assert!(err.contains("P001"));
+    }
+
+    #[test]
+    fn test_invalid_season_status_from_db_returns_error() {
+        let conn = setup_market_fixture();
+        conn.execute(
+            "UPDATE seasons SET status = 'status_quebrado' WHERE numero = 2",
+            [],
+        )
+        .expect("corrupt season status");
+
+        let err = get_season_by_number(&conn, 2).expect_err("invalid season status should fail");
+        assert!(err.contains("SeasonStatus inv"));
+    }
+
+    #[test]
+    fn test_sync_team_slots_fails_when_active_contract_points_to_missing_driver() {
+        let conn = setup_market_fixture();
+        conn.execute_batch("PRAGMA foreign_keys = OFF;")
+            .expect("disable foreign keys for corruption setup");
+        conn.execute(
+            "UPDATE contracts SET piloto_id = 'P999' WHERE id = 'C001'",
+            [],
+        )
+        .expect("corrupt contract driver reference");
+        conn.execute_batch("PRAGMA foreign_keys = ON;")
+            .expect("re-enable foreign keys after corruption setup");
+
+        let teams = team_queries::get_all_teams(&conn).expect("teams");
+        let drivers_by_id: HashMap<String, Driver> = driver_queries::get_all_drivers(&conn)
+            .expect("drivers")
+            .into_iter()
+            .map(|driver| (driver.id.clone(), driver))
+            .collect();
+
+        let err = sync_team_slots(&conn, &teams, &drivers_by_id)
+            .expect_err("sync should fail for orphan active contract");
+
+        assert!(err.contains("C001"));
+        assert!(err.contains("P999"));
+    }
+
+    #[test]
+    fn test_run_market_repairs_legacy_missing_licenses_before_matching() {
+        let conn = setup_market_fixture();
+        let mut rng = StdRng::seed_from_u64(406);
+
+        let report = run_market(&conn, 2, &mut rng).expect("market should run");
+
+        assert!(
+            driver_has_required_license_for_category(&conn, "P002", "gt4")
+                .expect("gt4 license for expiring veteran"),
+            "veteranos de gt4 sem licenca coerente devem ser corrigidos antes do mercado"
+        );
+        assert!(
+            driver_has_required_license_for_category(&conn, "P004", "gt4")
+                .expect("gt4 license for free veteran"),
+            "pilotos livres da categoria atual devem receber a licenca minima"
+        );
+        assert!(
+            driver_has_required_license_for_category(&conn, "P006", "gt3")
+                .expect("gt3 license for free veteran"),
+            "pilotos ativos de categorias superiores tambem precisam ser reparados"
+        );
+        assert!(
+            report.proposals_made > 0,
+            "com as licencas legadas reparadas o mercado precisa voltar a gerar propostas reais"
+        );
+    }
+
+    #[test]
+    fn test_sign_driver_to_team_rolls_back_contract_when_driver_update_fails() {
+        let conn = setup_market_fixture();
+        let vacancy = find_vacancies(&conn)
+            .expect("vacancies")
+            .into_iter()
+            .find(|vacancy| {
+                vacancy.team_id == "T002" && vacancy.papel_necessario == TeamRole::Numero2
+            })
+            .expect("target vacancy");
+        let driver = driver_queries::get_all_drivers(&conn)
+            .expect("drivers query")
+            .into_iter()
+            .find(|driver| driver.id == "P004")
+            .expect("existing driver");
+
+        conn.execute(
+            "CREATE TRIGGER fail_driver_update
+             BEFORE UPDATE ON drivers
+             WHEN NEW.id = 'P004'
+             BEGIN
+                 SELECT RAISE(ABORT, 'driver update blocked');
+             END;",
+            [],
+        )
+        .expect("create trigger");
+
+        let err = sign_driver_to_team(
+            &conn,
+            &driver,
+            &vacancy,
+            2,
+            calculate_emergency_salary(&vacancy, &driver),
+            1,
+            TeamRole::Numero2,
+        )
+        .expect_err("signing should fail");
+
+        assert!(
+            !err.is_empty(),
+            "a falha precisa ser propagada quando o update do piloto nao puder ser aplicado"
+        );
+        let active_contracts = contract_queries::get_contracts_for_pilot(&conn, "P004")
+            .expect("contracts for pilot")
+            .into_iter()
+            .filter(|contract| {
+                contract.status == ContractStatus::Ativo && contract.temporada_inicio == 2
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            active_contracts.is_empty(),
+            "a assinatura deve ser atomica e nao deixar contrato ativo apos falha no update do piloto"
+        );
+    }
+
+    #[test]
+    fn test_run_market_rolls_back_when_market_persist_fails() {
+        let conn = setup_market_fixture();
+        let mut rng = StdRng::seed_from_u64(407);
+
+        conn.execute(
+            "CREATE TRIGGER fail_market_insert
+             BEFORE INSERT ON market
+             BEGIN
+                 SELECT RAISE(ABORT, 'market persist blocked');
+             END;",
+            [],
+        )
+        .expect("create trigger");
+
+        let err = run_market(&conn, 2, &mut rng).expect_err("market should fail late");
+        assert!(err.contains("market persist blocked"));
+
+        let status_c002: String = conn
+            .query_row(
+                "SELECT status FROM contracts WHERE id = 'C002'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("contract status");
+        assert_eq!(
+            status_c002, "Ativo",
+            "a expiracao de contratos deve ser revertida quando a persistencia final falhar"
+        );
+
+        let season_market_rows: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM market WHERE temporada_id = 'S002'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("market rows");
+        assert_eq!(season_market_rows, 0);
     }
 
     fn setup_market_fixture() -> Connection {

@@ -11,11 +11,13 @@ use crate::constants::categories::{get_all_categories, get_category_config};
 use crate::db::connection::Database;
 use crate::db::connection::DbError;
 use crate::db::queries::calendar as calendar_queries;
+use crate::db::queries::contracts as contract_queries;
 use crate::db::queries::drivers as driver_queries;
 use crate::db::queries::seasons as season_queries;
 use crate::db::queries::standings as standings_queries;
 use crate::db::queries::standings::ChampionshipContext;
 use crate::db::queries::teams as team_queries;
+use crate::db::queries::track_history as track_history_queries;
 use crate::event_interest::{
     calculate_expected_event_interest, calculate_realized_event_interest, EventInterestContext,
     InterestTier, RealizedEventInterest,
@@ -108,6 +110,19 @@ pub async fn simulate_race_weekend(
     simulate_race_weekend_in_base_dir(&base_dir, &career_id, &race_id)
 }
 
+#[tauri::command]
+pub async fn simulate_special_block(
+    app: AppHandle,
+    career_id: String,
+) -> Result<SimultaneousResults, String> {
+    let base_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Falha ao obter app_data_dir: {e}"))?;
+
+    simulate_special_block_in_base_dir(&base_dir, &career_id)
+}
+
 pub(crate) fn simulate_race_weekend_in_base_dir(
     base_dir: &Path,
     career_id: &str,
@@ -141,6 +156,21 @@ pub(crate) fn simulate_race_weekend_in_base_dir(
     }
     if race_entry.status.as_str() != "Pendente" {
         return Err("A corrida selecionada ja foi concluida ou simulada.".to_string());
+    }
+    let expected_player_race = get_next_player_race(&db.conn, &active_season)?;
+    match expected_player_race {
+        Some(expected) if expected.id == race_entry.id => {}
+        Some(expected) => {
+            return Err(format!(
+                "A corrida selecionada nao e a proxima corrida valida do jogador. Proxima esperada: {} ({})",
+                expected.track_name, expected.categoria
+            ));
+        }
+        None => {
+            return Err(
+                "O jogador nao possui corrida pendente valida para simular nesta fase.".to_string(),
+            );
+        }
     }
 
     let (player_race, player_new_injuries) = simulate_category_race(&mut db, &race_entry, true)?;
@@ -248,28 +278,45 @@ pub(crate) fn simulate_race_weekend_in_base_dir(
             })?;
     }
 
-    append_race_result(
-        &career_dir,
-        &race_entry.categoria,
-        race_entry.rodada,
-        &player_race.race_results,
-    )?;
-    persist_race_news(
-        &db.conn,
-        &player_race,
-        &active_season,
-        race_entry.rodada,
-        &race_entry.categoria,
-        post_race_bias,
-        race_entry.thematic_slot,
-        &interest_tier,
-        &player_race
-            .race_results
-            .iter()
-            .flat_map(|r| r.incidents.clone())
-            .collect::<Vec<_>>(),
-        &player_new_injuries,
-    )?;
+    warn_if_side_effect_fails(
+        append_race_result(
+            &career_dir,
+            &race_entry.categoria,
+            race_entry.rodada,
+            &player_race.race_results,
+        ),
+        "Falha ao gravar race_results.json da corrida do jogador",
+    );
+    warn_if_side_effect_fails(
+        track_history_queries::record_race_dnfs(
+            &db.conn,
+            &player_race.race_results,
+            &race_entry.track_name,
+            active_season.numero,
+            race_entry.rodada,
+        )
+        .map_err(|e| format!("Falha ao registrar historico de DNF da corrida do jogador: {e}")),
+        "Falha ao registrar historico de DNF da corrida do jogador",
+    );
+    warn_if_side_effect_fails(
+        persist_race_news(
+            &db.conn,
+            &player_race,
+            &active_season,
+            race_entry.rodada,
+            &race_entry.categoria,
+            post_race_bias,
+            race_entry.thematic_slot,
+            &interest_tier,
+            &player_race
+                .race_results
+                .iter()
+                .flat_map(|r| r.incidents.clone())
+                .collect::<Vec<_>>(),
+            &player_new_injuries,
+        ),
+        "Falha ao persistir noticias da corrida do jogador",
+    );
     let other_categories = simulate_other_categories(
         &mut db,
         &career_dir,
@@ -278,7 +325,10 @@ pub(crate) fn simulate_race_weekend_in_base_dir(
         &active_season.id,
         active_season.numero,
     )?;
-    update_last_played(&meta_path)?;
+    warn_if_side_effect_fails(
+        update_last_played(&meta_path),
+        "Falha ao atualizar meta.json apos a corrida",
+    );
 
     Ok(RaceWeekendResult {
         player_race,
@@ -286,7 +336,136 @@ pub(crate) fn simulate_race_weekend_in_base_dir(
     })
 }
 
-fn simulate_category_race(
+pub(crate) fn simulate_special_block_in_base_dir(
+    base_dir: &Path,
+    career_id: &str,
+) -> Result<SimultaneousResults, String> {
+    let config = AppConfig::load_or_default(base_dir);
+    let career_dir = config.saves_dir().join(career_id);
+    let db_path = career_dir.join("career.db");
+    let meta_path = career_dir.join("meta.json");
+
+    if !career_dir.exists() {
+        return Err("Save nao encontrado.".to_string());
+    }
+    if !db_path.exists() {
+        return Err("Banco da carreira nao encontrado.".to_string());
+    }
+
+    let mut db = Database::open_existing(&db_path)
+        .map_err(|e| format!("Falha ao abrir banco da carreira: {e}"))?;
+    let active_season = season_queries::get_active_season(&db.conn)
+        .map_err(|e| format!("Falha ao buscar temporada ativa: {e}"))?
+        .ok_or_else(|| "Temporada ativa nao encontrada.".to_string())?;
+
+    if active_season.fase != crate::models::enums::SeasonPhase::BlocoEspecial {
+        return Err("O fast-sim do bloco especial so pode ocorrer em BlocoEspecial.".to_string());
+    }
+
+    let player = driver_queries::get_player_driver(&db.conn)
+        .map_err(|e| format!("Falha ao carregar jogador: {e}"))?;
+    if player.categoria_especial_ativa.is_some() {
+        return Err(
+            "O jogador participa do bloco especial ativo e deve correr essa fase normalmente."
+                .to_string(),
+        );
+    }
+
+    let mut categories_simulated = Vec::new();
+    let mut total_races_simulated = 0;
+    let mut highlights = Vec::new();
+
+    for category_id in ["production_challenger", "endurance"] {
+        let pending = calendar_queries::get_pending_races_for_category(
+            &db.conn,
+            &active_season.id,
+            category_id,
+        )
+        .map_err(|e| format!("Falha ao buscar corridas pendentes de {}: {e}", category_id))?;
+
+        if pending.is_empty() {
+            continue;
+        }
+
+        let category = get_category_config(category_id)
+            .ok_or_else(|| format!("Categoria '{}' nao encontrada.", category_id))?;
+
+        let mut summaries = Vec::new();
+        for entry in pending {
+            let (result, _) = simulate_category_race(&mut db, &entry, false)?;
+            warn_if_side_effect_fails(
+                append_race_result(
+                    &career_dir,
+                    &entry.categoria,
+                    entry.rodada,
+                    &result.race_results,
+                ),
+                "Falha ao gravar race_results.json do bloco especial",
+            );
+            warn_if_side_effect_fails(
+                track_history_queries::record_race_dnfs(
+                    &db.conn,
+                    &result.race_results,
+                    &entry.track_name,
+                    active_season.numero,
+                    entry.rodada,
+                )
+                .map_err(|e| format!("Falha ao registrar historico de DNF do bloco especial: {e}")),
+                "Falha ao registrar historico de DNF do bloco especial",
+            );
+
+            let winner = result
+                .race_results
+                .iter()
+                .find(|driver| driver.finish_position == 1);
+            summaries.push(BriefRaceResult {
+                race_id: entry.id.clone(),
+                track_name: entry.track_name.clone(),
+                winner_name: winner
+                    .map(|driver| driver.pilot_name.clone())
+                    .unwrap_or_default(),
+                winner_team: winner
+                    .map(|driver| driver.team_name.clone())
+                    .unwrap_or_default(),
+            });
+            total_races_simulated += 1;
+        }
+
+        if let Some(last) = summaries.last() {
+            highlights.push(SimHighlight {
+                headline: format!(
+                    "{} vence em {} ({})",
+                    last.winner_name, last.track_name, category.nome_curto
+                ),
+                category: category_id.to_string(),
+            });
+        }
+
+        categories_simulated.push(CategorySimResult {
+            category_id: category_id.to_string(),
+            category_name: category.nome.to_string(),
+            races_simulated: summaries.len() as i32,
+            results: summaries,
+        });
+    }
+
+    warn_if_side_effect_fails(
+        persist_other_category_news(&db.conn, &highlights, active_season.numero),
+        "Falha ao persistir noticias de outras categorias do bloco especial",
+    );
+    warn_if_side_effect_fails(
+        update_last_played(&meta_path),
+        "Falha ao atualizar meta.json apos o bloco especial",
+    );
+
+    Ok(SimultaneousResults {
+        categories_simulated,
+        total_races_simulated,
+        highlights,
+    })
+}
+
+pub(crate) fn simulate_category_race(
     db: &mut Database,
     race_entry: &CalendarEntry,
     advance_player_round: bool,
@@ -295,23 +474,33 @@ fn simulate_category_race(
         .ok_or_else(|| "Categoria da corrida nao encontrada.".to_string())?;
     let teams = team_queries::get_teams_by_category(&db.conn, &race_entry.categoria)
         .map_err(|e| format!("Falha ao buscar equipes da categoria: {e}"))?;
-    let drivers = driver_queries::get_drivers_by_category(&db.conn, &race_entry.categoria)
+    let drivers = driver_queries::get_drivers_by_active_category(&db.conn, &race_entry.categoria)
         .map_err(|e| format!("Falha ao buscar pilotos da categoria: {e}"))?;
     let active_season = season_queries::get_active_season(&db.conn)
         .map_err(|e| format!("Falha ao buscar temporada ativa: {e}"))?
         .ok_or_else(|| "Temporada ativa nao encontrada.".to_string())?;
 
     let team_by_driver = build_team_lookup(&teams);
+    let mut orphaned_drivers = Vec::new();
     let sim_drivers: Vec<SimDriver> = drivers
         .iter()
         .filter(|d| d.status != crate::models::enums::DriverStatus::Lesionado)
-        .map(|driver| {
-            let team = team_by_driver
-                .get(&driver.id)
-                .ok_or_else(|| format!("Equipe nao encontrada para o piloto {}", driver.nome))?;
-            Ok(SimDriver::from_driver_and_team(driver, team))
+        .filter_map(|driver| match team_by_driver.get(&driver.id) {
+            Some(team) => Some(SimDriver::from_driver_and_team(driver, team)),
+            None => {
+                orphaned_drivers.push(format!("{} ({})", driver.nome, driver.id));
+                None
+            }
         })
-        .collect::<Result<_, String>>()?;
+        .collect();
+
+    if !orphaned_drivers.is_empty() {
+        return Err(format!(
+            "Pilotos ativos sem equipe na categoria '{}': {}",
+            race_entry.categoria,
+            orphaned_drivers.join(", ")
+        ));
+    }
 
     if sim_drivers.is_empty() {
         return Err(format!(
@@ -428,8 +617,8 @@ fn simulate_other_categories(
         }
 
         // Busca corridas pendentes com week_of_year <= target_week, em ordem cronológica.
-        // Categorias especiais (weeks 41–50) são excluídas naturalmente durante o BlocoRegular
-        // (target_week ≤ 40) e incluídas automaticamente no BlocoEspecial.
+        // Categorias especiais são excluídas naturalmente durante o BlocoRegular
+        // até a abertura da janela especial de setembro, e incluídas no BlocoEspecial.
         let pending = calendar_queries::get_pending_races_up_to_week(
             &db.conn,
             season_id,
@@ -445,12 +634,28 @@ fn simulate_other_categories(
         let mut summaries = Vec::new();
         for entry in pending {
             let (result, _) = simulate_category_race(db, &entry, false)?;
-            append_race_result(
-                career_dir,
-                &entry.categoria,
-                entry.rodada,
-                &result.race_results,
-            )?;
+            warn_if_side_effect_fails(
+                append_race_result(
+                    career_dir,
+                    &entry.categoria,
+                    entry.rodada,
+                    &result.race_results,
+                ),
+                "Falha ao gravar race_results.json de outra categoria",
+            );
+            warn_if_side_effect_fails(
+                track_history_queries::record_race_dnfs(
+                    &db.conn,
+                    &result.race_results,
+                    &entry.track_name,
+                    season_number,
+                    entry.rodada,
+                )
+                .map_err(|e| {
+                    format!("Falha ao registrar historico de DNF de outra categoria: {e}")
+                }),
+                "Falha ao registrar historico de DNF de outra categoria",
+            );
 
             let winner = result
                 .race_results
@@ -488,7 +693,10 @@ fn simulate_other_categories(
         });
     }
 
-    persist_other_category_news(&db.conn, &highlights, season_number)?;
+    warn_if_side_effect_fails(
+        persist_other_category_news(&db.conn, &highlights, season_number),
+        "Falha ao persistir noticias de outras categorias",
+    );
 
     Ok(SimultaneousResults {
         categories_simulated,
@@ -536,8 +744,11 @@ fn apply_race_result_to_database(
         driver.stats_carreira = career_stats;
         driver.melhor_resultado_temp = better_result;
         driver.corridas_na_categoria += 1;
-        driver.ultimos_resultados =
-            append_recent_result(&driver.ultimos_resultados, race_driver.finish_position, race_driver.is_dnf);
+        driver.ultimos_resultados = append_recent_result(
+            &driver.ultimos_resultados,
+            race_driver.finish_position,
+            race_driver.is_dnf,
+        );
 
         driver_queries::update_driver(tx, &driver)?;
     }
@@ -666,9 +877,63 @@ fn update_last_played(meta_path: &Path) -> Result<(), String> {
     std::fs::write(meta_path, json).map_err(|e| format!("Falha ao gravar meta.json: {e}"))
 }
 
-fn race_news_importance(bias: i32, tier: &InterestTier, finish_position: i32) -> crate::news::NewsImportance {
-    use crate::news::NewsImportance;
+fn warn_if_side_effect_fails<T>(result: Result<T, String>, context: &str) {
+    if let Err(error) = result {
+        eprintln!("Aviso: {context}: {error}");
+    }
+}
+
+fn get_player_active_category(
+    conn: &rusqlite::Connection,
+    active_season: &Season,
+) -> Result<Option<String>, String> {
+    let player = driver_queries::get_player_driver(conn)
+        .map_err(|e| format!("Falha ao carregar jogador: {e}"))?;
+
+    if active_season.fase == crate::models::enums::SeasonPhase::BlocoEspecial {
+        if let Some(contract) =
+            contract_queries::get_active_especial_contract_for_pilot(conn, &player.id)
+                .map_err(|e| format!("Falha ao buscar contrato especial ativo: {e}"))?
+        {
+            return Ok(Some(contract.categoria));
+        }
+    }
+
+    if let Some(contract) =
+        contract_queries::get_active_regular_contract_for_pilot(conn, &player.id)
+            .map_err(|e| format!("Falha ao buscar contrato regular ativo: {e}"))?
+    {
+        return Ok(Some(contract.categoria));
+    }
+
+    if active_season.fase == crate::models::enums::SeasonPhase::BlocoEspecial {
+        if let Some(category) = player.categoria_especial_ativa {
+            return Ok(Some(category));
+        }
+    }
+
+    Ok(player.categoria_atual)
+}
+
+fn get_next_player_race(
+    conn: &rusqlite::Connection,
+    active_season: &Season,
+) -> Result<Option<CalendarEntry>, String> {
+    let Some(category_id) = get_player_active_category(conn, active_season)? else {
+        return Ok(None);
+    };
+
+    calendar_queries::get_next_race(conn, &active_season.id, &category_id)
+        .map_err(|e| format!("Falha ao buscar proxima corrida do jogador: {e}"))
+}
+
+fn race_news_importance(
+    bias: i32,
+    tier: &InterestTier,
+    finish_position: i32,
+) -> crate::news::NewsImportance {
     use crate::event_interest::InterestTier;
+    use crate::news::NewsImportance;
     let tier_score = match tier {
         InterestTier::Baixo => 0,
         InterestTier::Moderado => 1,
@@ -676,12 +941,23 @@ fn race_news_importance(bias: i32, tier: &InterestTier, finish_position: i32) ->
         InterestTier::MuitoAlto => 3,
         InterestTier::EventoPrincipal => 4,
     };
-    let position_bonus = if finish_position == 1 { 2 } else if finish_position <= 3 { 1 } else { 0 };
+    let position_bonus = if finish_position == 1 {
+        2
+    } else if finish_position <= 3 {
+        1
+    } else {
+        0
+    };
     let total = bias + tier_score + position_bonus;
-    let importance = if total >= 5 { NewsImportance::Destaque }
-        else if total >= 3 { NewsImportance::Alta }
-        else if total >= 1 { NewsImportance::Media }
-        else { NewsImportance::Baixa };
+    let importance = if total >= 5 {
+        NewsImportance::Destaque
+    } else if total >= 3 {
+        NewsImportance::Alta
+    } else if total >= 1 {
+        NewsImportance::Media
+    } else {
+        NewsImportance::Baixa
+    };
     // Vitória sempre dispara pelo menos Alta para que detect_race_trigger acione LeaderWon/ShockWin/etc.
     if finish_position == 1 && matches!(importance, NewsImportance::Baixa | NewsImportance::Media) {
         NewsImportance::Alta
@@ -720,7 +996,7 @@ fn persist_race_news(
             .map(|d| d.nome)
             .unwrap_or_else(|_| winner_id.clone());
         let importance = race_news_importance(news_importance_bias, interest_tier, 1);
-        
+
         let total_rodadas = crate::constants::categories::get_category_config(category_id)
             .map(|c| c.corridas_por_temporada as i32)
             .unwrap_or(round);
@@ -739,15 +1015,19 @@ fn persist_race_news(
         } else {
             (
                 format!("{} vence em {}", winner_name, race_result.track_name),
-                format!("{} cruzou a linha de chegada em primeiro lugar na rodada {} da temporada {}.", winner_name, round, active_season.numero),
+                format!(
+                    "{} cruzou a linha de chegada em primeiro lugar na rodada {} da temporada {}.",
+                    winner_name, round, active_season.numero
+                ),
             )
         };
 
-        let winner_team = race_result.race_results.iter()
+        let winner_team = race_result
+            .race_results
+            .iter()
             .find(|r| &r.pilot_id == winner_id)
             .map(|r| r.team_id.clone());
-        let id = next_id(conn, IdType::News)
-            .map_err(|e| format!("next_id news: {e:?}"))?;
+        let id = next_id(conn, IdType::News).map_err(|e| format!("next_id news: {e:?}"))?;
         items.push(NewsItem {
             id,
             tipo: NewsType::Corrida,
@@ -767,9 +1047,14 @@ fn persist_race_news(
         });
 
         if fallback_races == 0 {
-            if let Ok(mut standings) = crate::db::queries::race_history::get_category_standings(conn, &active_season.id, category_id) {
+            if let Ok(standings) = crate::db::queries::race_history::get_category_standings(
+                conn,
+                &active_season.id,
+                category_id,
+            ) {
                 if let Some(champion) = standings.into_iter().next() {
-                    let champ_id = next_id(conn, IdType::News).unwrap_or_else(|_| "news_champ".to_string());
+                    let champ_id =
+                        next_id(conn, IdType::News).unwrap_or_else(|_| "news_champ".to_string());
                     items.push(NewsItem {
                         id: champ_id,
                         tipo: NewsType::FramingSazonal,
@@ -800,7 +1085,12 @@ fn persist_race_news(
         .filter(|i| i.is_dnf || i.narrative_importance_hint >= 2)
         .collect();
     // DNFs primeiro, depois por hint decrescente
-    noticiable.sort_by_key(|i| (std::cmp::Reverse(i.is_dnf as u8), std::cmp::Reverse(i.narrative_importance_hint)));
+    noticiable.sort_by_key(|i| {
+        (
+            std::cmp::Reverse(i.is_dnf as u8),
+            std::cmp::Reverse(i.narrative_importance_hint),
+        )
+    });
 
     for inc in noticiable {
         if !seen_incident_pilots.insert(inc.pilot_id.clone()) {
@@ -809,8 +1099,7 @@ fn persist_race_news(
         let driver_name = driver_queries::get_driver(conn, &inc.pilot_id)
             .map(|d| d.nome)
             .unwrap_or_else(|_| inc.pilot_id.clone());
-        let id = next_id(conn, IdType::News)
-            .map_err(|e| format!("next_id incident: {e:?}"))?;
+        let id = next_id(conn, IdType::News).map_err(|e| format!("next_id incident: {e:?}"))?;
         let titulo = if inc.is_dnf {
             format!("{} abandona a corrida após incidente", driver_name)
         } else {
@@ -846,8 +1135,7 @@ fn persist_race_news(
         let driver_name = driver_queries::get_driver(conn, &injury.pilot_id)
             .map(|d| d.nome)
             .unwrap_or_else(|_| injury.pilot_id.clone());
-        let id = next_id(conn, IdType::News)
-            .map_err(|e| format!("next_id injury: {e:?}"))?;
+        let id = next_id(conn, IdType::News).map_err(|e| format!("next_id injury: {e:?}"))?;
         let titulo = "desfalque confirmado".to_string();
         let texto = format!(
             "{} está fora da próxima etapa após lesão confirmada. Situação será reavaliada nos próximos dias.",
@@ -881,10 +1169,46 @@ fn persist_race_news(
 }
 
 fn persist_other_category_news(
-    _conn: &rusqlite::Connection,
-    _highlights: &[SimHighlight],
-    _season_number: i32,
+    conn: &rusqlite::Connection,
+    highlights: &[SimHighlight],
+    season_number: i32,
 ) -> Result<(), String> {
+    use crate::db::queries::news as news_queries;
+    use crate::generators::ids::{next_ids, IdType};
+    use crate::news::{NewsImportance, NewsItem, NewsType};
+
+    if highlights.is_empty() {
+        return Ok(());
+    }
+
+    let ids = next_ids(conn, IdType::News, highlights.len() as u32)
+        .map_err(|e| format!("next_ids news: {e:?}"))?;
+    let now = chrono::Local::now().timestamp();
+    let items = highlights
+        .iter()
+        .zip(ids)
+        .map(|(highlight, id)| NewsItem {
+            id,
+            tipo: NewsType::Corrida,
+            icone: NewsType::Corrida.icone().to_string(),
+            titulo: highlight.headline.clone(),
+            texto: format!("Resumo das outras categorias: {}.", highlight.headline),
+            rodada: None,
+            semana_pretemporada: None,
+            temporada: season_number,
+            categoria_id: Some(highlight.category.clone()),
+            categoria_nome: get_category_config(&highlight.category)
+                .map(|category| category.nome.to_string()),
+            importancia: NewsImportance::Media,
+            timestamp: now,
+            driver_id: None,
+            driver_id_secondary: None,
+            team_id: None,
+        })
+        .collect::<Vec<_>>();
+
+    news_queries::insert_news_batch(conn, &items)
+        .map_err(|e| format!("insert_news_batch outras categorias: {e:?}"))?;
     Ok(())
 }
 
@@ -895,6 +1219,7 @@ mod tests {
     use super::*;
     use crate::commands::career::{create_career_in_base_dir, CreateCareerInput};
     use crate::db::queries::calendar::get_next_race;
+    use crate::db::queries::news as news_queries;
 
     #[test]
     fn test_simulate_race_weekend_updates_state() {
@@ -990,6 +1315,145 @@ mod tests {
     }
 
     #[test]
+    fn test_simulate_race_weekend_rejects_out_of_order_race() {
+        let base_dir = unique_test_dir("simulate_wrong_order");
+        fs::create_dir_all(&base_dir).expect("base dir");
+
+        create_career_in_base_dir(
+            &base_dir,
+            CreateCareerInput {
+                player_name: "Joao Silva".to_string(),
+                player_nationality: "br".to_string(),
+                player_age: Some(20),
+                category: "mazda_rookie".to_string(),
+                team_index: 0,
+                difficulty: "medio".to_string(),
+            },
+        )
+        .expect("career");
+
+        let config = AppConfig::load_or_default(&base_dir);
+        let db_path = config.saves_dir().join("career_001").join("career.db");
+        let db = Database::open_existing(&db_path).expect("db");
+        let season = season_queries::get_active_season(&db.conn)
+            .expect("season")
+            .expect("active season");
+        let schedule =
+            calendar_queries::get_calendar(&db.conn, &season.id, "mazda_rookie").expect("schedule");
+        let later_race = schedule
+            .into_iter()
+            .find(|entry| entry.rodada == 2)
+            .expect("round 2 race");
+
+        let error = simulate_race_weekend_in_base_dir(&base_dir, "career_001", &later_race.id)
+            .expect_err("out of order race should fail");
+
+        assert!(
+            error.contains("proxima corrida valida"),
+            "erro inesperado: {}",
+            error
+        );
+
+        let _ = fs::remove_dir_all(base_dir);
+    }
+
+    #[test]
+    fn test_simulate_race_weekend_rejects_other_category_race() {
+        let base_dir = unique_test_dir("simulate_wrong_category");
+        fs::create_dir_all(&base_dir).expect("base dir");
+
+        create_career_in_base_dir(
+            &base_dir,
+            CreateCareerInput {
+                player_name: "Joao Silva".to_string(),
+                player_nationality: "br".to_string(),
+                player_age: Some(20),
+                category: "mazda_rookie".to_string(),
+                team_index: 0,
+                difficulty: "medio".to_string(),
+            },
+        )
+        .expect("career");
+
+        let config = AppConfig::load_or_default(&base_dir);
+        let db_path = config.saves_dir().join("career_001").join("career.db");
+        let db = Database::open_existing(&db_path).expect("db");
+        let season = season_queries::get_active_season(&db.conn)
+            .expect("season")
+            .expect("active season");
+        let other_category_race = get_next_race(&db.conn, &season.id, "gt3")
+            .expect("next gt3 race")
+            .expect("pending gt3 race");
+
+        let error =
+            simulate_race_weekend_in_base_dir(&base_dir, "career_001", &other_category_race.id)
+                .expect_err("other category race should fail");
+
+        assert!(
+            error.contains("proxima corrida valida"),
+            "erro inesperado: {}",
+            error
+        );
+
+        let _ = fs::remove_dir_all(base_dir);
+    }
+
+    #[test]
+    fn test_simulate_race_weekend_rejects_active_driver_without_team() {
+        let base_dir = unique_test_dir("simulate_orphan_driver");
+        fs::create_dir_all(&base_dir).expect("base dir");
+
+        create_career_in_base_dir(
+            &base_dir,
+            CreateCareerInput {
+                player_name: "Joao Silva".to_string(),
+                player_nationality: "br".to_string(),
+                player_age: Some(20),
+                category: "mazda_rookie".to_string(),
+                team_index: 0,
+                difficulty: "medio".to_string(),
+            },
+        )
+        .expect("career");
+
+        let config = AppConfig::load_or_default(&base_dir);
+        let db_path = config.saves_dir().join("career_001").join("career.db");
+        let mut db = Database::open_existing(&db_path).expect("db");
+        let season = season_queries::get_active_season(&db.conn)
+            .expect("season")
+            .expect("active season");
+        let next_race = get_next_race(&db.conn, &season.id, "mazda_rookie")
+            .expect("next race")
+            .expect("pending race");
+        let player = driver_queries::get_player_driver(&db.conn).expect("player driver");
+        let player_team = team_queries::get_teams_by_category(&db.conn, "mazda_rookie")
+            .expect("teams")
+            .into_iter()
+            .find(|team| {
+                team.piloto_1_id.as_deref() == Some(player.id.as_str())
+                    || team.piloto_2_id.as_deref() == Some(player.id.as_str())
+            })
+            .expect("player team");
+        team_queries::remove_pilot_from_team(&db.conn, &player.id, &player_team.id)
+            .expect("remove player from team");
+
+        let error = simulate_category_race(&mut db, &next_race, true)
+            .expect_err("active driver without team should fail");
+        assert!(
+            error.contains("Pilotos ativos sem equipe"),
+            "erro inesperado: {}",
+            error
+        );
+        assert!(
+            error.contains(&player.id),
+            "mensagem deveria apontar piloto orfao: {}",
+            error
+        );
+
+        let _ = fs::remove_dir_all(base_dir);
+    }
+
+    #[test]
     fn test_simulate_race_weekend_persists_news() {
         let base_dir = unique_test_dir("simulate_news");
         fs::create_dir_all(&base_dir).expect("base dir");
@@ -1016,9 +1480,72 @@ mod tests {
         let next_race = get_next_race(&db.conn, &season.id, "mazda_rookie")
             .expect("next race")
             .expect("pending race");
+        news_queries::delete_all_news(&db.conn).expect("clear news");
+        drop(db);
 
         simulate_race_weekend_in_base_dir(&base_dir, "career_001", &next_race.id)
             .expect("simulate");
+
+        let updated_db = Database::open_existing(&db_path).expect("updated db");
+        let news = news_queries::get_recent_news(&updated_db.conn, 50).expect("recent news");
+        assert!(
+            news.iter()
+                .any(|item| item.categoria_id.as_deref() == Some("mazda_rookie")),
+            "deveria existir noticia da corrida do jogador"
+        );
+        assert!(
+            news.iter()
+                .any(|item| item.categoria_id.as_deref() == Some("gt3")),
+            "deveria existir noticia de outra categoria simulada"
+        );
+
+        let _ = fs::remove_dir_all(base_dir);
+    }
+
+    #[test]
+    fn test_simulate_race_weekend_ignores_invalid_meta_after_persisting_race() {
+        let base_dir = unique_test_dir("simulate_invalid_meta");
+        fs::create_dir_all(&base_dir).expect("base dir");
+
+        create_career_in_base_dir(
+            &base_dir,
+            CreateCareerInput {
+                player_name: "Joao Silva".to_string(),
+                player_nationality: "br".to_string(),
+                player_age: Some(20),
+                category: "mazda_rookie".to_string(),
+                team_index: 0,
+                difficulty: "medio".to_string(),
+            },
+        )
+        .expect("career");
+
+        let config = AppConfig::load_or_default(&base_dir);
+        let career_dir = config.saves_dir().join("career_001");
+        let db_path = career_dir.join("career.db");
+        let meta_path = career_dir.join("meta.json");
+        let db = Database::open_existing(&db_path).expect("db");
+        let season = season_queries::get_active_season(&db.conn)
+            .expect("season")
+            .expect("active season");
+        let next_race = get_next_race(&db.conn, &season.id, "mazda_rookie")
+            .expect("next race")
+            .expect("pending race");
+        drop(db);
+
+        fs::write(&meta_path, "{meta invalida").expect("corrupt meta");
+
+        let result = simulate_race_weekend_in_base_dir(&base_dir, "career_001", &next_race.id);
+        assert!(
+            result.is_ok(),
+            "simulacao nao deveria falhar por meta invalida"
+        );
+
+        let updated_db = Database::open_existing(&db_path).expect("updated db");
+        let completed = calendar_queries::get_calendar_entry_by_id(&updated_db.conn, &next_race.id)
+            .expect("race by id")
+            .expect("calendar entry");
+        assert_eq!(completed.status.as_str(), "Concluida");
 
         let _ = fs::remove_dir_all(base_dir);
     }
@@ -1200,6 +1727,227 @@ mod tests {
 
         assert!(history.contains("\"mazda_rookie\""));
         assert!(history.contains("\"gt3\""));
+
+        let _ = fs::remove_dir_all(base_dir);
+    }
+
+    #[test]
+    fn test_simulate_race_weekend_uses_active_special_category_for_player() {
+        let base_dir = unique_test_dir("simulate_special_player");
+        fs::create_dir_all(&base_dir).expect("base dir");
+
+        create_career_in_base_dir(
+            &base_dir,
+            CreateCareerInput {
+                player_name: "Joao Silva".to_string(),
+                player_nationality: "br".to_string(),
+                player_age: Some(20),
+                category: "mazda_rookie".to_string(),
+                team_index: 0,
+                difficulty: "medio".to_string(),
+            },
+        )
+        .expect("career");
+
+        let config = AppConfig::load_or_default(&base_dir);
+        let db_path = config.saves_dir().join("career_001").join("career.db");
+        let db = Database::open_existing(&db_path).expect("db");
+        let mut player = driver_queries::get_player_driver(&db.conn).expect("player");
+        player.categoria_atual = Some("gt4".to_string());
+        player.atributos.skill = 98.0;
+        driver_queries::update_driver(&db.conn, &player).expect("update player");
+
+        crate::convocation::advance_to_convocation_window(&db.conn).expect("advance convocation");
+        crate::convocation::run_convocation_window(&db.conn).expect("run convocation");
+        let offers = crate::commands::convocation::get_player_special_offers_in_base_dir(
+            &base_dir,
+            "career_001",
+        )
+        .expect("special offers");
+        crate::commands::convocation::respond_player_special_offer_in_base_dir(
+            &base_dir,
+            "career_001",
+            &offers[0].id,
+            true,
+        )
+        .expect("accept special offer");
+
+        let db_after_accept = Database::open_existing(&db_path).expect("db after accept");
+        let accepted_contract =
+            crate::db::queries::contracts::get_active_especial_contract_for_pilot(
+                &db_after_accept.conn,
+                &player.id,
+            )
+            .expect("special contract query")
+            .expect("player should have active special contract");
+        let accepted_team =
+            team_queries::get_team_by_id(&db_after_accept.conn, &accepted_contract.equipe_id)
+                .expect("accepted team query")
+                .expect("accepted team");
+        assert_eq!(accepted_contract.categoria, "endurance");
+        assert!(
+            accepted_team.piloto_1_id.as_deref() == Some(player.id.as_str())
+                || accepted_team.piloto_2_id.as_deref() == Some(player.id.as_str()),
+            "o jogador deveria constar no lineup da equipe especial aceita"
+        );
+
+        crate::convocation::iniciar_bloco_especial(&db_after_accept.conn)
+            .expect("start special block");
+        let endurance_teams =
+            team_queries::get_teams_by_category(&db_after_accept.conn, "endurance")
+                .expect("endurance teams");
+        let endurance_drivers =
+            driver_queries::get_drivers_by_active_category(&db_after_accept.conn, "endurance")
+                .expect("endurance drivers");
+        let endurance_lookup = build_team_lookup(&endurance_teams);
+        let missing_before_sim = endurance_drivers
+            .iter()
+            .filter(|driver| !endurance_lookup.contains_key(&driver.id))
+            .map(|driver| format!("{} ({})", driver.nome, driver.id))
+            .collect::<Vec<_>>();
+        assert!(
+            endurance_drivers
+                .iter()
+                .any(|driver| driver.id == player.id),
+            "o jogador deveria aparecer entre os pilotos ativos de endurance"
+        );
+        assert!(
+            endurance_lookup.contains_key(&player.id),
+            "o lookup de equipes de endurance deveria conter o jogador antes da simulacao"
+        );
+        assert!(
+            missing_before_sim.is_empty(),
+            "todos os pilotos ativos de endurance deveriam ter equipe antes da simulacao: {:?}",
+            missing_before_sim
+        );
+        let season = season_queries::get_active_season(&db_after_accept.conn)
+            .expect("season")
+            .expect("active season");
+        let next_special_race = get_next_race(&db_after_accept.conn, &season.id, "endurance")
+            .expect("next special race")
+            .expect("pending special race");
+        drop(db_after_accept);
+
+        let result =
+            simulate_race_weekend_in_base_dir(&base_dir, "career_001", &next_special_race.id)
+                .expect("simulate special race");
+
+        assert!(
+            result.player_race.race_results.iter().any(|entry| entry.is_jogador),
+            "o grid especial deveria incluir o jogador quando categoria_especial_ativa estiver ativa"
+        );
+
+        let _ = fs::remove_dir_all(base_dir);
+    }
+
+    #[test]
+    fn test_simulate_special_block_fast_forwards_when_player_stays_out() {
+        let base_dir = unique_test_dir("simulate_special_block_skip");
+        fs::create_dir_all(&base_dir).expect("base dir");
+
+        create_career_in_base_dir(
+            &base_dir,
+            CreateCareerInput {
+                player_name: "Joao Silva".to_string(),
+                player_nationality: "br".to_string(),
+                player_age: Some(20),
+                category: "mazda_rookie".to_string(),
+                team_index: 0,
+                difficulty: "medio".to_string(),
+            },
+        )
+        .expect("career");
+
+        let config = AppConfig::load_or_default(&base_dir);
+        let db_path = config.saves_dir().join("career_001").join("career.db");
+        let db = Database::open_existing(&db_path).expect("db");
+        let mut player = driver_queries::get_player_driver(&db.conn).expect("player");
+        player.categoria_atual = Some("gt4".to_string());
+        player.atributos.skill = 98.0;
+        driver_queries::update_driver(&db.conn, &player).expect("update player");
+
+        crate::convocation::advance_to_convocation_window(&db.conn).expect("advance convocation");
+        crate::convocation::run_convocation_window(&db.conn).expect("run convocation");
+        crate::convocation::iniciar_bloco_especial(&db.conn).expect("start special block");
+        drop(db);
+
+        let result =
+            simulate_special_block_in_base_dir(&base_dir, "career_001").expect("fast sim special");
+
+        assert_eq!(result.total_races_simulated, 16);
+
+        let refreshed_db = Database::open_existing(&db_path).expect("refreshed db");
+        let season = season_queries::get_active_season(&refreshed_db.conn)
+            .expect("season")
+            .expect("active season");
+        let pending_specials = calendar_queries::get_pending_races_for_category(
+            &refreshed_db.conn,
+            &season.id,
+            "production_challenger",
+        )
+        .expect("production pending")
+        .len()
+            + calendar_queries::get_pending_races_for_category(
+                &refreshed_db.conn,
+                &season.id,
+                "endurance",
+            )
+            .expect("endurance pending")
+            .len();
+        assert_eq!(
+            pending_specials, 0,
+            "nao deveria restar corrida especial pendente"
+        );
+
+        let _ = fs::remove_dir_all(base_dir);
+    }
+
+    #[test]
+    fn test_simulate_special_block_rejects_player_inside_special_grid() {
+        let base_dir = unique_test_dir("simulate_special_block_player_inside");
+        fs::create_dir_all(&base_dir).expect("base dir");
+
+        create_career_in_base_dir(
+            &base_dir,
+            CreateCareerInput {
+                player_name: "Joao Silva".to_string(),
+                player_nationality: "br".to_string(),
+                player_age: Some(20),
+                category: "mazda_rookie".to_string(),
+                team_index: 0,
+                difficulty: "medio".to_string(),
+            },
+        )
+        .expect("career");
+
+        let config = AppConfig::load_or_default(&base_dir);
+        let db_path = config.saves_dir().join("career_001").join("career.db");
+        let db = Database::open_existing(&db_path).expect("db");
+        let mut player = driver_queries::get_player_driver(&db.conn).expect("player");
+        player.categoria_atual = Some("gt4".to_string());
+        player.atributos.skill = 98.0;
+        driver_queries::update_driver(&db.conn, &player).expect("update player");
+
+        crate::convocation::advance_to_convocation_window(&db.conn).expect("advance convocation");
+        crate::convocation::run_convocation_window(&db.conn).expect("run convocation");
+        let offers = crate::commands::convocation::get_player_special_offers_in_base_dir(
+            &base_dir,
+            "career_001",
+        )
+        .expect("special offers");
+        crate::commands::convocation::respond_player_special_offer_in_base_dir(
+            &base_dir,
+            "career_001",
+            &offers[0].id,
+            true,
+        )
+        .expect("accept special offer");
+        crate::convocation::iniciar_bloco_especial(&db.conn).expect("start special block");
+        drop(db);
+
+        let error = simulate_special_block_in_base_dir(&base_dir, "career_001")
+            .expect_err("player should not skip entered special block");
+        assert!(error.contains("deve correr essa fase normalmente"));
 
         let _ = fs::remove_dir_all(base_dir);
     }

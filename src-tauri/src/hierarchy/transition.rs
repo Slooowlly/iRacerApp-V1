@@ -8,6 +8,8 @@
 //!   zera os 5 contadores temporais.
 //! - `FullReset`: qualquer outra condição → tensao=0, status=Estavel, todos os contadores=0.
 
+#![allow(dead_code)]
+
 use rusqlite::Connection;
 
 use crate::db::queries::teams as team_queries;
@@ -175,6 +177,10 @@ pub fn validate_and_normalize_team_hierarchies(conn: &Connection) -> Result<(), 
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| format!("Falha ao coletar equipes: {e}"))?;
 
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|e| format!("Falha ao abrir transacao de hierarquia: {e}"))?;
+
     for (team_id, piloto_1, piloto_2, n1_id, n2_id) in rows {
         // Lineup incompleto = violação de contrato (fill_all_remaining_vacancies falhou)
         if piloto_1.is_none() || piloto_2.is_none() {
@@ -185,8 +191,9 @@ pub fn validate_and_normalize_team_hierarchies(conn: &Connection) -> Result<(), 
             ));
         }
 
-        let p1 = piloto_1.as_deref();
-        let p2 = piloto_2.as_deref();
+        let lineup = ResolvedTeamLineup::new(&team_id, piloto_1.as_deref(), piloto_2.as_deref())?;
+        let p1 = Some(lineup.n1_id.as_str());
+        let p2 = Some(lineup.n2_id.as_str());
 
         // N1/N2 já corretos → skip (caminho normal para equipes que passaram pelo UpdateHierarchy)
         if n1_id.as_deref() == p1 && n2_id.as_deref() == p2 {
@@ -196,7 +203,7 @@ pub fn validate_and_normalize_team_hierarchies(conn: &Connection) -> Result<(), 
         // Desalinhado → normalizar com reset completo.
         // Ocorre apenas para equipes sem contexto de preservação (vagas preenchidas por fallback).
         team_queries::update_team_hierarchy(
-            conn,
+            &tx,
             &team_id,
             p1,
             p2,
@@ -205,9 +212,12 @@ pub fn validate_and_normalize_team_hierarchies(conn: &Connection) -> Result<(), 
         )
         .map_err(|e| format!("Falha ao normalizar hierarquia da equipe '{team_id}': {e}"))?;
 
-        team_queries::update_team_duel_counters(conn, &team_id, 0, 0, 0, 0, 0)
+        team_queries::update_team_duel_counters(&tx, &team_id, 0, 0, 0, 0, 0)
             .map_err(|e| format!("Falha ao resetar contadores da equipe '{team_id}': {e}"))?;
     }
+
+    tx.commit()
+        .map_err(|e| format!("Falha ao confirmar normalizacao de hierarquia: {e}"))?;
 
     Ok(())
 }
@@ -502,6 +512,26 @@ mod tests {
     }
 
     #[test]
+    fn test_normalize_fails_on_duplicate_pilot_lineup() {
+        let conn = setup_test_db();
+        insert_team(
+            &conn,
+            "T001",
+            "gt3",
+            Some("P001"),
+            Some("P001"),
+            None,
+            None,
+            0.0,
+            "estavel",
+        );
+
+        let result = validate_and_normalize_team_hierarchies(&conn);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("mesmo piloto"));
+    }
+
+    #[test]
     fn test_normalize_skips_special_categories() {
         let conn = setup_test_db();
         // Equipe especial com lineup incompleto — deve ser ignorada (não retorna erro)
@@ -529,6 +559,48 @@ mod tests {
         );
 
         validate_and_normalize_team_hierarchies(&conn).unwrap();
+    }
+
+    #[test]
+    fn test_normalize_rolls_back_when_counter_reset_fails() {
+        let conn = setup_test_db();
+        insert_team(
+            &conn,
+            "T001",
+            "gt3",
+            Some("P001"),
+            Some("P002"),
+            None,
+            None,
+            77.0,
+            "crise",
+        );
+        conn.execute(
+            "UPDATE teams SET hierarquia_duelos_total = 5 WHERE id = 'T001'",
+            [],
+        )
+        .unwrap();
+        conn.execute_batch(
+            "CREATE TRIGGER fail_duel_counter_reset
+             BEFORE UPDATE OF hierarquia_duelos_total ON teams
+             FOR EACH ROW
+             WHEN NEW.id = 'T001'
+             BEGIN
+                 SELECT RAISE(FAIL, 'boom duel reset');
+             END;",
+        )
+        .unwrap();
+
+        let result = validate_and_normalize_team_hierarchies(&conn);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("resetar contadores"));
+
+        let (n1, n2, tensao, status, duelos) = read_hierarchy(&conn, "T001");
+        assert_eq!(n1, None);
+        assert_eq!(n2, None);
+        assert!((tensao - 77.0).abs() < f64::EPSILON);
+        assert_eq!(status, "crise");
+        assert_eq!(duelos, 5);
     }
 
     // ── ResolvedTeamLineup ──

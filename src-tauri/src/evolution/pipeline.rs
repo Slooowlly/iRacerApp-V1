@@ -34,33 +34,36 @@ use crate::promotion::pipeline::run_promotion_relegation;
 use crate::rivalry::apply_season_end_rivalry_decay;
 
 // Reexports para compatibilidade — callsites externos usam crate::evolution::pipeline::*
-pub use crate::evolution::context::{EndOfSeasonResult, LicenseEarned, RetirementInfo, RookieInfo};
+pub use crate::evolution::context::{EndOfSeasonResult, RetirementInfo, RookieInfo};
 
 pub fn run_end_of_season(
-    conn: &Connection,
+    conn: &mut Connection,
     season: &Season,
     save_path: &Path,
 ) -> Result<EndOfSeasonResult, String> {
     let mut rng = StdRng::seed_from_u64(((season.numero as u64) << 32) | season.ano as u64);
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|e| format!("Falha ao iniciar transacao de fim de temporada: {e}"))?;
 
-    let (teams_by_id, contracts_by_driver) = build_context(conn)?;
+    let (teams_by_id, contracts_by_driver) = build_context(&tx)?;
 
-    let standings = build_and_persist_standings(conn, season, &contracts_by_driver)?;
+    let standings = build_and_persist_standings(&tx, season, &contracts_by_driver)?;
     let standings_by_driver: HashMap<String, StandingEntry> = standings
         .iter()
         .cloned()
         .map(|entry| (entry.driver_id.clone(), entry))
         .collect();
 
-    let licenses_earned = persist_licenses(conn, &standings, &standings_by_driver)
+    let licenses_earned = persist_licenses(&tx, &standings, &standings_by_driver)
         .map_err(|e| format!("Falha ao persistir licencas: {e}"))?;
 
-    season_queries::finalize_season(conn, &season.id)
+    season_queries::finalize_season(&tx, &season.id)
         .map_err(|e| format!("Falha ao finalizar temporada: {e}"))?;
 
     let (growth_reports, motivation_reports, retirements, existing_names) =
         process_driver_evolution(
-            conn,
+            &tx,
             season,
             &standings_by_driver,
             &contracts_by_driver,
@@ -68,21 +71,26 @@ pub fn run_end_of_season(
             &mut rng,
         )?;
 
-    let rookies_generated = process_rookie_phase(conn, existing_names, &mut rng)?;
-
-    archive_driver_season(conn, season, &standings_by_driver)
+    archive_driver_season(&tx, season, &standings_by_driver)
         .map_err(|e| format!("Falha ao arquivar temporada dos pilotos: {e}"))?;
 
-    let promotion_result = run_promotion_relegation(conn, season.numero, &mut rng)
+    let rookies_generated = process_rookie_phase(&tx, existing_names, &mut rng)?;
+
+    let promotion_result = run_promotion_relegation(&tx, season.numero, &mut rng)
         .map_err(|e| format!("Erro na promocao/rebaixamento: {e}"))?;
 
-    apply_season_end_rivalry_decay(conn, season.numero)
+    apply_season_end_rivalry_decay(&tx, season.numero)
         .map_err(|e| format!("Erro no decaimento de rivalidades: {e}"))?;
 
-    let new_season = create_next_season_phase(conn, season, &mut rng)?;
+    let new_season = create_next_season_phase(&tx, season, &mut rng)?;
 
     let (preseason_initialized, preseason_total_weeks) =
-        initialize_preseason_phase(conn, &new_season, save_path, &mut rng)?;
+        initialize_preseason_phase(&tx, &new_season, save_path, &mut rng)?;
+
+    tx.commit().map_err(|e| {
+        let _ = std::fs::remove_file(save_path.join("preseason_plan.json"));
+        format!("Falha ao confirmar fim de temporada: {e}")
+    })?;
 
     Ok(EndOfSeasonResult {
         growth_reports,
@@ -107,8 +115,8 @@ fn build_context(
         .into_iter()
         .map(|team| (team.id.clone(), team))
         .collect();
-    let active_contracts = contract_queries::get_all_active_contracts(conn)
-        .map_err(|e| format!("Falha ao buscar contratos ativos: {e}"))?;
+    let active_contracts = contract_queries::get_all_active_regular_contracts(conn)
+        .map_err(|e| format!("Falha ao buscar contratos regulares ativos: {e}"))?;
     let contracts_by_driver: HashMap<String, Contract> = active_contracts
         .into_iter()
         .map(|contract| (contract.piloto_id.clone(), contract))
@@ -209,7 +217,15 @@ fn process_driver_evolution(
                 .reason
                 .clone()
                 .unwrap_or_else(|| "Aposentadoria".to_string());
-            persist_retired_driver(conn, driver, season, &reason)
+            let final_category = driver.categoria_atual.clone().or_else(|| {
+                standings_by_driver
+                    .get(&driver.id)
+                    .map(|standing| standing.category.clone())
+            });
+            let retired_category = final_category
+                .clone()
+                .unwrap_or_else(|| "SemCategoria".to_string());
+            persist_retired_driver(conn, driver, season, &retired_category, &reason)
                 .map_err(|e| format!("Falha ao registrar aposentadoria: {e}"))?;
             process_retirement(driver);
             driver.categoria_atual = None;
@@ -218,7 +234,7 @@ fn process_driver_evolution(
                 driver_name: driver.nome.clone(),
                 age: driver.idade as i32,
                 reason,
-                categoria: driver.categoria_atual.clone(),
+                categoria: final_category,
             });
         }
         driver_queries::update_driver(conn, driver)
@@ -289,10 +305,15 @@ fn persist_retired_driver(
     conn: &Connection,
     driver: &Driver,
     season: &Season,
+    final_category: &str,
     reason: &str,
-) -> Result<(), rusqlite::Error> {
-    let stats_json =
-        serde_json::to_string(&driver.stats_carreira).unwrap_or_else(|_| "{}".to_string());
+) -> Result<(), String> {
+    let stats_json = serde_json::to_string(&driver.stats_carreira).map_err(|e| {
+        format!(
+            "Falha ao serializar estatisticas do piloto aposentado '{}': {e}",
+            driver.nome
+        )
+    })?;
     conn.execute(
         "INSERT OR REPLACE INTO retired (
             piloto_id, nome, temporada_aposentadoria, categoria_final, estatisticas, motivo
@@ -301,11 +322,12 @@ fn persist_retired_driver(
             &driver.id,
             &driver.nome,
             season.numero.to_string(),
-            driver.categoria_atual.clone().unwrap_or_default(),
+            final_category,
             stats_json,
             reason,
         ],
-    )?;
+    )
+    .map_err(|e| format!("Falha ao salvar piloto aposentado '{}': {e}", driver.nome))?;
     Ok(())
 }
 
@@ -321,18 +343,23 @@ mod tests {
     use crate::db::queries::calendar as calendar_queries;
     use crate::models::contract::Contract;
     use crate::models::driver::Driver;
-    use crate::models::enums::TeamRole;
+    use crate::models::enums::{ContractType, DriverStatus, TeamRole};
     use crate::models::team::Team;
 
     #[test]
     fn test_end_of_season_increments_year() {
-        let (conn, season) = setup_pipeline_fixture();
+        let (mut conn, season) = setup_pipeline_fixture();
         let save_path = unique_test_dir("eos_year");
 
-        let result = run_end_of_season(&conn, &season, &save_path).expect("pipeline should run");
+        let result =
+            run_end_of_season(&mut conn, &season, &save_path).expect("pipeline should run");
 
         assert_eq!(result.new_year, season.ano + 1);
-        assert!(result.promotion_result.movements.is_empty());
+        assert!(
+            result.promotion_result.errors.is_empty(),
+            "promotion/relegation should keep invariants in fixture: {:?}",
+            result.promotion_result.errors
+        );
         assert!(result.preseason_initialized);
         assert!(result.preseason_total_weeks >= 3);
         let meta_year: String = conn
@@ -349,10 +376,11 @@ mod tests {
 
     #[test]
     fn test_end_of_season_creates_new_season() {
-        let (conn, season) = setup_pipeline_fixture();
+        let (mut conn, season) = setup_pipeline_fixture();
         let save_path = unique_test_dir("eos_new_season");
 
-        let result = run_end_of_season(&conn, &season, &save_path).expect("pipeline should run");
+        let result =
+            run_end_of_season(&mut conn, &season, &save_path).expect("pipeline should run");
 
         let active = season_queries::get_active_season(&conn)
             .expect("active season query")
@@ -365,10 +393,10 @@ mod tests {
 
     #[test]
     fn test_end_of_season_resets_stats() {
-        let (conn, season) = setup_pipeline_fixture();
+        let (mut conn, season) = setup_pipeline_fixture();
         let save_path = unique_test_dir("eos_reset_stats");
 
-        run_end_of_season(&conn, &season, &save_path).expect("pipeline should run");
+        run_end_of_season(&mut conn, &season, &save_path).expect("pipeline should run");
 
         let drivers = driver_queries::get_drivers_by_category(&conn, "mazda_rookie")
             .expect("drivers should load");
@@ -387,11 +415,118 @@ mod tests {
     }
 
     #[test]
+    fn test_end_of_season_retirement_report_keeps_final_category() {
+        let (mut conn, season) = setup_pipeline_fixture();
+        let save_path = unique_test_dir("eos_retirement_category");
+
+        let mut driver = driver_queries::get_driver(&conn, "P001").expect("retiring driver");
+        driver.idade = 47;
+        driver_queries::update_driver(&conn, &driver).expect("update retiring driver");
+
+        let result =
+            run_end_of_season(&mut conn, &season, &save_path).expect("pipeline should run");
+
+        let retirement = result
+            .retirements
+            .iter()
+            .find(|entry| entry.driver_id == "P001")
+            .expect("driver should retire");
+        assert_eq!(retirement.categoria.as_deref(), Some("mazda_rookie"));
+
+        let _ = std::fs::remove_dir_all(save_path);
+    }
+
+    #[test]
+    fn test_end_of_season_archive_excludes_newly_generated_rookies() {
+        let (mut conn, season) = setup_pipeline_fixture();
+        let save_path = unique_test_dir("eos_archive_excludes_rookies");
+
+        let result =
+            run_end_of_season(&mut conn, &season, &save_path).expect("pipeline should run");
+
+        let archived_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM driver_season_archive WHERE season_number = ?1",
+                rusqlite::params![season.numero],
+                |row| row.get(0),
+            )
+            .expect("archive count");
+        assert_eq!(
+            archived_count, 2,
+            "only season participants should be archived"
+        );
+
+        for rookie in &result.rookies_generated {
+            let rookie_archived: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM driver_season_archive WHERE piloto_id = ?1 AND season_number = ?2",
+                    rusqlite::params![&rookie.driver_id, season.numero],
+                    |row| row.get(0),
+                )
+                .expect("rookie archive count");
+            assert_eq!(
+                rookie_archived, 0,
+                "rookie '{}' should not be archived for the previous season",
+                rookie.driver_id
+            );
+        }
+
+        let _ = std::fs::remove_dir_all(save_path);
+    }
+
+    #[test]
+    fn test_end_of_season_standings_keep_regular_team_when_special_contract_is_active() {
+        let (mut conn, season) = setup_pipeline_fixture();
+        let save_path = unique_test_dir("eos_regular_contract_priority");
+
+        let special_team = sample_named_team(
+            "production_challenger",
+            "SP001",
+            "Special Team",
+            Some("mazda"),
+            1234,
+        );
+        team_queries::insert_team(&conn, &special_team).expect("insert special team");
+
+        let mut special_contract = Contract::new(
+            "C900".to_string(),
+            "P001".to_string(),
+            "Piloto A".to_string(),
+            special_team.id.clone(),
+            special_team.nome.clone(),
+            1,
+            1,
+            50_000.0,
+            TeamRole::Numero1,
+            "production_challenger".to_string(),
+        );
+        special_contract.tipo = ContractType::Especial;
+        special_contract.classe = Some("mazda".to_string());
+        contract_queries::insert_contract(&conn, &special_contract)
+            .expect("insert special contract");
+
+        run_end_of_season(&mut conn, &season, &save_path).expect("pipeline should run");
+
+        let standings_team_id: String = conn
+            .query_row(
+                "SELECT equipe_id FROM standings
+                 WHERE temporada_id = ?1 AND piloto_id = ?2",
+                rusqlite::params![&season.id, "P001"],
+                |row| row.get(0),
+            )
+            .expect("standing for driver");
+        assert_eq!(standings_team_id, "T001");
+
+        let _ = std::fs::remove_dir_all(save_path);
+    }
+
+    #[test]
     fn test_promotion_initializes_preseason_after_movements() {
-        let (conn, season, promoted_team_id, freed_driver_id) = setup_promotion_order_fixture();
+        let (mut conn, season, promoted_team_id, freed_driver_id) = setup_promotion_order_fixture();
         let save_path = unique_test_dir("eos_preseason_order");
 
-        let result = run_end_of_season(&conn, &season, &save_path).expect("pipeline should run");
+        let result =
+            run_end_of_season(&mut conn, &season, &save_path).expect("pipeline should run");
 
         assert!(result
             .promotion_result
@@ -430,12 +565,48 @@ mod tests {
         let _ = std::fs::remove_dir_all(save_path);
     }
 
+    #[test]
+    fn test_end_of_season_rolls_back_when_preseason_plan_save_fails() {
+        let (mut conn, season) = setup_pipeline_fixture();
+        let blocked_path = unique_test_dir("eos_save_failure").join("blocked_path");
+        std::fs::write(&blocked_path, "not a directory").expect("blocker file");
+        let mut retiring_driver =
+            driver_queries::get_driver(&conn, "P001").expect("retiring driver");
+        retiring_driver.idade = 47;
+        driver_queries::update_driver(&conn, &retiring_driver).expect("update retiring driver");
+
+        let result = run_end_of_season(&mut conn, &season, &blocked_path);
+
+        assert!(
+            result.is_err(),
+            "pipeline should fail when save path is invalid"
+        );
+        let active = season_queries::get_active_season(&conn)
+            .expect("active season query")
+            .expect("original season should remain active");
+        assert_eq!(active.id, season.id);
+        let all_seasons = season_queries::get_all_seasons(&conn).expect("all seasons");
+        assert_eq!(all_seasons.len(), 1, "new season should not be persisted");
+
+        let retired_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM retired", [], |row| row.get(0))
+            .expect("retired count");
+        assert_eq!(retired_count, 0, "retirement snapshot should rollback");
+        let driver = driver_queries::get_driver(&conn, "P001").expect("driver after rollback");
+        assert_eq!(driver.status, DriverStatus::Ativo);
+        assert_eq!(driver.categoria_atual.as_deref(), Some("mazda_rookie"));
+        assert_eq!(driver.idade, 47);
+
+        let _ = std::fs::remove_dir_all(blocked_path.parent().expect("parent"));
+    }
+
     fn setup_pipeline_fixture() -> (Connection, Season) {
         let conn = Connection::open_in_memory().expect("in-memory db");
         migrations::run_all(&conn).expect("schema");
 
         let season = Season::new("S001".to_string(), 1, 2024);
         season_queries::insert_season(&conn, &season).expect("season insert");
+        seed_pipeline_supporting_teams(&conn);
 
         let mut rng = StdRng::seed_from_u64(10);
         let team_a = sample_team("mazda_rookie", "T001", &mut rng);
@@ -552,6 +723,22 @@ mod tests {
         promoted_team.stats_vitorias = 8;
         promoted_team.stats_melhor_resultado = 1;
         team_queries::insert_team(conn, &promoted_team).expect("insert promoted gt4 team");
+    }
+
+    fn seed_pipeline_supporting_teams(conn: &Connection) {
+        insert_ranked_teams(conn, "mazda_rookie", "MR", 4, None);
+        insert_ranked_teams(conn, "toyota_rookie", "TR", 6, None);
+        insert_ranked_teams(conn, "mazda_amador", "MA", 10, None);
+        insert_ranked_teams(conn, "toyota_amador", "TA", 10, None);
+        insert_ranked_teams(conn, "bmw_m2", "BM", 10, None);
+        insert_ranked_teams(conn, "production_challenger", "PM", 5, Some("mazda"));
+        insert_ranked_teams(conn, "production_challenger", "PT", 5, Some("toyota"));
+        insert_ranked_teams(conn, "production_challenger", "PB", 5, Some("bmw"));
+        insert_ranked_teams(conn, "gt4", "GT4", 10, None);
+        insert_ranked_teams(conn, "gt3", "GT3", 14, None);
+        insert_ranked_teams(conn, "endurance", "EG4", 6, Some("gt4"));
+        insert_ranked_teams(conn, "endurance", "EG3", 6, Some("gt3"));
+        insert_ranked_teams(conn, "endurance", "LMP", 5, Some("lmp2"));
     }
 
     fn seed_gt4_promotion_drivers(conn: &Connection) {

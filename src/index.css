@@ -2,27 +2,153 @@
 @tailwind components;
 @tailwind utilities;
 
-* {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
+:root {
+  --app-bg: #0e0e10;
+  --app-card: #1c1c1e;
+  --text-primary: #e6edf3;
+  --text-secondary: #b6c2cf;
+  --text-muted: #7e8a97;
+  --accent-primary: #58a6ff;
+  --accent-hover: #79b8ff;
+  --status-green: #3fb950;
+  --status-red: #f85149;
+  --status-yellow: #d29922;
+  --status-purple: #bc8cff;
+  --border: #21262d;
 }
 
-body {
-  background-color: #0E0E10;
-  color: #e6edf3;
-  font-family: 'Space Grotesk Variable', 'Segoe UI', system-ui, sans-serif;
-  font-size: 10px;
-  overflow: hidden;
+* {
+  box-sizing: border-box;
   user-select: none;
 }
 
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  overflow: hidden;
+  font-family: "Space Grotesk Variable", "Segoe UI", system-ui, sans-serif;
+  font-size: 10px;
+  color: var(--text-primary);
+  background: var(--app-bg);
+}
+
+/* ─── App Shell ──────────────────────────────────────────────────────────── */
+
+.app-shell {
+  background:
+    radial-gradient(circle at top, rgba(111, 212, 255, 0.14), transparent 30%),
+    radial-gradient(circle at 82% 18%, rgba(73, 154, 255, 0.1), transparent 24%),
+    radial-gradient(circle at bottom, rgba(56, 111, 214, 0.08), transparent 24%),
+    linear-gradient(180deg, #040812 0%, #08111d 48%, #050910 100%);
+}
+
+.app-backdrop {
+  background:
+    radial-gradient(circle at 12% 12%, rgba(255, 255, 255, 0.07), transparent 36%),
+    radial-gradient(circle at 88% 88%, rgba(88, 166, 255, 0.1), transparent 36%);
+}
+
+/* ─── Typography ─────────────────────────────────────────────────────────── */
+
+.text-title-lg {
+  font-size: 18px;
+  line-height: 1.3;
+  font-weight: 700;
+}
+
+.text-title-md {
+  font-size: 15px;
+  line-height: 1.3;
+  font-weight: 700;
+}
+
+.text-title-sm {
+  font-size: 12px;
+  line-height: 1.3;
+  font-weight: 700;
+}
+
+.text-body-lg {
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.text-body {
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.text-body-sm {
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+.num-highlight {
+  font-size: 22px;
+  line-height: 1;
+  font-weight: 700;
+}
+
+.num-medium {
+  font-size: 16px;
+  line-height: 1;
+  font-weight: 700;
+}
+
+/* ─── Glass System ───────────────────────────────────────────────────────── */
+
+.glass-light {
+  background: rgba(10, 15, 28, 0.18);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.glass {
+  background: rgba(10, 15, 28, 0.25);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.11);
+}
+
+.glass-strong {
+  background: rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), 0 24px 80px rgba(0, 0, 0, 0.3);
+}
+
+/* ─── Glows ──────────────────────────────────────────────────────────────── */
+
+.glow-blue {
+  box-shadow: 0 0 30px rgba(88, 166, 255, 0.18), 0 0 60px rgba(88, 166, 255, 0.08);
+}
+
+.glow-green {
+  box-shadow: 0 0 30px rgba(63, 185, 80, 0.18), 0 0 60px rgba(63, 185, 80, 0.08);
+}
+
+/* ─── Transitions ────────────────────────────────────────────────────────── */
+
+.transition-glass {
+  transition: all 300ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ─── Scrollbars ─────────────────────────────────────────────────────────── */
+
+/* Global (mantido para compatibilidade com componentes existentes) */
 ::-webkit-scrollbar {
   width: 6px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #0E0E10;
+  background: #0e0e10;
 }
 
 ::-webkit-scrollbar-thumb {
@@ -34,240 +160,25 @@ body {
   background: #484f58;
 }
 
-@layer components {
-  .glass-card {
-    @apply bg-app-card/80 backdrop-blur-md border border-border rounded-lg;
-  }
-
-  .glass-card-hover {
-    @apply glass-card hover:bg-app-card-hover hover:border-border-hover transition-all duration-200;
-  }
+/* Escopado para novos componentes */
+.scroll-area::-webkit-scrollbar {
+  width: 6px;
 }
 
-/* =============================================================
-   GLASS SYSTEM — valores aprovados do projeto iRacerApp
-   .glass-light  → sub-elementos internos  (blur 8px,  0.18 opacity)
-   .glass        → cards internos          (blur 12px, 0.25 opacity)
-   .glass-strong → painéis / outer cards   (blur 20px, 0.08 white — frosted)
-   entry-panel   → mesmo que glass-strong  (launcher / menus)
-   ============================================================= */
-.glass {
-  background: rgba(10, 15, 28, 0.25);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.11);
+.scroll-area::-webkit-scrollbar-track {
+  background: #0e0e10;
 }
 
-.glass-light {
-  background: rgba(10, 15, 28, 0.18);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+.scroll-area::-webkit-scrollbar-thumb {
+  background: #30363d;
+  border-radius: 3px;
 }
 
-.glass-strong {
-  background: rgba(255, 255, 255, 0.08);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border: 1px solid rgba(255, 255, 255, 0.18);
+.scroll-area::-webkit-scrollbar-thumb:hover {
+  background: #484f58;
 }
 
-.glow-blue {
-  box-shadow: 0 0 30px rgba(88, 166, 255, 0.18), 0 0 60px rgba(88, 166, 255, 0.08);
-}
-
-.glow-green {
-  box-shadow: 0 0 30px rgba(63, 185, 80, 0.18), 0 0 60px rgba(63, 185, 80, 0.08);
-}
-
-.bg-gradient-animated {
-  background: linear-gradient(
-    135deg,
-    #030810 0%,
-    #060e1c 25%,
-    #071428 50%,
-    #060e1c 75%,
-    #030810 100%
-  );
-  background-size: 400% 400%;
-  animation: gradient-shift 15s ease infinite;
-}
-
-.transition-glass {
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.animate-fade-in {
-  animation: fade-in 0.2s ease-out;
-}
-
-.animate-scale-in {
-  animation: scale-in 0.25s ease-out;
-}
-
-.animate-drawer-in {
-  animation: drawer-in 0.28s cubic-bezier(0.22, 1, 0.36, 1);
-}
-
-.animate-fade-out {
-  animation: fade-out 0.28s ease-in forwards;
-}
-
-.animate-drawer-out {
-  animation: drawer-out 0.28s cubic-bezier(0.4, 0, 1, 1) forwards;
-}
-
-.animate-news-scope-drawer-in {
-  animation: news-scope-drawer-in 0.26s cubic-bezier(0.22, 1, 0.36, 1);
-  transform-origin: top left;
-}
-
-.animate-edge-rail-in {
-  animation: edge-rail-in 0.18s cubic-bezier(0.22, 1, 0.36, 1);
-}
-
-@keyframes edge-rail-in {
-  from {
-    opacity: 0;
-    transform: translateX(18px);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
-}
-
-.wizard-panel {
-  position: relative;
-  overflow: hidden;
-}
-
-.wizard-panel::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background:
-    radial-gradient(circle at top right, rgba(111, 212, 255, 0.12), transparent 32%),
-    radial-gradient(circle at bottom left, rgba(73, 154, 255, 0.08), transparent 28%);
-  pointer-events: none;
-}
-
-.card-hover {
-  transition: transform 0.25s ease, box-shadow 0.25s ease, border-color 0.25s ease, background 0.25s ease;
-}
-
-.card-hover:hover {
-  transform: translateY(-2px) scale(1.01);
-  box-shadow: 0 0 40px rgba(88, 166, 255, 0.18), 0 0 80px rgba(88, 166, 255, 0.06);
-}
-
-.wizard-step-enter {
-  animation: wizard-step-enter 0.35s ease;
-}
-
-@keyframes gradient-shift {
-  0% { background-position: 0% 50%; }
-  50% { background-position: 100% 50%; }
-  100% { background-position: 0% 50%; }
-}
-
-@keyframes wizard-step-enter {
-  0% {
-    opacity: 0;
-    transform: translateY(12px);
-  }
-  100% {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-@keyframes fade-in {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
-
-@keyframes scale-in {
-  from {
-    opacity: 0;
-    transform: scale(0.95);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1);
-  }
-}
-
-@keyframes fade-out {
-  from {
-    opacity: 1;
-  }
-  to {
-    opacity: 0;
-  }
-}
-
-@keyframes drawer-in {
-  from {
-    opacity: 0;
-    transform: translateX(100%);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
-}
-
-@keyframes drawer-out {
-  from {
-    opacity: 1;
-    transform: translateX(0);
-  }
-  to {
-    opacity: 0;
-    transform: translateX(100%);
-  }
-}
-
-@keyframes news-scope-drawer-in {
-  from {
-    opacity: 0;
-    transform: translateY(-12px) scale(0.98);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-}
-
-@keyframes bootLogoReveal {
-  0% {
-    opacity: 0;
-    transform: translateY(18px) scale(0.88);
-    filter: blur(10px);
-  }
-  22% {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-    filter: blur(0);
-  }
-  78% {
-    opacity: 1;
-    transform: translateY(0) scale(1.02);
-    filter: blur(0);
-  }
-  100% {
-    opacity: 0;
-    transform: translateY(-10px) scale(1.06);
-    filter: blur(4px);
-  }
-}
+/* ─── Entry / Launcher Shell ─────────────────────────────────────────────── */
 
 .entry-shell {
   position: relative;
@@ -339,36 +250,195 @@ body {
   border-color: rgba(111, 212, 255, 0.30);
 }
 
-.app-shell {
+/* ─── Wizard ─────────────────────────────────────────────────────────────── */
+
+.wizard-panel {
   position: relative;
-  min-height: 100vh;
-  width: 100%;
   overflow: hidden;
-  color: #e6edf3;
-  background:
-    radial-gradient(circle at top, rgba(111, 212, 255, 0.14), transparent 30%),
-    radial-gradient(circle at 82% 18%, rgba(73, 154, 255, 0.10), transparent 24%),
-    radial-gradient(circle at bottom, rgba(56, 111, 214, 0.08), transparent 24%),
-    linear-gradient(180deg, #040812 0%, #08111d 48%, #050910 100%);
 }
 
-.app-backdrop {
+.wizard-panel::before {
+  content: "";
   position: absolute;
   inset: 0;
   background:
-    radial-gradient(circle at top left, rgba(255, 255, 255, 0.04), transparent 18%),
-    radial-gradient(circle at bottom right, rgba(98, 197, 255, 0.10), transparent 24%);
+    radial-gradient(circle at top right, rgba(111, 212, 255, 0.12), transparent 32%),
+    radial-gradient(circle at bottom left, rgba(73, 154, 255, 0.08), transparent 28%);
   pointer-events: none;
 }
 
-.num-highlight {
-  font-family: 'Space Grotesk Variable', 'Segoe UI', system-ui, sans-serif;
-  font-size: 22px;
-  font-weight: 700;
+/* ─── Card Hover ─────────────────────────────────────────────────────────── */
+
+.card-hover {
+  transition: transform 0.25s ease, box-shadow 0.25s ease, border-color 0.25s ease, background 0.25s ease;
 }
 
-.num-medium {
-  font-family: 'Space Grotesk Variable', 'Segoe UI', system-ui, sans-serif;
-  font-size: 16px;
-  font-weight: 700;
+.card-hover:hover {
+  transform: translateY(-2px) scale(1.01);
+  box-shadow: 0 0 40px rgba(88, 166, 255, 0.18), 0 0 80px rgba(88, 166, 255, 0.06);
+}
+
+/* ─── Animated Background ────────────────────────────────────────────────── */
+
+.bg-gradient-animated {
+  background: linear-gradient(
+    135deg,
+    #030810 0%,
+    #060e1c 25%,
+    #071428 50%,
+    #060e1c 75%,
+    #030810 100%
+  );
+  background-size: 400% 400%;
+  animation: gradient-shift 15s ease infinite;
+}
+
+/* ─── Keyframes (camelCase — usados pelo novo PreSeasonView) ─────────────── */
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes scaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes drawerIn {
+  from {
+    opacity: 0;
+    transform: translateX(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes edgeRailIn {
+  from {
+    opacity: 0;
+    transform: translateX(-12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* ─── Keyframes (kebab-case — mantidos para componentes existentes) ───────── */
+
+@keyframes gradient-shift {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes scale-in {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes drawer-in {
+  from { opacity: 0; transform: translateX(100%); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes drawer-out {
+  from { opacity: 1; transform: translateX(0); }
+  to { opacity: 0; transform: translateX(100%); }
+}
+
+@keyframes edge-rail-in {
+  from { opacity: 0; transform: translateX(18px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes news-scope-drawer-in {
+  from { opacity: 0; transform: translateY(-12px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes wizard-step-enter {
+  0% { opacity: 0; transform: translateY(12px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes bootLogoReveal {
+  0% { opacity: 0; transform: translateY(18px) scale(0.88); filter: blur(10px); }
+  22% { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
+  78% { opacity: 1; transform: translateY(0) scale(1.02); filter: blur(0); }
+  100% { opacity: 0; transform: translateY(-10px) scale(1.06); filter: blur(4px); }
+}
+
+/* ─── Animation Classes (camelCase keyframes) ────────────────────────────── */
+
+.animate-fade-in {
+  animation: fadeIn 200ms ease-out;
+}
+
+.animate-scale-in {
+  animation: scaleIn 250ms ease-out;
+}
+
+.animate-drawer-in {
+  animation: drawerIn 280ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.animate-edge-rail-in {
+  animation: edgeRailIn 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* ─── Animation Classes (legado — mantidos para outros componentes) ───────── */
+
+.animate-fade-out {
+  animation: fade-out 0.28s ease-in forwards;
+}
+
+.animate-drawer-out {
+  animation: drawer-out 0.28s cubic-bezier(0.4, 0, 1, 1) forwards;
+}
+
+.animate-news-scope-drawer-in {
+  animation: news-scope-drawer-in 0.26s cubic-bezier(0.22, 1, 0.36, 1);
+  transform-origin: top left;
+}
+
+.wizard-step-enter {
+  animation: wizard-step-enter 0.35s ease;
+}
+
+@keyframes fade-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+/* ─── Tailwind @layer components ─────────────────────────────────────────── */
+
+@layer components {
+  .glass-card {
+    @apply bg-app-card/80 backdrop-blur-md border border-border rounded-lg;
+  }
+
+  .glass-card-hover {
+    @apply glass-card hover:bg-app-card-hover hover:border-border-hover transition-all duration-200;
+  }
 }

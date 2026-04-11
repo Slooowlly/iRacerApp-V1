@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use crate::constants::categories::get_category_config;
 
 // NOTA: driver.rs usa tier_base_range() com valores diferentes:

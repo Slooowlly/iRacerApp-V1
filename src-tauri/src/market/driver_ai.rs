@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use rand::Rng;
 
 use crate::market::proposals::MarketProposal;
@@ -42,10 +44,6 @@ pub fn evaluate_proposal(
         && rng.gen_range(0.0..1.0) < 0.50
     {
         return reject("Quer ser N1");
-    }
-
-    if car_perf_normalized < 40.0 && rng.gen_range(0.0..1.0) < 0.60 {
-        return reject("Equipe com carro fraco");
     }
 
     let mut score = (car_perf_normalized / 100.0) * 30.0
@@ -242,6 +240,21 @@ mod tests {
         let result = evaluate_proposal(&driver, &proposal, None, 2, 2, 6.0, 55.0, &mut rng);
 
         assert!(result.accepted);
+    }
+
+    #[test]
+    fn test_weak_car_does_not_auto_reject_strong_offer() {
+        let driver = sample_driver(70.0, None);
+        let proposal = sample_proposal(300_000.0, TeamRole::Numero1);
+
+        for seed in 1..=12 {
+            let mut rng = StdRng::seed_from_u64(seed);
+            let result = evaluate_proposal(&driver, &proposal, None, 3, 4, 0.0, 80.0, &mut rng);
+            assert!(
+                result.accepted,
+                "carro fraco nao deve gerar trava absoluta quando a oferta e forte; seed={seed}"
+            );
+        }
     }
 
     #[test]

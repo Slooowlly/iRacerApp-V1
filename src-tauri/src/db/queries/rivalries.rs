@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::db::connection::DbError;
@@ -6,13 +8,25 @@ use crate::models::rivalry::{perceived_intensity, Rivalry, RivalryType};
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 fn row_to_rivalry(row: &rusqlite::Row) -> rusqlite::Result<Rivalry> {
+    let tipo_raw: String = row.get(5)?;
+    let tipo = match tipo_raw.trim() {
+        "Colisao" => RivalryType::Colisao,
+        "Companheiros" => RivalryType::Companheiros,
+        "Campeonato" => RivalryType::Campeonato,
+        "Pista" => RivalryType::Pista,
+        other => {
+            return Err(rusqlite::Error::InvalidParameterName(format!(
+                "RivalryType inválido: '{other}'"
+            )))
+        }
+    };
     Ok(Rivalry {
         id: row.get(0)?,
         piloto1_id: row.get(1)?,
         piloto2_id: row.get(2)?,
         historical_intensity: row.get(3)?,
         recent_activity: row.get(4)?,
-        tipo: RivalryType::from_str(&row.get::<_, String>(5)?),
+        tipo,
         criado_em: row.get(6)?,
         ultima_atualizacao: row.get(7)?,
         temporada_update: row.get(8)?,
@@ -70,6 +84,16 @@ pub fn get_all_rivalries(conn: &Connection) -> Result<Vec<Rivalry>, DbError> {
 /// Insere uma rivalidade nova.
 /// A coluna `intensidade` (legado) é mantida em sincronia com a percebida.
 pub fn insert_rivalry(conn: &Connection, rivalry: &Rivalry) -> Result<(), DbError> {
+    if rivalry.piloto1_id == rivalry.piloto2_id {
+        return Err(DbError::InvalidData(
+            "rivalidade invalida: piloto1_id e piloto2_id nao podem ser iguais".to_string(),
+        ));
+    }
+    if rivalry.piloto1_id > rivalry.piloto2_id {
+        return Err(DbError::InvalidData(
+            "rivalidade invalida: par deve estar normalizado (piloto1_id < piloto2_id)".to_string(),
+        ));
+    }
     let perceived = rivalry.perceived_intensity();
     conn.execute(
         "INSERT INTO rivalries
@@ -104,7 +128,7 @@ pub fn update_rivalry_axes(
     temporada_update: i32,
 ) -> Result<(), DbError> {
     let perceived = perceived_intensity(historical_intensity, recent_activity);
-    conn.execute(
+    let affected = conn.execute(
         "UPDATE rivalries
          SET intensidade = ?1, historical_intensity = ?2, recent_activity = ?3,
              ultima_atualizacao = ?4, temporada_update = ?5
@@ -118,11 +142,107 @@ pub fn update_rivalry_axes(
             id,
         ],
     )?;
+    if affected == 0 {
+        return Err(DbError::NotFound(format!(
+            "rivalidade nao encontrada: {id}"
+        )));
+    }
     Ok(())
 }
 
 /// Remove uma rivalidade pelo id.
 pub fn delete_rivalry(conn: &Connection, id: &str) -> Result<(), DbError> {
-    conn.execute("DELETE FROM rivalries WHERE id = ?1", params![id])?;
+    let affected = conn.execute("DELETE FROM rivalries WHERE id = ?1", params![id])?;
+    if affected == 0 {
+        return Err(DbError::NotFound(format!(
+            "rivalidade nao encontrada: {id}"
+        )));
+    }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn setup_db() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE rivalries (
+                id TEXT PRIMARY KEY,
+                piloto1_id TEXT NOT NULL,
+                piloto2_id TEXT NOT NULL,
+                intensidade REAL NOT NULL DEFAULT 0.0,
+                historical_intensity REAL NOT NULL DEFAULT 0.0,
+                recent_activity REAL NOT NULL DEFAULT 0.0,
+                tipo TEXT NOT NULL DEFAULT 'Pista',
+                criado_em TEXT NOT NULL DEFAULT '',
+                ultima_atualizacao TEXT NOT NULL DEFAULT '',
+                temporada_update INTEGER NOT NULL DEFAULT 0
+            );",
+        )
+        .unwrap();
+        conn
+    }
+
+    fn sample_rivalry() -> Rivalry {
+        Rivalry {
+            id: "RIV-001".to_string(),
+            piloto1_id: "P001".to_string(),
+            piloto2_id: "P002".to_string(),
+            historical_intensity: 20.0,
+            recent_activity: 30.0,
+            tipo: RivalryType::Pista,
+            criado_em: "2026-01-01T00:00:00".to_string(),
+            ultima_atualizacao: "2026-01-01T00:00:00".to_string(),
+            temporada_update: 1,
+        }
+    }
+
+    #[test]
+    fn test_insert_rivalry_rejects_non_normalized_pair() {
+        let conn = setup_db();
+        let mut rivalry = sample_rivalry();
+        rivalry.piloto1_id = "P010".to_string();
+        rivalry.piloto2_id = "P002".to_string();
+
+        let err = insert_rivalry(&conn, &rivalry).expect_err("non-normalized pair should fail");
+
+        assert!(matches!(err, DbError::InvalidData(_)));
+    }
+
+    #[test]
+    fn test_update_rivalry_axes_returns_not_found_for_missing_id() {
+        let conn = setup_db();
+
+        let err = update_rivalry_axes(&conn, "RIV-404", 10.0, 10.0, "2026-01-01T00:00:00", 1)
+            .expect_err("missing rivalry should fail");
+
+        assert!(matches!(err, DbError::NotFound(_)));
+    }
+
+    #[test]
+    fn test_delete_rivalry_returns_not_found_for_missing_id() {
+        let conn = setup_db();
+
+        let err = delete_rivalry(&conn, "RIV-404").expect_err("missing rivalry should fail");
+
+        assert!(matches!(err, DbError::NotFound(_)));
+    }
+
+    #[test]
+    fn test_get_rivalry_by_pair_returns_error_for_invalid_type() {
+        let conn = setup_db();
+        let rivalry = sample_rivalry();
+        insert_rivalry(&conn, &rivalry).expect("insert rivalry");
+        conn.execute(
+            "UPDATE rivalries SET tipo = 'quebrado' WHERE id = 'RIV-001'",
+            [],
+        )
+        .unwrap();
+
+        let err = get_rivalry_by_pair(&conn, "P001", "P002").expect_err("invalid type should fail");
+
+        assert!(err.to_string().contains("RivalryType"));
+    }
 }

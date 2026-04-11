@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use crate::calendar::CalendarEntry;
 use crate::constants::tracks::get_track;
 use crate::models::driver::Driver;

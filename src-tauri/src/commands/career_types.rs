@@ -49,8 +49,10 @@ pub struct CareerData {
     pub save_path: String,
     pub difficulty: String,
     pub player: DriverSummary,
-    pub player_team: TeamSummary,
+    pub player_team: Option<TeamSummary>,
     pub season: SeasonSummary,
+    #[serde(default)]
+    pub accepted_special_offer: Option<AcceptedSpecialOfferSummary>,
     pub next_race: Option<RaceSummary>,
     pub next_race_briefing: Option<NextRaceBriefingSummary>,
     pub total_drivers: usize,
@@ -81,6 +83,8 @@ pub struct DriverSummary {
     pub nacionalidade: String,
     pub idade: i32,
     pub skill: u8,
+    #[serde(default)]
+    pub categoria_especial_ativa: Option<String>,
     pub equipe_id: Option<String>,
     pub equipe_nome: Option<String>,
     pub equipe_nome_curto: Option<String>,
@@ -101,6 +105,8 @@ pub struct TeamSummary {
     pub cor_primaria: String,
     pub cor_secundaria: String,
     pub categoria: String,
+    #[serde(default)]
+    pub classe: Option<String>,
     pub car_performance: f64,
     pub confiabilidade: f64,
     pub budget: f64,
@@ -118,6 +124,17 @@ pub struct SeasonSummary {
     pub rodada_atual: i32,
     pub total_rodadas: i32,
     pub status: String,
+    pub fase: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AcceptedSpecialOfferSummary {
+    pub id: String,
+    pub team_id: String,
+    pub team_name: String,
+    pub special_category: String,
+    pub class_name: String,
+    pub papel: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -546,16 +563,35 @@ pub struct TeamStanding {
     pub pontos: i32,
     pub vitorias: i32,
     pub piloto_1_nome: Option<String>,
+    pub piloto_1_tenure_seasons: Option<i32>,
     pub piloto_2_nome: Option<String>,
+    pub piloto_2_tenure_seasons: Option<i32>,
     pub trofeus: Vec<TrophyInfo>,
     pub classe: Option<String>,
     pub temp_posicao: i32,
+    pub categoria_anterior: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
+#[allow(dead_code)]
 pub struct VerifyDatabaseResponse {
     pub career_number: u32,
     pub db_path: String,
     pub table_count: i64,
     pub status: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FreeAgentPreview {
+    pub driver_id: String,
+    pub driver_name: String,
+    pub categoria: String,
+    pub is_rookie: bool,
+    pub previous_team_name: Option<String>,
+    pub previous_team_color: Option<String>,
+    pub previous_team_abbr: Option<String>,
+    pub seasons_at_last_team: i32,
+    pub total_career_seasons: i32,
+    pub license_nivel: String,
+    pub license_sigla: String,
 }

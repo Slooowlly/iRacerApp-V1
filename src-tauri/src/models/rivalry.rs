@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use serde::{Deserialize, Serialize};
 
 // ── Tipo de origem da rivalidade ──────────────────────────────────────────────

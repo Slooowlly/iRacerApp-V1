@@ -5,7 +5,8 @@ use std::collections::HashMap;
 use crate::db::connection::DbError;
 use crate::db::queries::drivers::update_driver_status;
 use crate::db::queries::injuries::{
-    get_active_injuries_for_category, insert_injury, update_injury_status,
+    get_active_injuries_for_category, has_active_injury_for_pilot, insert_injury,
+    update_injury_status,
 };
 use crate::models::enums::DriverStatus;
 use crate::models::injury::Injury;
@@ -25,7 +26,7 @@ pub fn process_injury_recovery(tx: &Transaction, category_id: &str) -> Result<()
 
         update_injury_status(tx, &injury.id, injury.races_remaining, injury.active)?;
 
-        if !injury.active {
+        if !injury.active && !has_active_injury_for_pilot(tx, &injury.pilot_id)? {
             // Driver recovered
             update_driver_status(tx, &injury.pilot_id, &DriverStatus::Ativo)?;
         }
@@ -53,6 +54,10 @@ pub fn process_new_injuries(
     }
 
     for (pilot_id, pil_incidents) in pilot_incidents {
+        if has_active_injury_for_pilot(tx, &pilot_id)? {
+            continue;
+        }
+
         // We just run generation on the first critical one we find (since it's max 1 per pilot anyway).
         for inc in pil_incidents {
             if let Some(injury) = generate_injury_from_incident(inc, season, race_id, rng) {
@@ -220,5 +225,151 @@ mod tests {
             })
             .unwrap();
         assert_eq!(status, "Lesionado");
+    }
+
+    #[test]
+    fn test_process_injury_recovery_keeps_driver_injured_if_other_active_injury_remains() {
+        let mut conn = setup_test_db();
+        let tx = conn.transaction().unwrap();
+
+        update_driver_status(&tx, "P001", &DriverStatus::Lesionado).unwrap();
+        tx.execute(
+            "UPDATE drivers SET categoria_atual = 'F1' WHERE id = 'P001'",
+            [],
+        )
+        .unwrap();
+
+        let first = crate::models::injury::Injury {
+            id: "INJ-1".to_string(),
+            pilot_id: "P001".to_string(),
+            injury_type: InjuryType::Leve,
+            modifier: 0.95,
+            races_total: 1,
+            races_remaining: 1,
+            skill_penalty: 0.05,
+            season: 1,
+            race_occurred: "R001".to_string(),
+            active: true,
+        };
+        let second = crate::models::injury::Injury {
+            id: "INJ-2".to_string(),
+            pilot_id: "P001".to_string(),
+            injury_type: InjuryType::Moderada,
+            modifier: 0.88,
+            races_total: 3,
+            races_remaining: 3,
+            skill_penalty: 0.10,
+            season: 1,
+            race_occurred: "R002".to_string(),
+            active: true,
+        };
+        insert_injury(&tx, &first).unwrap();
+        tx.execute_batch("DROP INDEX IF EXISTS idx_injuries_single_active_per_pilot;")
+            .unwrap();
+        tx.execute(
+            "INSERT INTO injuries (
+                id, pilot_id, type, modifier, races_total, races_remaining, skill_penalty, season, race_occurred, active
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            rusqlite::params![
+                second.id,
+                second.pilot_id,
+                second.injury_type.as_str(),
+                second.modifier,
+                second.races_total,
+                second.races_remaining,
+                second.skill_penalty,
+                second.season,
+                second.race_occurred,
+                1,
+            ],
+        )
+        .unwrap();
+
+        process_injury_recovery(&tx, "F1").unwrap();
+
+        let status: String = tx
+            .query_row("SELECT status FROM drivers WHERE id = 'P001'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(status, "Lesionado");
+
+        let active_count: i32 = tx
+            .query_row(
+                "SELECT COUNT(*) FROM injuries WHERE pilot_id = 'P001' AND active = 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(active_count, 1);
+    }
+
+    #[test]
+    fn test_process_new_injuries_skips_driver_with_active_injury() {
+        let mut conn = setup_test_db();
+        let tx = conn.transaction().unwrap();
+        tx.execute(
+            "UPDATE drivers SET categoria_atual = 'F1' WHERE id = 'P001'",
+            [],
+        )
+        .unwrap();
+        update_driver_status(&tx, "P001", &DriverStatus::Lesionado).unwrap();
+
+        let existing = crate::models::injury::Injury {
+            id: "INJ-EXISTING".to_string(),
+            pilot_id: "P001".to_string(),
+            injury_type: InjuryType::Grave,
+            modifier: 0.75,
+            races_total: 8,
+            races_remaining: 5,
+            skill_penalty: 0.15,
+            season: 1,
+            race_occurred: "R000".to_string(),
+            active: true,
+        };
+        insert_injury(&tx, &existing).unwrap();
+
+        struct ForceInjuryRng;
+        impl rand::RngCore for ForceInjuryRng {
+            fn next_u32(&mut self) -> u32 {
+                1
+            }
+            fn next_u64(&mut self) -> u64 {
+                1
+            }
+            fn fill_bytes(&mut self, _dest: &mut [u8]) {}
+            fn try_fill_bytes(&mut self, _dest: &mut [u8]) -> Result<(), rand::Error> {
+                Ok(())
+            }
+        }
+
+        let incident = IncidentResult {
+            pilot_id: "P001".to_string(),
+            incident_type: IncidentType::Collision,
+            severity: IncidentSeverity::Critical,
+            segment: "Lap 1".to_string(),
+            positions_lost: 20,
+            is_dnf: true,
+            description: "Huge crash".to_string(),
+            linked_pilot_id: None,
+            is_two_car_incident: false,
+            injury_risk_multiplier: 1.5,
+            narrative_importance_hint: 2,
+            catalog_id: None,
+            damage_origin_segment: None,
+        };
+
+        let mut rng = ForceInjuryRng;
+        let new_injuries = process_new_injuries(&tx, 1, "R001", &[incident], &mut rng).unwrap();
+        assert!(new_injuries.is_empty());
+
+        let count: i32 = tx
+            .query_row(
+                "SELECT COUNT(*) FROM injuries WHERE pilot_id = 'P001'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1);
     }
 }

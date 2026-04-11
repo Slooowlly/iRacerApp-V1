@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use rusqlite::Connection;
 
 use crate::common::time::current_timestamp;
@@ -97,7 +99,7 @@ pub fn record_race_dnfs(
             .and_then(|inc| inc.linked_pilot_id.clone());
 
         let record = TrackDnfRecord {
-            id: format!("DNF-{}-{}-{}", season_num, round, result.pilot_id),
+            id: build_track_dnf_id(season_num, round, &result.pilot_id, track_name),
             piloto_id: result.pilot_id.clone(),
             track_name: track_name.to_string(),
             season_num,
@@ -110,21 +112,32 @@ pub fn record_race_dnfs(
             created_at: current_timestamp(),
         };
 
-        if let Err(e) = insert_track_dnf(conn, &record) {
-            eprintln!(
-                "[track_history] Failed to insert track DNF record for {}: {:?}",
-                result.pilot_id, e
-            );
-        }
+        insert_track_dnf(conn, &record)?;
     }
 
     Ok(())
+}
+
+fn build_track_dnf_id(season_num: i32, round: i32, pilot_id: &str, track_name: &str) -> String {
+    let normalized_track = track_name
+        .chars()
+        .map(|char| {
+            if char.is_ascii_alphanumeric() {
+                char.to_ascii_lowercase()
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    format!("DNF-{season_num}-{round}-{pilot_id}-{normalized_track}")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use rusqlite::Connection;
+
+    use crate::simulation::incidents::{IncidentResult, IncidentSeverity};
 
     fn setup_db() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
@@ -214,5 +227,81 @@ mod tests {
         assert_eq!(found.season_num, 2);
         assert_eq!(found.round, 5);
         assert_eq!(found.dnf_reason, "Collision");
+    }
+
+    #[test]
+    fn test_record_race_dnfs_uses_track_in_identifier() {
+        let conn = setup_db();
+        let race_results = vec![sample_dnf_result("P001", "Collision", Some("P002"))];
+
+        record_race_dnfs(&conn, &race_results, "Interlagos", 1, 3).unwrap();
+        record_race_dnfs(&conn, &race_results, "Spa-Francorchamps", 1, 3).unwrap();
+
+        let count: i32 = conn
+            .query_row("SELECT COUNT(*) FROM track_dnf_history", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn test_record_race_dnfs_propagates_insert_errors() {
+        let conn = setup_db();
+        let race_results = vec![sample_dnf_result("P001", "Collision", Some("P002"))];
+
+        record_race_dnfs(&conn, &race_results, "Interlagos", 1, 3).unwrap();
+        let err = record_race_dnfs(&conn, &race_results, "Interlagos", 1, 3)
+            .expect_err("duplicate insert should fail");
+
+        assert!(err.to_string().contains("UNIQUE"));
+    }
+
+    fn sample_dnf_result(
+        pilot_id: &str,
+        dnf_reason: &str,
+        collision_with: Option<&str>,
+    ) -> RaceDriverResult {
+        RaceDriverResult {
+            pilot_id: pilot_id.to_string(),
+            pilot_name: format!("Pilot {}", pilot_id),
+            team_id: "T001".to_string(),
+            team_name: "Equipe".to_string(),
+            grid_position: 1,
+            finish_position: 20,
+            positions_gained: -19,
+            best_lap_time_ms: 0.0,
+            total_race_time_ms: 0.0,
+            gap_to_winner_ms: 0.0,
+            is_dnf: true,
+            dnf_reason: Some(dnf_reason.to_string()),
+            dnf_segment: Some("EARLY".to_string()),
+            incidents_count: 1,
+            incidents: vec![IncidentResult {
+                pilot_id: pilot_id.to_string(),
+                incident_type: IncidentType::Collision,
+                severity: IncidentSeverity::Major,
+                segment: "EARLY".to_string(),
+                positions_lost: 0,
+                is_dnf: true,
+                description: dnf_reason.to_string(),
+                linked_pilot_id: collision_with.map(|id| id.to_string()),
+                is_two_car_incident: collision_with.is_some(),
+                injury_risk_multiplier: 1.0,
+                narrative_importance_hint: 2,
+                catalog_id: None,
+                damage_origin_segment: None,
+            }],
+            has_fastest_lap: false,
+            points_earned: 0,
+            is_jogador: false,
+            laps_completed: 0,
+            final_tire_wear: 0.0,
+            final_physical: 0.0,
+            classification_status: crate::simulation::race::ClassificationStatus::Dnf,
+            notable_incident: None,
+            dnf_catalog_id: None,
+            damage_origin_segment: None,
+        }
     }
 }

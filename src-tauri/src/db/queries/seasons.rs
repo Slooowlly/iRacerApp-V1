@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::db::connection::DbError;
@@ -34,31 +36,52 @@ pub fn get_season_by_id(conn: &Connection, id: &str) -> Result<Option<Season>, D
 pub fn get_active_season(conn: &Connection) -> Result<Option<Season>, DbError> {
     let mut stmt = conn.prepare(
         "SELECT * FROM seasons
-         WHERE status = 'EmAndamento'
-         ORDER BY numero DESC
-         LIMIT 1",
+         WHERE status IN ('EmAndamento', 'Ativa')
+         ORDER BY numero DESC",
     )?;
-    let season = stmt.query_row([], season_from_row).optional()?;
-    Ok(season)
+    let mapped = stmt.query_map([], season_from_row)?;
+    let mut seasons = Vec::new();
+    for row in mapped {
+        seasons.push(row?);
+    }
+
+    if seasons.len() > 1 {
+        let ids = seasons
+            .iter()
+            .map(|season| season.id.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(DbError::InvalidData(format!(
+            "multiplas temporadas ativas encontradas: {ids}"
+        )));
+    }
+
+    Ok(seasons.into_iter().next())
 }
 
 pub fn update_season_rodada(conn: &Connection, id: &str, rodada: i32) -> Result<(), DbError> {
-    conn.execute(
+    let updated = conn.execute(
         "UPDATE seasons
          SET rodada_atual = ?2, updated_at = CURRENT_TIMESTAMP
          WHERE id = ?1",
         params![id, rodada],
     )?;
+    if updated == 0 {
+        return Err(DbError::NotFound(format!("season not found: {id}")));
+    }
     Ok(())
 }
 
 pub fn finalize_season(conn: &Connection, id: &str) -> Result<(), DbError> {
-    conn.execute(
+    let updated = conn.execute(
         "UPDATE seasons
          SET status = 'Finalizada', updated_at = CURRENT_TIMESTAMP
          WHERE id = ?1",
         params![id],
     )?;
+    if updated == 0 {
+        return Err(DbError::NotFound(format!("season not found: {id}")));
+    }
     Ok(())
 }
 
@@ -73,9 +96,15 @@ pub fn get_all_seasons(conn: &Connection) -> Result<Vec<Season>, DbError> {
 }
 
 fn season_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Season> {
-    let fase_str = optional_string(row, "fase")?.unwrap_or_else(|| "BlocoRegular".to_string());
+    let fase_str: String = row.get("fase")?;
     let fase =
         SeasonPhase::from_str_strict(&fase_str).map_err(rusqlite::Error::InvalidParameterName)?;
+    let rodada_atual: i32 = row.get("rodada_atual")?;
+    if rodada_atual <= 0 {
+        return Err(rusqlite::Error::InvalidParameterName(format!(
+            "Season.rodada_atual invalida: '{rodada_atual}'"
+        )));
+    }
 
     Ok(Season {
         id: row.get("id")?,
@@ -83,35 +112,24 @@ fn season_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Season> {
         ano: row.get("ano")?,
         status: SeasonStatus::from_str_strict(&row.get::<_, String>("status")?)
             .map_err(rusqlite::Error::InvalidParameterName)?,
-        rodada_atual: optional_i32(row, "rodada_atual")?.unwrap_or(1),
+        rodada_atual,
         fase,
-        created_at: optional_string(row, "created_at")?.unwrap_or_default(),
-        updated_at: optional_string(row, "updated_at")?.unwrap_or_default(),
+        created_at: row.get("created_at")?,
+        updated_at: row.get("updated_at")?,
     })
 }
 
 pub fn update_season_fase(conn: &Connection, id: &str, fase: &SeasonPhase) -> Result<(), DbError> {
-    conn.execute(
+    let updated = conn.execute(
         "UPDATE seasons
          SET fase = ?1, updated_at = CURRENT_TIMESTAMP
          WHERE id = ?2",
         params![fase.as_str(), id],
     )?;
+    if updated == 0 {
+        return Err(DbError::NotFound(format!("season not found: {id}")));
+    }
     Ok(())
-}
-
-fn optional_string(row: &rusqlite::Row<'_>, column_name: &str) -> rusqlite::Result<Option<String>> {
-    match row.get_ref(column_name)? {
-        rusqlite::types::ValueRef::Null => Ok(None),
-        _ => row.get(column_name).map(Some),
-    }
-}
-
-fn optional_i32(row: &rusqlite::Row<'_>, column_name: &str) -> rusqlite::Result<Option<i32>> {
-    match row.get_ref(column_name)? {
-        rusqlite::types::ValueRef::Null => Ok(None),
-        _ => row.get(column_name).map(Some),
-    }
 }
 
 #[cfg(test)]
@@ -148,5 +166,62 @@ mod tests {
 
         finalize_season(&conn, "S001").expect("finalize");
         assert!(get_active_season(&conn).expect("active after").is_none());
+    }
+
+    #[test]
+    fn test_get_active_season_accepts_legacy_ativa_status() {
+        let conn = Connection::open_in_memory().expect("db");
+        migrations::run_all(&conn).expect("schema");
+
+        conn.execute(
+            "INSERT INTO seasons (id, numero, ano, status, rodada_atual, fase, created_at, updated_at)
+             VALUES ('S001', 1, 2024, 'Ativa', 1, 'BlocoRegular', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+            [],
+        )
+        .expect("insert legacy active season");
+
+        let active = get_active_season(&conn)
+            .expect("active season lookup")
+            .expect("active season");
+        assert_eq!(active.id, "S001");
+        assert_eq!(active.status, SeasonStatus::EmAndamento);
+    }
+
+    #[test]
+    fn test_get_active_season_rejects_multiple_active_seasons() {
+        let conn = Connection::open_in_memory().expect("db");
+        migrations::run_all(&conn).expect("schema");
+
+        conn.execute(
+            "INSERT INTO seasons (id, numero, ano, status, rodada_atual, fase, created_at, updated_at)
+             VALUES ('S001', 1, 2024, 'EmAndamento', 1, 'BlocoRegular', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO seasons (id, numero, ano, status, rodada_atual, fase, created_at, updated_at)
+             VALUES ('S002', 2, 2025, 'Ativa', 1, 'BlocoRegular', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+            [],
+        )
+        .unwrap();
+
+        let err = get_active_season(&conn).expect_err("duplicate active seasons should fail");
+        assert!(err.to_string().contains("multiplas temporadas ativas"));
+    }
+
+    #[test]
+    fn test_update_helpers_fail_when_season_is_missing() {
+        let conn = Connection::open_in_memory().expect("db");
+        migrations::run_all(&conn).expect("schema");
+
+        let err = update_season_rodada(&conn, "MISSING", 3).expect_err("missing season");
+        assert!(err.to_string().contains("season not found"));
+
+        let err = finalize_season(&conn, "MISSING").expect_err("missing season");
+        assert!(err.to_string().contains("season not found"));
+
+        let err = update_season_fase(&conn, "MISSING", &SeasonPhase::BlocoEspecial)
+            .expect_err("missing season");
+        assert!(err.to_string().contains("season not found"));
     }
 }

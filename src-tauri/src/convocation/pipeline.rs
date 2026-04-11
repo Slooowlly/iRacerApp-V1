@@ -4,13 +4,15 @@ use serde::{Deserialize, Serialize};
 use crate::calendar::generate_and_insert_special_calendars;
 use crate::db::connection::DbError;
 use crate::db::queries::{
-    contracts as contract_queries, drivers as driver_queries,
-    seasons as season_queries, teams as team_queries,
+    contracts as contract_queries, drivers as driver_queries, seasons as season_queries,
+    teams as team_queries,
 };
 use crate::generators::ids::IdType;
+use crate::models::driver::Driver;
 use crate::models::enums::{SeasonPhase, TeamRole};
 
 use super::eligibility::{coletar_candidatos, FonteConvocacao};
+use super::player_offers::{self, PlayerSpecialOffer};
 use super::quotas::calcular_cotas;
 use super::scoring::calcular_score;
 
@@ -36,6 +38,14 @@ pub struct ConvocationResult {
     pub grids: Vec<GridClasse>,
     pub total_contratos: usize,
     pub errors: Vec<String>,
+}
+
+type TeamLineupMap = std::collections::HashMap<String, (Option<String>, Option<String>)>;
+
+struct PendingOp {
+    contract: crate::models::contract::Contract,
+    driver_id: String,
+    special_category: String,
 }
 
 // ── Classes convocadas ────────────────────────────────────────────────────────
@@ -96,7 +106,7 @@ pub fn advance_to_convocation_window(conn: &Connection) -> Result<(), DbError> {
 
 /// JanelaConvocacao → BlocoEspecial.
 /// Deve ser chamada APÓS run_convocation_window.
-/// Gera o calendário das categorias especiais (semanas 41–50).
+/// Gera o calendário das categorias especiais na janela setembro–dezembro.
 pub fn iniciar_bloco_especial(conn: &Connection) -> Result<(), DbError> {
     let season = season_queries::get_active_season(conn)?
         .ok_or_else(|| DbError::NotFound("Nenhuma temporada ativa".into()))?;
@@ -108,13 +118,15 @@ pub fn iniciar_bloco_especial(conn: &Connection) -> Result<(), DbError> {
         )));
     }
 
-    season_queries::update_season_fase(conn, &season.id, &SeasonPhase::BlocoEspecial)?;
-
     // Gerar calendário das categorias especiais (production_challenger e endurance)
+    let tx = conn.unchecked_transaction()?;
+    season_queries::update_season_fase(&tx, &season.id, &SeasonPhase::BlocoEspecial)?;
+
     let mut rng = rand::thread_rng();
-    generate_and_insert_special_calendars(conn, &season.id, season.ano, &mut rng)
+    generate_and_insert_special_calendars(&tx, &season.id, season.ano, &mut rng)
         .map_err(|e| DbError::Migration(format!("Falha ao gerar calendário especial: {e}")))?;
 
+    tx.commit()?;
     Ok(())
 }
 
@@ -134,12 +146,20 @@ pub fn run_convocation_window(conn: &Connection) -> Result<ConvocationResult, Db
     }
 
     let season_number = season.numero;
+    let player = match driver_queries::get_player_driver(conn) {
+        Ok(player) => Some(player),
+        Err(DbError::NotFound(_)) => None,
+        Err(err) => return Err(err),
+    };
 
     // ── Passo 1: construir todos os grids em memória ──────────────────────────
     // Manter conjunto global de drivers já alocados para evitar duplicatas entre classes
     let mut all_grids: Vec<GridClasse> = Vec::new();
     let mut all_errors: Vec<String> = Vec::new();
     let mut globally_assigned: std::collections::HashSet<String> = std::collections::HashSet::new();
+    if let Some(player) = &player {
+        globally_assigned.insert(player.id.clone());
+    }
 
     for cfg in CLASSES_CONVOCADAS {
         match montar_grid_classe(conn, cfg, season_number, &globally_assigned) {
@@ -168,7 +188,21 @@ pub fn run_convocation_window(conn: &Connection) -> Result<ConvocationResult, Db
 
     // ── Passo 3: persistir em transação atômica ───────────────────────────────
     let total_contratos = all_grids.iter().map(|g| g.assignments.len()).sum();
-    persistir_grids(conn, &all_grids, season_number)?;
+    let player_offers_payload = if let Some(player) = &player {
+        Some((
+            player.id.clone(),
+            build_player_special_offers(conn, &season.id, player)?,
+        ))
+    } else {
+        None
+    };
+    persistir_grids_e_ofertas(
+        conn,
+        &season.id,
+        &all_grids,
+        season_number,
+        player_offers_payload.as_ref(),
+    )?;
 
     Ok(ConvocationResult {
         grids: all_grids,
@@ -182,7 +216,7 @@ pub fn run_convocation_window(conn: &Connection) -> Result<ConvocationResult, Db
 fn montar_grid_classe(
     conn: &Connection,
     cfg: &ClasseConfig,
-    season_number: i32,
+    _season_number: i32,
     globally_excluded: &std::collections::HashSet<String>,
 ) -> Result<GridClasse, DbError> {
     // 1. Equipes da classe ordenadas por car_performance desc
@@ -318,6 +352,213 @@ fn fonte_label(fonte: &FonteConvocacao) -> String {
     }
 }
 
+fn build_player_special_offers(
+    conn: &Connection,
+    season_id: &str,
+    player: &Driver,
+) -> Result<Vec<PlayerSpecialOffer>, DbError> {
+    let Some(player_category) = player.categoria_atual.as_deref() else {
+        return Ok(Vec::new());
+    };
+
+    let Some(cfg) = CLASSES_CONVOCADAS
+        .iter()
+        .find(|cfg| cfg.feeder_category == player_category)
+    else {
+        return Ok(Vec::new());
+    };
+
+    let papel = if player.atributos.skill >= 85.0 {
+        TeamRole::Numero1
+    } else {
+        TeamRole::Numero2
+    };
+
+    let offers =
+        team_queries::get_teams_by_category_and_class(conn, cfg.special_category, cfg.class_name)?
+            .into_iter()
+            .take(3)
+            .map(|team| PlayerSpecialOffer {
+                id: format!(
+                    "PSO-{season_id}-{}-{}-{}",
+                    player.id,
+                    team.id,
+                    papel.as_str()
+                ),
+                player_driver_id: player.id.clone(),
+                team_id: team.id,
+                team_name: team.nome,
+                special_category: cfg.special_category.to_string(),
+                class_name: cfg.class_name.to_string(),
+                papel: papel.clone(),
+                status: "Pendente".to_string(),
+            })
+            .collect();
+
+    Ok(offers)
+}
+
+#[cfg(test)]
+fn setup_world_db() -> (rusqlite::Connection, String) {
+    use rand::{rngs::StdRng, SeedableRng};
+
+    let conn = rusqlite::Connection::open_in_memory().expect("in-memory db");
+    crate::db::migrations::run_all(&conn).expect("migrations");
+
+    let mut rng = StdRng::seed_from_u64(99);
+    let world = crate::generators::world::generate_world_with_rng(
+        "Test Player",
+        "ðŸ‡§ðŸ‡· Brasileiro",
+        20,
+        "mazda_rookie",
+        0,
+        "medio",
+        &mut rng,
+    )
+    .expect("world generation");
+
+    let season_id = "S001".to_string();
+    let season = crate::models::season::Season::new(season_id.clone(), 1, 2024);
+    crate::db::queries::seasons::insert_season(&conn, &season).expect("insert season");
+    for driver in &world.drivers {
+        crate::db::queries::drivers::insert_driver(&conn, driver).expect("insert driver");
+    }
+    crate::db::queries::teams::insert_teams(&conn, &world.teams).expect("insert teams");
+    crate::db::queries::contracts::insert_contracts(&conn, &world.contracts)
+        .expect("insert contracts");
+
+    let next_contract = world.contracts.len() + 1;
+    conn.execute(
+        "UPDATE meta SET value = ?1 WHERE key = 'next_contract_id'",
+        rusqlite::params![next_contract.to_string()],
+    )
+    .expect("update meta contract counter");
+
+    (conn, season_id)
+}
+
+#[cfg(test)]
+fn make_player_eligible_for_specials(conn: &rusqlite::Connection, category: &str) -> String {
+    let mut player = crate::db::queries::drivers::get_player_driver(conn).expect("player");
+    player.categoria_atual = Some(category.to_string());
+    player.atributos.skill = 98.0;
+    player.melhor_resultado_temp = Some(1);
+    player.stats_temporada.vitorias = 4;
+    crate::db::queries::drivers::update_driver(conn, &player).expect("update player");
+    player.id
+}
+
+#[cfg(test)]
+mod player_convocation_offer_tests {
+    use super::*;
+
+    #[test]
+    fn test_run_convocation_generates_player_special_offers_for_eligible_player() {
+        let (conn, _) = setup_world_db();
+        let player_id = make_player_eligible_for_specials(&conn, "gt4");
+        advance_to_convocation_window(&conn).expect("advance");
+
+        run_convocation_window(&conn).expect("convocação");
+
+        let mut stmt = conn
+            .prepare(
+                "SELECT team_id, special_category, class_name, papel, status
+                 FROM player_special_offers
+                 WHERE player_driver_id = ?1
+                 ORDER BY team_id",
+            )
+            .expect("prepare player special offers");
+        let offers: Vec<(String, String, String, String, String)> = stmt
+            .query_map(rusqlite::params![player_id], |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            })
+            .expect("query offers")
+            .filter_map(|row| row.ok())
+            .collect();
+
+        assert!(
+            !offers.is_empty(),
+            "jogador elegível deveria receber pelo menos uma convocação especial"
+        );
+        assert!(
+            offers
+                .iter()
+                .all(|(team_id, category, class_name, papel, status)| {
+                    !team_id.is_empty()
+                        && !category.is_empty()
+                        && !class_name.is_empty()
+                        && !papel.is_empty()
+                        && status == "Pendente"
+                }),
+            "ofertas especiais do jogador precisam persistir shape mínimo"
+        );
+    }
+
+    #[test]
+    fn test_run_convocation_keeps_player_special_offers_separate_from_market_proposals() {
+        let (conn, _) = setup_world_db();
+        let player_id = make_player_eligible_for_specials(&conn, "gt4");
+        advance_to_convocation_window(&conn).expect("advance");
+
+        run_convocation_window(&conn).expect("convocação");
+
+        let special_offer_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM player_special_offers WHERE player_driver_id = ?1",
+                rusqlite::params![&player_id],
+                |row| row.get(0),
+            )
+            .expect("count special offers");
+        let market_proposal_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM market_proposals WHERE piloto_id = ?1",
+                rusqlite::params![&player_id],
+                |row| row.get(0),
+            )
+            .expect("count market proposals");
+
+        assert!(
+            special_offer_count > 0,
+            "deveria haver ofertas especiais do jogador"
+        );
+        assert_eq!(
+            market_proposal_count, 0,
+            "convocação especial não deve reaproveitar market_proposals"
+        );
+    }
+
+    #[test]
+    fn test_run_convocation_does_not_activate_player_special_contract_before_acceptance() {
+        let (conn, _) = setup_world_db();
+        let player_id = make_player_eligible_for_specials(&conn, "gt4");
+        advance_to_convocation_window(&conn).expect("advance");
+
+        run_convocation_window(&conn).expect("convocação");
+
+        let player =
+            crate::db::queries::drivers::get_driver(&conn, &player_id).expect("player refreshed");
+        let especial = crate::db::queries::contracts::get_active_especial_contract_for_pilot(
+            &conn, &player_id,
+        )
+        .expect("special contract lookup");
+
+        assert!(
+            player.categoria_especial_ativa.is_none(),
+            "jogador não deveria entrar automaticamente no especial antes de aceitar"
+        );
+        assert!(
+            especial.is_none(),
+            "jogador não deveria ganhar contrato especial antes de aceitar"
+        );
+    }
+}
+
 // ── Validação em memória ──────────────────────────────────────────────────────
 
 fn validar_grids(grids: &[GridClasse]) -> Vec<String> {
@@ -348,6 +589,7 @@ fn validar_grids(grids: &[GridClasse]) -> Vec<String> {
 
 // ── Persistência transacional ─────────────────────────────────────────────────
 
+#[cfg(test)]
 fn persistir_grids(
     conn: &Connection,
     grids: &[GridClasse],
@@ -392,8 +634,6 @@ fn persistir_grids(
         contract: crate::models::contract::Contract,
         driver_id: String,
         special_category: String,
-        team_id: String,
-        papel: TeamRole,
     }
 
     let mut ops: Vec<PendingOp> = Vec::new();
@@ -452,14 +692,167 @@ fn persistir_grids(
                 contract,
                 driver_id: a.driver_id.clone(),
                 special_category: special_cat.to_string(),
-                team_id: a.team_id.clone(),
-                papel,
             });
         }
     }
 
+    let tx = conn.unchecked_transaction()?;
+
+    driver_queries::clear_all_categoria_especial_ativa(&tx)?;
+    team_queries::clear_special_team_lineups(&tx)?;
+    team_queries::reset_special_team_hierarchies(&tx)?;
+
     // Persistir tudo
     for op in &ops {
+        contract_queries::insert_contract(&tx, &op.contract)?;
+        driver_queries::update_driver_especial_category(
+            &tx,
+            &op.driver_id,
+            Some(&op.special_category),
+        )?;
+    }
+
+    for (team_id, (n1, n2)) in &team_lineup {
+        team_queries::update_team_pilots(&tx, team_id, n1.as_deref(), n2.as_deref())?;
+
+        // Hierarquia: N1 = hierarquia_n1_id, N2 = hierarquia_n2_id
+        if let (Some(n1_id), Some(n2_id)) = (n1, n2) {
+            team_queries::update_team_hierarchy(
+                &tx,
+                team_id,
+                Some(n1_id.as_str()),
+                Some(n2_id.as_str()),
+                "Claro",
+                0.0,
+            )?;
+        }
+    }
+
+    tx.commit()?;
+
+    Ok(())
+}
+
+// ── PosEspecial ───────────────────────────────────────────────────────────────
+
+fn persistir_grids_e_ofertas(
+    conn: &Connection,
+    season_id: &str,
+    grids: &[GridClasse],
+    season_number: i32,
+    player_offers_payload: Option<&(String, Vec<PlayerSpecialOffer>)>,
+) -> Result<(), DbError> {
+    let (ops, team_lineup) = preparar_persistencia_grids(conn, grids, season_number)?;
+    let tx = conn.unchecked_transaction()?;
+    aplicar_persistencia_grids(&tx, &ops, &team_lineup)?;
+
+    if let Some((player_id, offers)) = player_offers_payload {
+        player_offers::replace_player_special_offers(&tx, season_id, player_id, offers)?;
+    }
+
+    tx.commit()?;
+    Ok(())
+}
+
+fn preparar_persistencia_grids(
+    conn: &Connection,
+    grids: &[GridClasse],
+    season_number: i32,
+) -> Result<(Vec<PendingOp>, TeamLineupMap), DbError> {
+    let total = grids.iter().map(|g| g.assignments.len()).sum::<usize>();
+    let contract_ids = crate::generators::ids::next_ids(conn, IdType::Contract, total as u32)?;
+    let mut contract_idx = 0;
+    let mut team_lineup: TeamLineupMap = std::collections::HashMap::new();
+    let mut team_map: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut driver_map: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+
+    for grid in grids {
+        for assignment in &grid.assignments {
+            if !team_map.contains_key(&assignment.team_id) {
+                if let Ok(Some(team)) = team_queries::get_team_by_id(conn, &assignment.team_id) {
+                    team_map.insert(team.id.clone(), team.nome.clone());
+                }
+            }
+            if !driver_map.contains_key(&assignment.driver_id) {
+                if let Ok(driver) = driver_queries::get_driver(conn, &assignment.driver_id) {
+                    driver_map.insert(driver.id.clone(), driver.nome.clone());
+                }
+            }
+        }
+    }
+
+    let class_to_cat: std::collections::HashMap<&str, &str> = CLASSES_CONVOCADAS
+        .iter()
+        .map(|cfg| (cfg.class_name, cfg.special_category))
+        .collect();
+    let mut ops = Vec::new();
+
+    for grid in grids {
+        let special_cat = class_to_cat
+            .get(grid.class_name.as_str())
+            .copied()
+            .unwrap_or("unknown");
+
+        for assignment in &grid.assignments {
+            let contract_id = contract_ids[contract_idx].clone();
+            contract_idx += 1;
+
+            let team_nome = team_map
+                .get(&assignment.team_id)
+                .cloned()
+                .unwrap_or_else(|| assignment.team_id.clone());
+            let driver_nome = driver_map
+                .get(&assignment.driver_id)
+                .cloned()
+                .unwrap_or_else(|| assignment.driver_id.clone());
+            let papel = if assignment.papel == TeamRole::Numero1 {
+                TeamRole::Numero1
+            } else {
+                TeamRole::Numero2
+            };
+
+            let contract = contract_queries::generate_especial_contract(
+                contract_id,
+                &assignment.driver_id,
+                &driver_nome,
+                &assignment.team_id,
+                &team_nome,
+                papel.clone(),
+                special_cat,
+                &grid.class_name,
+                season_number,
+            );
+
+            let lineup = team_lineup
+                .entry(assignment.team_id.clone())
+                .or_insert((None, None));
+            match papel {
+                TeamRole::Numero1 => lineup.0 = Some(assignment.driver_id.clone()),
+                TeamRole::Numero2 => lineup.1 = Some(assignment.driver_id.clone()),
+            }
+
+            ops.push(PendingOp {
+                contract,
+                driver_id: assignment.driver_id.clone(),
+                special_category: special_cat.to_string(),
+            });
+        }
+    }
+
+    Ok((ops, team_lineup))
+}
+
+fn aplicar_persistencia_grids(
+    conn: &Connection,
+    ops: &[PendingOp],
+    team_lineup: &TeamLineupMap,
+) -> Result<(), DbError> {
+    driver_queries::clear_all_categoria_especial_ativa(conn)?;
+    team_queries::clear_special_team_lineups(conn)?;
+    team_queries::reset_special_team_hierarchies(conn)?;
+
+    for op in ops {
         contract_queries::insert_contract(conn, &op.contract)?;
         driver_queries::update_driver_especial_category(
             conn,
@@ -468,10 +861,9 @@ fn persistir_grids(
         )?;
     }
 
-    for (team_id, (n1, n2)) in &team_lineup {
+    for (team_id, (n1, n2)) in team_lineup {
         team_queries::update_team_pilots(conn, team_id, n1.as_deref(), n2.as_deref())?;
 
-        // Hierarquia: N1 = hierarquia_n1_id, N2 = hierarquia_n2_id
         if let (Some(n1_id), Some(n2_id)) = (n1, n2) {
             team_queries::update_team_hierarchy(
                 conn,
@@ -486,8 +878,6 @@ fn persistir_grids(
 
     Ok(())
 }
-
-// ── PosEspecial ───────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PosEspecialResult {
@@ -532,7 +922,7 @@ pub fn run_pos_especial(conn: &Connection) -> Result<PosEspecialResult, DbError>
     }
 
     // Coletar campeões ANTES do cleanup (contratos ainda ativos)
-    let campeoes = query_campeoes_especiais(conn, season.numero)?;
+    let _campeoes = query_campeoes_especiais(conn, season.numero)?;
 
     // Cleanup em uma transação
     let tx = conn.unchecked_transaction()?;
@@ -637,6 +1027,16 @@ mod tests {
         (conn, season_id)
     }
 
+    fn make_player_eligible_for_specials(conn: &Connection, category: &str) -> String {
+        let mut player = dq::get_player_driver(conn).expect("player");
+        player.categoria_atual = Some(category.to_string());
+        player.atributos.skill = 98.0;
+        player.melhor_resultado_temp = Some(1);
+        player.stats_temporada.vitorias = 4;
+        dq::update_driver(conn, &player).expect("update player");
+        player.id
+    }
+
     #[test]
     fn test_season_phase_transitions() {
         let (conn, season_id) = setup_world_db();
@@ -674,6 +1074,97 @@ mod tests {
         // Tentar convocação em BlocoRegular deve falhar
         let result = run_convocation_window(&conn);
         assert!(result.is_err(), "deveria falhar fora de JanelaConvocacao");
+    }
+
+    #[test]
+    fn test_iniciar_bloco_especial_rolls_back_phase_when_calendar_generation_fails() {
+        let (conn, season_id) = setup_world_db();
+        advance_to_convocation_window(&conn).expect("advance");
+
+        conn.execute(
+            "CREATE TRIGGER fail_special_calendar_insert
+             BEFORE INSERT ON calendar
+             BEGIN
+                 SELECT RAISE(ABORT, 'special calendar blocked');
+             END;",
+            [],
+        )
+        .expect("create trigger");
+
+        let result = iniciar_bloco_especial(&conn);
+        assert!(result.is_err(), "inicio do bloco especial deveria falhar");
+
+        let season = sq::get_season_by_id(&conn, &season_id)
+            .expect("season query")
+            .expect("season");
+        assert_eq!(
+            season.fase,
+            SeasonPhase::JanelaConvocacao,
+            "a fase nao deve avancar se a geracao do calendario especial falhar"
+        );
+    }
+
+    #[test]
+    fn test_run_convocation_rolls_back_when_player_offer_persistence_fails() {
+        let (conn, _) = setup_world_db();
+        make_player_eligible_for_specials(&conn, "gt4");
+        advance_to_convocation_window(&conn).expect("advance");
+
+        conn.execute(
+            "CREATE TRIGGER fail_player_special_offer_insert
+             BEFORE INSERT ON player_special_offers
+             BEGIN
+                 SELECT RAISE(ABORT, 'player special offer blocked');
+             END;",
+            [],
+        )
+        .expect("create trigger");
+
+        let result = run_convocation_window(&conn);
+        assert!(result.is_err(), "convocacao deveria falhar");
+
+        let especial_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM contracts WHERE tipo = 'Especial'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("special contracts count");
+        assert_eq!(
+            especial_count, 0,
+            "a convocacao precisa ser atomica e nao deixar contratos especiais apos falha nas ofertas"
+        );
+
+        let drivers_in_special: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM drivers WHERE categoria_especial_ativa IS NOT NULL",
+                [],
+                |row| row.get(0),
+            )
+            .expect("drivers in special count");
+        assert_eq!(
+            drivers_in_special, 0,
+            "a convocacao nao deve marcar pilotos no especial apos rollback"
+        );
+    }
+
+    #[test]
+    fn test_run_convocation_propagates_player_lookup_errors() {
+        let (conn, _) = setup_world_db();
+        advance_to_convocation_window(&conn).expect("advance");
+        let player_id = dq::get_player_driver(&conn).expect("player").id;
+
+        conn.execute(
+            "UPDATE drivers SET personalidade_primaria = 'perfil_quebrado' WHERE id = ?1",
+            rusqlite::params![player_id],
+        )
+        .expect("corrupt player personality");
+
+        let result = run_convocation_window(&conn);
+        assert!(
+            result.is_err(),
+            "erro estrutural na leitura do jogador nao deveria ser tratado como ausencia de jogador"
+        );
     }
 
     #[test]
@@ -781,6 +1272,86 @@ mod tests {
             "equipes lmp2 com pilotos: {}",
             lmp2_with_pilots
         );
+    }
+
+    #[test]
+    fn test_persistir_grids_rolls_back_all_changes_on_error() {
+        let (conn, _) = setup_world_db();
+        let season_number = 1;
+
+        let next_contract: i64 = conn
+            .query_row(
+                "SELECT CAST(value AS INTEGER) FROM meta WHERE key = 'next_contract_id'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("read next contract id");
+        let second_contract_id = format!("C{:03}", next_contract + 1);
+        conn.execute_batch(&format!(
+            "
+            CREATE TRIGGER fail_second_special_contract_insert
+            BEFORE INSERT ON contracts
+            WHEN NEW.id = '{second_contract_id}'
+            BEGIN
+                SELECT RAISE(ABORT, 'forced special contract failure');
+            END;
+            "
+        ))
+        .expect("create failing trigger");
+
+        let team = team_queries::get_teams_by_category_and_class(&conn, "endurance", "gt4")
+            .expect("gt4 teams")
+            .into_iter()
+            .next()
+            .expect("at least one gt4 team");
+        let drivers = dq::get_drivers_by_category(&conn, "gt4").expect("gt4 drivers");
+        let assignments = vec![
+            DriverAssignment {
+                driver_id: drivers[0].id.clone(),
+                team_id: team.id.clone(),
+                papel: TeamRole::Numero1,
+                fonte: "MeritoRegular".to_string(),
+                score: 99.0,
+            },
+            DriverAssignment {
+                driver_id: drivers[1].id.clone(),
+                team_id: team.id.clone(),
+                papel: TeamRole::Numero2,
+                fonte: "MeritoRegular".to_string(),
+                score: 98.0,
+            },
+        ];
+
+        let result = persistir_grids(
+            &conn,
+            &[GridClasse {
+                class_name: "gt4".to_string(),
+                assignments,
+            }],
+            season_number,
+        );
+        assert!(result.is_err(), "persistência deveria falhar com trigger");
+
+        let especiais: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM contracts WHERE tipo = 'Especial'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count special contracts");
+        assert_eq!(
+            especiais, 0,
+            "nenhum contrato especial deveria sobreviver após rollback"
+        );
+
+        for driver in drivers.iter().take(2) {
+            let refreshed = dq::get_driver(&conn, &driver.id).expect("refresh driver");
+            assert!(
+                refreshed.categoria_especial_ativa.is_none(),
+                "piloto {} não deveria ficar marcado no especial após rollback",
+                refreshed.nome
+            );
+        }
     }
 
     // ── Testes PosEspecial ────────────────────────────────────────────────────

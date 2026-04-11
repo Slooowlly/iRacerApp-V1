@@ -1,20 +1,29 @@
+use std::collections::HashSet;
 use std::path::Path;
+#[cfg(test)]
+use std::sync::atomic::{AtomicU64, Ordering};
 
-use chrono::Local;
+use chrono::{Duration, Local, NaiveDate};
 use rand::Rng;
 use rusqlite::Connection;
 use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
 
+use crate::db::queries::calendar as calendar_queries;
 use crate::db::queries::contracts as contract_queries;
 use crate::db::queries::drivers as driver_queries;
 use crate::db::queries::teams as team_queries;
 use crate::generators::ids::{next_id, IdType};
 use crate::market::pipeline::run_market;
 use crate::market::proposals::{MarketProposal, ProposalStatus};
+use crate::market::sync::sync_team_slots_from_active_regular_contracts;
 use crate::models::contract::Contract;
 use crate::models::driver::Driver;
-use crate::models::enums::{ContractStatus, DriverStatus, TeamRole};
+use crate::models::enums::{ContractStatus, DriverStatus, SeasonPhase, TeamRole};
+use crate::models::license::{
+    ensure_driver_can_join_category, grant_driver_license_for_category_if_needed,
+    repair_missing_licenses_for_current_categories,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum PreSeasonPhase {
@@ -34,6 +43,11 @@ pub struct PreSeasonState {
     pub phase: PreSeasonPhase,
     pub is_complete: bool,
     pub player_has_pending_proposals: bool,
+    /// Verdadeiro se o jogador já tem um contrato regular ativo para esta temporada.
+    #[serde(default)]
+    pub player_has_team: bool,
+    #[serde(default)]
+    pub current_display_date: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -156,6 +170,49 @@ fn default_estavel() -> String {
     "estavel".to_string()
 }
 
+#[cfg(test)]
+static PRESEASON_CLONE_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+#[cfg(test)]
+struct TempPreseasonClone {
+    path: std::path::PathBuf,
+    conn: Option<Connection>,
+}
+
+#[cfg(test)]
+impl TempPreseasonClone {
+    fn new(source: &Connection) -> Result<Self, String> {
+        let path = clone_connection_to_temp(source)?;
+        let conn = Connection::open(&path)
+            .map_err(|e| format!("Falha ao abrir clone temporario do banco: {e}"))?;
+        Ok(Self {
+            path,
+            conn: Some(conn),
+        })
+    }
+
+    fn connection(&self) -> &Connection {
+        self.conn
+            .as_ref()
+            .expect("clone temporario da preseason ja foi liberado")
+    }
+
+    #[cfg(test)]
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+#[cfg(test)]
+impl Drop for TempPreseasonClone {
+    fn drop(&mut self) {
+        let _ = self.conn.take();
+        if let Err(err) = cleanup_temp_db(&self.path) {
+            eprintln!("Falha ao limpar clone temporario da preseason: {err}");
+        }
+    }
+}
+
 pub fn initialize_preseason(
     conn: &Connection,
     season_number: i32,
@@ -164,29 +221,80 @@ pub fn initialize_preseason(
     let season_id = get_season_id_by_number(conn, season_number)?
         .ok_or_else(|| format!("Temporada {season_number} nao encontrada"))?;
     reset_market_state(conn, &season_id, &PreSeasonPhase::ContractExpiry)?;
+    repair_missing_licenses_for_current_categories(conn)?;
 
-    let temp_db_path = clone_connection_to_temp(conn)?;
-    let temp_conn = Connection::open(&temp_db_path)
-        .map_err(|e| format!("Falha ao abrir clone temporario do banco: {e}"))?;
-
-    let original_contracts = contract_queries::get_all_active_contracts(conn)
+    let original_contracts = contract_queries::get_all_active_regular_contracts(conn)
         .map_err(|e| format!("Falha ao carregar contratos atuais: {e}"))?;
     let original_teams =
         team_queries::get_all_teams(conn).map_err(|e| format!("Falha ao carregar equipes: {e}"))?;
     let _original_drivers = driver_queries::get_all_drivers(conn)
         .map_err(|e| format!("Falha ao carregar pilotos atuais: {e}"))?;
-    let market_report = run_market(&temp_conn, season_number, rng)
-        .map_err(|e| format!("Falha ao simular mercado para o plano: {e}"))?;
-    let temp_teams = team_queries::get_all_teams(&temp_conn)
-        .map_err(|e| format!("Falha ao carregar equipes do clone: {e}"))?;
-    let temp_drivers = driver_queries::get_all_drivers(&temp_conn)
-        .map_err(|e| format!("Falha ao carregar pilotos do clone: {e}"))?;
-
     let original_contracts_by_driver = original_contracts
         .iter()
         .cloned()
         .map(|contract| (contract.piloto_id.clone(), contract))
         .collect::<std::collections::HashMap<_, _>>();
+
+    let (
+        market_report,
+        temp_teams,
+        temp_drivers,
+        simulated_contracts_by_driver,
+        renewal_events,
+        mut planned_events,
+        transfer_events,
+    ) = {
+        conn.execute_batch("SAVEPOINT preseason_plan_simulation")
+            .map_err(|e| format!("Falha ao iniciar savepoint do plano da pre-temporada: {e}"))?;
+        let simulation_result = (|| -> Result<_, String> {
+            let market_report = run_market(conn, season_number, rng)
+                .map_err(|e| format!("Falha ao simular mercado para o plano: {e}"))?;
+            let simulated_contracts = contract_queries::get_all_active_regular_contracts(conn)
+                .map_err(|e| format!("Falha ao carregar contratos simulados: {e}"))?;
+            let simulated_contracts_by_driver = simulated_contracts
+                .into_iter()
+                .map(|contract| (contract.piloto_id.clone(), contract))
+                .collect::<std::collections::HashMap<_, _>>();
+            let temp_teams = team_queries::get_all_teams(conn)
+                .map_err(|e| format!("Falha ao carregar equipes simuladas: {e}"))?;
+            let temp_drivers = driver_queries::get_all_drivers(conn)
+                .map_err(|e| format!("Falha ao carregar pilotos simulados: {e}"))?;
+            let renewal_events =
+                build_renewal_events(&simulated_contracts_by_driver, &market_report.new_signings)?;
+            let renewed_driver_ids: HashSet<String> = renewal_events
+                .iter()
+                .filter_map(|event| match &event.event {
+                    PendingAction::RenewContract { driver_id, .. } => Some(driver_id.clone()),
+                    _ => None,
+                })
+                .collect();
+            let planned_events =
+                build_expiry_events(conn, &original_contracts, &renewed_driver_ids)?;
+            let transfer_events = build_transfer_events(
+                &simulated_contracts_by_driver,
+                &market_report.new_signings,
+                &original_contracts_by_driver,
+            )?;
+            Ok((
+                market_report,
+                temp_teams,
+                temp_drivers,
+                simulated_contracts_by_driver,
+                renewal_events,
+                planned_events,
+                transfer_events,
+            ))
+        })();
+        let rollback_result =
+            conn.execute_batch("ROLLBACK TO SAVEPOINT preseason_plan_simulation; RELEASE SAVEPOINT preseason_plan_simulation;");
+        if let Err(e) = rollback_result {
+            return Err(format!(
+                "Falha ao reverter simulacao temporaria da pre-temporada: {e}"
+            ));
+        }
+        simulation_result?
+    };
+
     let original_teams_by_id = original_teams
         .iter()
         .cloned()
@@ -198,11 +306,10 @@ pub fn initialize_preseason(
         .map(|driver| (driver.id.clone(), driver))
         .collect::<std::collections::HashMap<_, _>>();
 
-    let mut planned_events = build_expiry_events(&temp_conn, &original_contracts)?;
-    planned_events.extend(build_renewal_events(
-        &temp_conn,
-        &market_report.new_signings,
-    )?);
+    apply_preseason_entry_contract_state(conn, season_number)?;
+    apply_preseason_renewal_state(conn, season_number, &renewal_events)?;
+
+    planned_events.extend(renewal_events);
     if !planned_events.iter().any(|event| {
         event.week == 2 && phase_for_action(&event.event) == PreSeasonPhase::ContractExpiry
     }) {
@@ -215,11 +322,6 @@ pub fn initialize_preseason(
         });
     }
 
-    let transfer_events = build_transfer_events(
-        &temp_conn,
-        &market_report.new_signings,
-        &original_contracts_by_driver,
-    )?;
     if transfer_events.is_empty() {
         planned_events.push(PlannedEvent {
             week: 3,
@@ -259,7 +361,7 @@ pub fn initialize_preseason(
     }
 
     let rookie_events = build_rookie_events(
-        &temp_conn,
+        &simulated_contracts_by_driver,
         &market_report.new_signings,
         &temp_drivers_by_id,
         current_week,
@@ -295,20 +397,24 @@ pub fn initialize_preseason(
     }
 
     let total_weeks = current_week.max(3);
-    cleanup_temp_db(&temp_db_path);
+
+    let mut state = PreSeasonState {
+        season_number,
+        current_week: 1,
+        total_weeks,
+        phase: phase_for_week(1, &planned_events),
+        is_complete: false,
+        player_has_pending_proposals: market_report
+            .player_proposals
+            .iter()
+            .any(|proposal| proposal.status == ProposalStatus::Pendente),
+        player_has_team: false,
+        current_display_date: None,
+    };
+    refresh_preseason_state_display_date(conn, &season_id, &mut state)?;
 
     Ok(PreSeasonPlan {
-        state: PreSeasonState {
-            season_number,
-            current_week: 1,
-            total_weeks,
-            phase: phase_for_week(1, &planned_events),
-            is_complete: false,
-            player_has_pending_proposals: market_report
-                .player_proposals
-                .iter()
-                .any(|proposal| proposal.status == ProposalStatus::Pendente),
-        },
+        state,
         planned_events,
         executed_weeks: Vec::new(),
     })
@@ -319,6 +425,7 @@ pub fn advance_week(conn: &Connection, plan: &mut PreSeasonPlan) -> Result<WeekR
         return Err("Pre-temporada ja esta completa".to_string());
     }
 
+    repair_missing_licenses_for_current_categories(conn)?;
     let week = plan.state.current_week;
     let season_id = get_season_id_by_number(conn, plan.state.season_number)?
         .ok_or_else(|| format!("Temporada {} nao encontrada", plan.state.season_number))?;
@@ -383,6 +490,7 @@ pub fn advance_week(conn: &Connection, plan: &mut PreSeasonPlan) -> Result<WeekR
     } else {
         phase_for_week(plan.state.current_week, &plan.planned_events)
     };
+    refresh_preseason_state_display_date(conn, &season_id, &mut plan.state)?;
     let result = WeekResult {
         week_number: week,
         phase,
@@ -394,6 +502,16 @@ pub fn advance_week(conn: &Connection, plan: &mut PreSeasonPlan) -> Result<WeekR
     };
     plan.executed_weeks.push(result.clone());
     Ok(result)
+}
+
+pub fn refresh_preseason_state_display_date(
+    conn: &Connection,
+    season_id: &str,
+    state: &mut PreSeasonState,
+) -> Result<(), String> {
+    state.current_display_date =
+        compute_preseason_display_date(conn, season_id, state.current_week, state.total_weeks)?;
+    Ok(())
 }
 
 pub fn save_preseason_plan(save_path: &Path, plan: &PreSeasonPlan) -> Result<(), String> {
@@ -427,6 +545,27 @@ pub fn delete_preseason_plan(save_path: &Path) -> Result<(), String> {
 
 fn preseason_plan_path(save_path: &Path) -> std::path::PathBuf {
     save_path.join("preseason_plan.json")
+}
+
+fn compute_preseason_display_date(
+    conn: &Connection,
+    season_id: &str,
+    current_week: i32,
+    total_weeks: i32,
+) -> Result<Option<String>, String> {
+    let Some(first_regular_event) =
+        calendar_queries::get_next_any_race_in_phase(conn, season_id, &SeasonPhase::BlocoRegular)
+            .map_err(|e| format!("Falha ao buscar primeira data da temporada regular: {e}"))?
+    else {
+        return Ok(None);
+    };
+
+    let anchor_date = NaiveDate::parse_from_str(&first_regular_event.display_date, "%Y-%m-%d")
+        .map_err(|e| format!("Falha ao interpretar data da primeira corrida regular: {e}"))?;
+    let effective_week = current_week.clamp(1, total_weeks.max(1));
+    let weeks_before_first_event = i64::from(total_weeks.max(1) - effective_week + 1);
+    let preseason_date = anchor_date - Duration::days(weeks_before_first_event * 7);
+    Ok(Some(preseason_date.format("%Y-%m-%d").to_string()))
 }
 
 fn phase_for_week(week: i32, planned_events: &[PlannedEvent]) -> PreSeasonPhase {
@@ -476,10 +615,14 @@ fn phase_order(phase: &PreSeasonPhase) -> i32 {
 fn build_expiry_events(
     temp_conn: &Connection,
     original_contracts: &[Contract],
+    renewed_driver_ids: &HashSet<String>,
 ) -> Result<Vec<PlannedEvent>, String> {
-    let expiring: Vec<_> = original_contracts
+    Ok(original_contracts
         .iter()
         .filter_map(|contract| {
+            if renewed_driver_ids.contains(&contract.piloto_id) {
+                return None;
+            }
             let temp_contract = contract_queries::get_contract_by_id(temp_conn, &contract.id)
                 .ok()
                 .flatten()?;
@@ -498,21 +641,79 @@ fn build_expiry_events(
                 executed: false,
             })
         })
-        .collect();
-
-    let split = expiring.len().div_ceil(2).max(1);
-    Ok(expiring
-        .into_iter()
-        .enumerate()
-        .map(|(index, mut event)| {
-            event.week = if index < split { 1 } else { 2 };
-            event
-        })
         .collect())
 }
 
+fn apply_preseason_entry_contract_state(
+    conn: &Connection,
+    season_number: i32,
+) -> Result<(), String> {
+    contract_queries::expire_ending_contracts(conn, season_number - 1)
+        .map_err(|e| format!("Falha ao expirar contratos na entrada da pre-temporada: {e}"))?;
+    sync_team_slots_from_active_contracts(conn)?;
+    Ok(())
+}
+
+fn apply_preseason_renewal_state(
+    conn: &Connection,
+    season_number: i32,
+    renewal_events: &[PlannedEvent],
+) -> Result<(), String> {
+    for event in renewal_events {
+        let PendingAction::RenewContract {
+            driver_id,
+            driver_name,
+            team_id,
+            team_name,
+            new_salary,
+            new_duration,
+            new_role,
+        } = &event.event
+        else {
+            continue;
+        };
+
+        let existing_contract =
+            contract_queries::get_active_regular_contract_for_pilot(conn, driver_id)
+                .map_err(|e| format!("Falha ao buscar renovacao ativa pre-aplicada: {e}"))?;
+        if existing_contract.as_ref().is_some_and(|contract| {
+            contract.equipe_id == *team_id && contract.temporada_inicio == season_number
+        }) {
+            continue;
+        }
+
+        let team = team_queries::get_team_by_id(conn, team_id)
+            .map_err(|e| format!("Falha ao buscar equipe da renovacao pre-aplicada: {e}"))?
+            .ok_or_else(|| format!("Equipe '{}' nao encontrada", team_id))?;
+        let role = TeamRole::from_str_strict(new_role)
+            .map_err(|e| format!("Falha ao interpretar papel da renovacao pre-aplicada: {e}"))?;
+        let contract = Contract::new(
+            next_id(conn, IdType::Contract)
+                .map_err(|e| format!("Falha ao gerar ID da renovacao pre-aplicada: {e}"))?,
+            driver_id.clone(),
+            driver_name.clone(),
+            team_id.clone(),
+            team_name.clone(),
+            season_number,
+            *new_duration,
+            *new_salary,
+            role,
+            team.categoria.clone(),
+        );
+        contract_queries::insert_contract(conn, &contract).map_err(|e| {
+            format!(
+                "Falha ao inserir renovacao pre-aplicada '{}': {e}",
+                driver_id
+            )
+        })?;
+    }
+
+    sync_team_slots_from_active_contracts(conn)?;
+    Ok(())
+}
+
 fn build_renewal_events(
-    temp_conn: &Connection,
+    simulated_contracts_by_driver: &std::collections::HashMap<String, Contract>,
     signings: &[crate::market::proposals::SigningInfo],
 ) -> Result<Vec<PlannedEvent>, String> {
     let renewals: Vec<_> = signings
@@ -523,15 +724,14 @@ fn build_renewal_events(
     let split = renewals.len().div_ceil(2).max(1);
     let mut events = Vec::new();
     for (index, signing) in renewals.into_iter().enumerate() {
-        let contract =
-            contract_queries::get_active_contract_for_pilot(temp_conn, &signing.driver_id)
-                .map_err(|e| format!("Falha ao buscar renovacao planejada: {e}"))?
-                .ok_or_else(|| {
-                    format!(
-                        "Contrato renovado de '{}' nao encontrado",
-                        signing.driver_id
-                    )
-                })?;
+        let contract = simulated_contracts_by_driver
+            .get(&signing.driver_id)
+            .ok_or_else(|| {
+                format!(
+                    "Contrato renovado de '{}' nao encontrado",
+                    signing.driver_id
+                )
+            })?;
         events.push(PlannedEvent {
             week: if index < split { 1 } else { 2 },
             event: PendingAction::RenewContract {
@@ -550,7 +750,7 @@ fn build_renewal_events(
 }
 
 fn build_transfer_events(
-    temp_conn: &Connection,
+    simulated_contracts_by_driver: &std::collections::HashMap<String, Contract>,
     signings: &[crate::market::proposals::SigningInfo],
     original_contracts_by_driver: &std::collections::HashMap<String, Contract>,
 ) -> Result<Vec<PlannedEvent>, String> {
@@ -561,10 +761,9 @@ fn build_transfer_events(
         .cloned()
         .enumerate()
     {
-        let contract =
-            contract_queries::get_active_contract_for_pilot(temp_conn, &signing.driver_id)
-                .map_err(|e| format!("Falha ao buscar transferencia planejada: {e}"))?
-                .ok_or_else(|| format!("Contrato de '{}' nao encontrado", signing.driver_id))?;
+        let contract = simulated_contracts_by_driver
+            .get(&signing.driver_id)
+            .ok_or_else(|| format!("Contrato de '{}' nao encontrado", signing.driver_id))?;
         let previous_team = original_contracts_by_driver.get(&signing.driver_id);
         events.push(PlannedEvent {
             week: 3 + (index / 3).min(2) as i32,
@@ -586,19 +785,16 @@ fn build_transfer_events(
 }
 
 fn build_rookie_events(
-    temp_conn: &Connection,
+    simulated_contracts_by_driver: &std::collections::HashMap<String, Contract>,
     signings: &[crate::market::proposals::SigningInfo],
     temp_drivers_by_id: &std::collections::HashMap<String, Driver>,
     week: i32,
 ) -> Result<Vec<PlannedEvent>, String> {
     let mut events = Vec::new();
     for signing in signings.iter().filter(|signing| signing.tipo == "rookie") {
-        let contract =
-            contract_queries::get_active_contract_for_pilot(temp_conn, &signing.driver_id)
-                .map_err(|e| format!("Falha ao buscar rookie planejado: {e}"))?
-                .ok_or_else(|| {
-                    format!("Contrato de rookie '{}' nao encontrado", signing.driver_id)
-                })?;
+        let contract = simulated_contracts_by_driver
+            .get(&signing.driver_id)
+            .ok_or_else(|| format!("Contrato de rookie '{}' nao encontrado", signing.driver_id))?;
         let driver = temp_drivers_by_id
             .get(&signing.driver_id)
             .cloned()
@@ -746,16 +942,11 @@ fn timestamp_now() -> String {
     Local::now().format("%Y-%m-%dT%H:%M:%S").to_string()
 }
 
+#[cfg(test)]
 fn clone_connection_to_temp(conn: &Connection) -> Result<std::path::PathBuf, String> {
     conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
         .map_err(|e| format!("Falha ao checkpointar banco antes do clone: {e}"))?;
-    let temp_path = std::env::temp_dir().join(format!(
-        "iracerapp_preseason_clone_{}.db",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|e| format!("Falha ao gerar timestamp do clone: {e}"))?
-            .as_nanos()
-    ));
+    let temp_path = next_preseason_clone_path()?;
     let escaped = temp_path
         .to_string_lossy()
         .replace('\\', "/")
@@ -765,12 +956,46 @@ fn clone_connection_to_temp(conn: &Connection) -> Result<std::path::PathBuf, Str
     Ok(temp_path)
 }
 
-fn cleanup_temp_db(path: &Path) {
-    let _ = std::fs::remove_file(path);
-    let wal = format!("{}-wal", path.to_string_lossy());
-    let shm = format!("{}-shm", path.to_string_lossy());
-    let _ = std::fs::remove_file(wal);
-    let _ = std::fs::remove_file(shm);
+#[cfg(test)]
+fn next_preseason_clone_path() -> Result<std::path::PathBuf, String> {
+    let pid = std::process::id();
+    for _ in 0..64 {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| format!("Falha ao gerar timestamp do clone: {e}"))?
+            .as_nanos();
+        let counter = PRESEASON_CLONE_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let candidate = std::env::temp_dir().join(format!(
+            "iracerapp_preseason_clone_{pid}_{nanos}_{counter}.db"
+        ));
+
+        if !candidate.exists() {
+            return Ok(candidate);
+        }
+    }
+
+    Err("Falha ao reservar caminho unico para clone temporario da pre-temporada".to_string())
+}
+
+#[cfg(test)]
+fn cleanup_temp_db(path: &Path) -> Result<(), String> {
+    fn remove_if_exists(path: &Path) -> Result<(), String> {
+        match std::fs::remove_file(path) {
+            Ok(()) => Ok(()),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(err) => Err(format!(
+                "Falha ao remover arquivo temporario '{}': {err}",
+                path.display()
+            )),
+        }
+    }
+
+    remove_if_exists(path)?;
+    let wal = std::path::PathBuf::from(format!("{}-wal", path.to_string_lossy()));
+    let shm = std::path::PathBuf::from(format!("{}-shm", path.to_string_lossy()));
+    remove_if_exists(&wal)?;
+    remove_if_exists(&shm)?;
+    Ok(())
 }
 
 fn execute_action(
@@ -830,21 +1055,30 @@ fn execute_action(
             let team = team_queries::get_team_by_id(conn, team_id)
                 .map_err(|e| format!("Falha ao buscar equipe da renovacao: {e}"))?
                 .ok_or_else(|| format!("Equipe '{}' nao encontrada", team_id))?;
-            let contract = Contract::new(
-                next_id(conn, IdType::Contract)
-                    .map_err(|e| format!("Falha ao gerar ID da renovacao: {e}"))?,
-                driver_id.clone(),
-                driver_name.clone(),
-                team_id.clone(),
-                team_name.clone(),
-                season_number,
-                *new_duration,
-                *new_salary,
-                TeamRole::from_str(new_role),
-                team.categoria.clone(),
-            );
-            contract_queries::insert_contract(conn, &contract)
-                .map_err(|e| format!("Falha ao inserir renovacao '{}': {e}", driver_id))?;
+            let existing_contract =
+                contract_queries::get_active_regular_contract_for_pilot(conn, driver_id)
+                    .map_err(|e| format!("Falha ao buscar renovacao ja aplicada: {e}"))?;
+            if !existing_contract.as_ref().is_some_and(|contract| {
+                contract.equipe_id == *team_id && contract.temporada_inicio == season_number
+            }) {
+                let role = TeamRole::from_str_strict(new_role)
+                    .map_err(|e| format!("Falha ao interpretar papel da renovacao: {e}"))?;
+                let contract = Contract::new(
+                    next_id(conn, IdType::Contract)
+                        .map_err(|e| format!("Falha ao gerar ID da renovacao: {e}"))?,
+                    driver_id.clone(),
+                    driver_name.clone(),
+                    team_id.clone(),
+                    team_name.clone(),
+                    season_number,
+                    *new_duration,
+                    *new_salary,
+                    role,
+                    team.categoria.clone(),
+                );
+                contract_queries::insert_contract(conn, &contract)
+                    .map_err(|e| format!("Falha ao inserir renovacao '{}': {e}", driver_id))?;
+            }
             events.push(MarketEvent {
                 event_type: MarketEventType::ContractRenewed,
                 headline: format!("{driver_name} renova com {team_name}"),
@@ -936,6 +1170,10 @@ fn execute_action(
             role,
         } => {
             ensure_driver_exists(conn, driver)?;
+            let team = team_queries::get_team_by_id(conn, team_id)
+                .map_err(|e| format!("Falha ao buscar equipe '{}' para rookie: {e}", team_id))?
+                .ok_or_else(|| format!("Equipe '{}' nao encontrada", team_id))?;
+            grant_driver_license_for_category_if_needed(conn, &driver.id, &team.categoria)?;
             sign_driver_to_team(
                 conn,
                 &driver.id,
@@ -1097,6 +1335,9 @@ fn sign_driver_to_team(
             driver_id
         )
     })?;
+    ensure_driver_can_join_category(conn, driver_id, driver_name, &team.categoria)?;
+    let role = TeamRole::from_str_strict(role)
+        .map_err(|e| format!("Falha ao interpretar papel da assinatura: {e}"))?;
     let contract = Contract::new(
         next_id(conn, IdType::Contract)
             .map_err(|e| format!("Falha ao gerar ID de contrato: {e}"))?,
@@ -1107,7 +1348,7 @@ fn sign_driver_to_team(
         season_number,
         duration,
         salary,
-        TeamRole::from_str(role),
+        role,
         team.categoria.clone(),
     );
     contract_queries::insert_contract(conn, &contract)
@@ -1147,72 +1388,7 @@ fn sync_team_slots_from_active_contracts(conn: &Connection) -> Result<(), String
         .into_iter()
         .map(|driver| (driver.id.clone(), driver))
         .collect::<std::collections::HashMap<_, _>>();
-    let active_contracts = contract_queries::get_all_active_contracts(conn)
-        .map_err(|e| format!("Falha ao carregar contratos ativos: {e}"))?;
-    let mut contracts_by_team = std::collections::HashMap::<String, Vec<Contract>>::new();
-
-    for contract in active_contracts {
-        let Some(driver) = drivers_by_id.get(&contract.piloto_id) else {
-            continue;
-        };
-        if driver.status == DriverStatus::Aposentado {
-            contract_queries::update_contract_status(
-                conn,
-                &contract.id,
-                &ContractStatus::Rescindido,
-            )
-            .map_err(|e| {
-                format!(
-                    "Falha ao rescindir contrato invalido '{}': {e}",
-                    contract.id
-                )
-            })?;
-            continue;
-        }
-        contracts_by_team
-            .entry(contract.equipe_id.clone())
-            .or_default()
-            .push(contract);
-    }
-
-    for team in teams {
-        let mut contracts = contracts_by_team.remove(&team.id).unwrap_or_default();
-        contracts.sort_by(|a, b| {
-            let skill_a = drivers_by_id
-                .get(&a.piloto_id)
-                .map(|driver| driver.atributos.skill)
-                .unwrap_or(0.0);
-            let skill_b = drivers_by_id
-                .get(&b.piloto_id)
-                .map(|driver| driver.atributos.skill)
-                .unwrap_or(0.0);
-            skill_b.total_cmp(&skill_a)
-        });
-        let piloto_1 = contracts
-            .first()
-            .map(|contract| contract.piloto_id.as_str());
-        let piloto_2 = contracts.get(1).map(|contract| contract.piloto_id.as_str());
-        team_queries::update_team_pilots(conn, &team.id, piloto_1, piloto_2).map_err(|e| {
-            format!(
-                "Falha ao sincronizar pilotos da equipe '{}': {e}",
-                team.nome
-            )
-        })?;
-    }
-
-    // Limpa categoria_atual de pilotos que não têm contrato ativo.
-    // Necessário porque expire_ending_contracts expira contratos via SQL bulk sem
-    // resetar esse campo, causando pilotos "órfãos" que aparecem em get_drivers_by_category
-    // mas não têm equipe — o que derruba a simulação de corrida na temporada seguinte.
-    conn.execute(
-        "UPDATE drivers SET categoria_atual = NULL
-         WHERE categoria_atual IS NOT NULL
-         AND id NOT IN (SELECT piloto_id FROM contracts WHERE status = 'Ativo')",
-        [],
-    )
-    .map_err(|e| format!("Falha ao limpar categoria_atual de pilotos sem contrato: {e}"))?;
-
-    Ok(())
+    sync_team_slots_from_active_regular_contracts(conn, &teams, &drivers_by_id)
 }
 
 fn count_remaining_vacancies(conn: &Connection) -> Result<i32, String> {
@@ -1251,6 +1427,7 @@ mod tests {
     use crate::models::contract::Contract;
     use crate::models::driver::Driver;
     use crate::models::enums::{DriverStatus, TeamRole};
+    use crate::models::license::driver_has_required_license_for_category;
     use crate::models::season::Season;
 
     #[test]
@@ -1375,6 +1552,43 @@ mod tests {
     }
 
     #[test]
+    fn test_initialize_preseason_expires_ending_contracts_immediately() {
+        let conn = setup_market_fixture();
+        let mut rng = StdRng::seed_from_u64(5061);
+
+        let active_before = contract_queries::get_active_regular_contract_for_pilot(&conn, "P007")
+            .expect("active contract query before preseason")
+            .expect("player should start with active contract");
+        assert_eq!(active_before.id, "C004");
+
+        let plan = initialize_preseason(&conn, 2, &mut rng).expect("plan should be created");
+
+        let active_after = contract_queries::get_active_regular_contract_for_pilot(&conn, "P007")
+            .expect("active contract query after preseason");
+        assert!(
+            active_after.is_none(),
+            "piloto com contrato encerrado na temporada anterior deve entrar na pre-temporada sem contrato ativo"
+        );
+
+        let player_contract_status: String = conn
+            .query_row(
+                "SELECT status FROM contracts WHERE id = 'C004'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("player contract status");
+        assert_ne!(player_contract_status, "Ativo");
+
+        assert!(
+            !plan.planned_events.iter().any(|event| {
+                event.week > 1
+                    && matches!(event.event, PendingAction::ExpireContract { .. })
+            }),
+            "expiracoes de contrato nao devem ficar adiadas para semanas posteriores ao inicio da janela"
+        );
+    }
+
+    #[test]
     fn test_renewal_week() {
         let conn = setup_market_fixture();
         let mut rng = StdRng::seed_from_u64(507);
@@ -1398,7 +1612,160 @@ mod tests {
                 |row| row.get(0),
             )
             .expect("renewed count");
-        assert!(renewed >= 1);
+        assert_eq!(renewed, 1);
+    }
+
+    #[test]
+    fn test_build_expiry_events_skips_driver_with_planned_renewal() {
+        let conn = setup_market_fixture();
+        let original_contracts =
+            contract_queries::get_all_active_regular_contracts(&conn).expect("active contracts");
+        apply_preseason_entry_contract_state(&conn, 2).expect("entry state");
+        let renewed_driver_ids = HashSet::from(["P001".to_string()]);
+
+        let events =
+            build_expiry_events(&conn, &original_contracts, &renewed_driver_ids).expect("events");
+
+        assert!(
+            !events.iter().any(|event| matches!(
+                &event.event,
+                PendingAction::ExpireContract { driver_id, .. } if driver_id == "P001"
+            )),
+            "piloto com renovacao planejada nao deve ser tratado como saida de equipe"
+        );
+    }
+
+    #[test]
+    fn test_apply_preseason_renewal_state_keeps_driver_linked_to_team() {
+        let conn = setup_market_fixture();
+        apply_preseason_entry_contract_state(&conn, 2).expect("entry state");
+
+        let renewal_events = vec![PlannedEvent {
+            week: 1,
+            executed: false,
+            event: PendingAction::RenewContract {
+                driver_id: "P001".to_string(),
+                driver_name: "Piloto A".to_string(),
+                team_id: "T001".to_string(),
+                team_name: "Equipe A".to_string(),
+                new_salary: 140_000.0,
+                new_duration: 2,
+                new_role: TeamRole::Numero1.as_str().to_string(),
+            },
+        }];
+
+        apply_preseason_renewal_state(&conn, 2, &renewal_events).expect("renewal state");
+
+        let renewed_contract =
+            contract_queries::get_active_regular_contract_for_pilot(&conn, "P001")
+                .expect("renewed contract query")
+                .expect("renewed driver should remain under active contract");
+        assert_eq!(renewed_contract.temporada_inicio, 2);
+        assert_eq!(renewed_contract.equipe_id, "T001");
+
+        let team = team_queries::get_team_by_id(&conn, "T001")
+            .expect("team query")
+            .expect("team exists");
+        assert!(
+            team.piloto_1_id.as_deref() == Some("P001")
+                || team.piloto_2_id.as_deref() == Some("P001"),
+            "renovacao deve manter o piloto vinculado a equipe desde a entrada da pre-temporada"
+        );
+    }
+
+    #[test]
+    fn test_initialize_preseason_does_not_schedule_automatic_move_for_player() {
+        let conn = setup_market_fixture();
+        let mut rng = StdRng::seed_from_u64(507);
+        let plan = initialize_preseason(&conn, 2, &mut rng).expect("plan should be created");
+        let player = driver_queries::get_player_driver(&conn).expect("player");
+
+        assert!(
+            plan.planned_events.iter().any(|event| matches!(
+                &event.event,
+                PendingAction::PlayerProposal { proposal } if proposal.piloto_id == player.id
+            )),
+            "o jogador deveria receber ao menos uma proposta planejada"
+        );
+        assert!(
+            !plan.planned_events.iter().any(|event| matches!(
+                &event.event,
+                PendingAction::RenewContract { driver_id, .. } if driver_id == &player.id
+            )),
+            "o plano não deve renovar automaticamente o contrato do jogador"
+        );
+        assert!(
+            !plan.planned_events.iter().any(|event| matches!(
+                &event.event,
+                PendingAction::Transfer { driver_id, .. } if driver_id == &player.id
+            )),
+            "o plano não deve agendar transferência automática para o jogador"
+        );
+        assert!(
+            !plan.planned_events.iter().any(|event| matches!(
+                &event.event,
+                PendingAction::PlaceRookie { driver, .. } if driver.id == player.id
+            )),
+            "o plano não deve tratar o jogador como rookie para preencher vagas"
+        );
+    }
+
+    #[test]
+    fn test_sign_driver_to_team_rejects_driver_without_required_license() {
+        let conn = setup_market_fixture();
+        let free_driver = driver_queries::get_driver(&conn, "P005").expect("free driver");
+        let team = team_queries::get_team_by_id(&conn, "T001")
+            .expect("team query")
+            .expect("team exists");
+
+        let error = sign_driver_to_team(
+            &conn,
+            &free_driver.id,
+            &free_driver.nome,
+            &team.id,
+            2,
+            80_000.0,
+            1,
+            TeamRole::Numero2.as_str(),
+        )
+        .expect_err("signing should fail without required license");
+
+        assert!(error.to_lowercase().contains("licenc"));
+
+        let active_contracts: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM contracts WHERE piloto_id = ?1 AND status = 'Ativo'",
+                [&free_driver.id],
+                |row| row.get(0),
+            )
+            .expect("active contracts count");
+        assert_eq!(active_contracts, 0);
+
+        let refreshed = driver_queries::get_driver(&conn, &free_driver.id).expect("driver query");
+        assert!(refreshed.categoria_atual.is_none());
+    }
+
+    #[test]
+    fn test_sign_driver_to_team_rejects_invalid_role() {
+        let conn = setup_market_fixture();
+        let free_driver = driver_queries::get_driver(&conn, "P004").expect("free driver");
+        let team = team_queries::get_team_by_id(&conn, "T002")
+            .expect("team query")
+            .expect("team exists");
+
+        let error = sign_driver_to_team(
+            &conn,
+            &free_driver.id,
+            &free_driver.nome,
+            &team.id,
+            2,
+            80_000.0,
+            1,
+            "PapelInvalido",
+        )
+        .expect_err("signing should fail with invalid role");
+
+        assert!(error.contains("TeamRole"));
     }
 
     #[test]
@@ -1422,6 +1789,31 @@ mod tests {
             .expect("team query")
             .expect("team");
         assert!(team.piloto_1_id.is_some() || team.piloto_2_id.is_some());
+    }
+
+    #[test]
+    fn test_preseason_reduces_vacancies_before_final_week() {
+        let conn = setup_market_fixture();
+        let mut rng = StdRng::seed_from_u64(508);
+        let mut plan = initialize_preseason(&conn, 2, &mut rng).expect("plan should be created");
+
+        advance_week(&conn, &mut plan).expect("contract expiry week should advance");
+        let second_week = advance_week(&conn, &mut plan).expect("second week should advance");
+        let vacancies_before_transfers = second_week.remaining_vacancies;
+
+        let transfer_week = advance_week(&conn, &mut plan).expect("transfer week should advance");
+
+        assert!(
+            transfer_week
+                .events
+                .iter()
+                .any(|event| event.event_type == MarketEventType::TransferCompleted),
+            "a pre-temporada deveria ter pelo menos uma contratacao antes da semana final"
+        );
+        assert!(
+            transfer_week.remaining_vacancies < vacancies_before_transfers,
+            "as vagas devem comecar a cair antes da ultima semana"
+        );
     }
 
     #[test]
@@ -1449,6 +1841,68 @@ mod tests {
             )
             .expect("rookie contracts");
         assert!(rookie_contracts >= 2);
+    }
+
+    #[test]
+    fn test_place_rookie_grants_required_license_before_signing() {
+        let conn = setup_market_fixture();
+        let rookie = sample_driver(
+            "P999",
+            "Rookie Planejado",
+            Some("gt4"),
+            55.0,
+            DriverStatus::Ativo,
+        );
+        let mut plan = PreSeasonPlan {
+            state: PreSeasonState {
+                season_number: 2,
+                current_week: 1,
+                total_weeks: 1,
+                phase: PreSeasonPhase::RookiePlacement,
+                is_complete: false,
+                player_has_pending_proposals: false,
+                player_has_team: false,
+                current_display_date: None,
+            },
+            planned_events: vec![PlannedEvent {
+                week: 1,
+                executed: false,
+                event: PendingAction::PlaceRookie {
+                    driver: rookie.clone(),
+                    team_id: "T001".to_string(),
+                    team_name: "Equipe A".to_string(),
+                    salary: 80_000.0,
+                    duration: 1,
+                    role: TeamRole::Numero2.as_str().to_string(),
+                },
+            }],
+            executed_weeks: Vec::new(),
+        };
+
+        let result = advance_week(&conn, &mut plan).expect("rookie placement should succeed");
+
+        assert!(result
+            .events
+            .iter()
+            .any(|event| event.event_type == MarketEventType::RookieSigned));
+
+        let license_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM licenses WHERE piloto_id = ?1 AND CAST(nivel AS INTEGER) >= 2",
+                [&rookie.id],
+                |row| row.get(0),
+            )
+            .expect("rookie license count");
+        assert_eq!(license_count, 1);
+
+        let active_contracts: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM contracts WHERE piloto_id = ?1 AND status = 'Ativo'",
+                [&rookie.id],
+                |row| row.get(0),
+            )
+            .expect("rookie active contract count");
+        assert_eq!(active_contracts, 1);
     }
 
     #[test]
@@ -1490,6 +1944,122 @@ mod tests {
             .is_none());
 
         let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn test_temp_preseason_clone_cleans_up_file_on_drop() {
+        let conn = setup_market_fixture();
+        let temp_path;
+        let wal_path;
+        let shm_path;
+
+        {
+            let clone = TempPreseasonClone::new(&conn).expect("temp clone");
+            temp_path = clone.path().to_path_buf();
+            wal_path = PathBuf::from(format!("{}-wal", temp_path.to_string_lossy()));
+            shm_path = PathBuf::from(format!("{}-shm", temp_path.to_string_lossy()));
+
+            assert!(
+                temp_path.exists(),
+                "temp clone should exist while guard is alive"
+            );
+
+            let contract_count: i64 = clone
+                .connection()
+                .query_row("SELECT COUNT(*) FROM contracts", [], |row| row.get(0))
+                .expect("count contracts from temp clone");
+            assert!(contract_count > 0, "temp clone should be readable");
+        }
+
+        assert!(
+            !temp_path.exists(),
+            "temp clone file should be removed after guard drop: {}",
+            temp_path.display()
+        );
+        assert!(
+            !wal_path.exists(),
+            "temp clone wal file should be removed after guard drop: {}",
+            wal_path.display()
+        );
+        assert!(
+            !shm_path.exists(),
+            "temp clone shm file should be removed after guard drop: {}",
+            shm_path.display()
+        );
+    }
+
+    #[test]
+    fn test_next_preseason_clone_path_is_unique_on_rapid_calls() {
+        let mut seen = std::collections::HashSet::new();
+
+        for _ in 0..128 {
+            let path = next_preseason_clone_path().expect("unique clone path");
+            assert!(
+                seen.insert(path.clone()),
+                "clone path duplicado gerado em chamadas rapidas: {}",
+                path.display()
+            );
+        }
+    }
+
+    #[test]
+    fn test_advance_week_repairs_legacy_license_before_transfer() {
+        let conn = setup_market_fixture();
+        let mut team_rng = StdRng::seed_from_u64(513);
+        let extra_team = sample_team("gt4", "T003", &mut team_rng);
+        team_queries::insert_team(&conn, &extra_team).expect("extra team");
+        conn.execute("DELETE FROM licenses WHERE piloto_id = 'P004'", [])
+            .expect("remove legacy-corrected license");
+
+        let mut plan = PreSeasonPlan {
+            state: PreSeasonState {
+                season_number: 2,
+                current_week: 1,
+                total_weeks: 1,
+                phase: PreSeasonPhase::Transfers,
+                is_complete: false,
+                player_has_pending_proposals: false,
+                player_has_team: false,
+                current_display_date: None,
+            },
+            planned_events: vec![PlannedEvent {
+                week: 1,
+                executed: false,
+                event: PendingAction::Transfer {
+                    driver_id: "P004".to_string(),
+                    driver_name: "Piloto D".to_string(),
+                    from_team_id: None,
+                    from_team_name: None,
+                    to_team_id: extra_team.id.clone(),
+                    to_team_name: extra_team.nome.clone(),
+                    salary: 110_000.0,
+                    duration: 1,
+                    role: TeamRole::Numero1.as_str().to_string(),
+                },
+            }],
+            executed_weeks: Vec::new(),
+        };
+
+        let result = advance_week(&conn, &mut plan).expect("legacy transfer should succeed");
+
+        assert!(result
+            .events
+            .iter()
+            .any(|event| event.event_type == MarketEventType::TransferCompleted));
+        assert!(
+            driver_has_required_license_for_category(&conn, "P004", "gt4")
+                .expect("repaired gt4 license"),
+            "a execucao da pre-temporada deve recuperar saves legados antes de assinar"
+        );
+        let active_contracts: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM contracts
+                 WHERE piloto_id = 'P004' AND equipe_id = 'T003' AND status = 'Ativo'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("signed contract count");
+        assert_eq!(active_contracts, 1);
     }
 
     #[test]

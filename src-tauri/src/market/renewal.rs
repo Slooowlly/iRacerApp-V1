@@ -28,6 +28,12 @@ pub struct RenewalDecision {
     pub new_role: Option<TeamRole>,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct N2ConsistencyGuard {
+    protects_hard_rejection: bool,
+    non_renewal_risk: f64,
+}
+
 pub fn should_renew_contract(
     driver: &Driver,
     performance_score: f64,
@@ -35,6 +41,7 @@ pub fn should_renew_contract(
     team_budget: f64,
     rng: &mut impl Rng,
 ) -> RenewalDecision {
+    let n2_consistency_guard = n2_consistency_retention_guard(driver, performance_score);
     let mut decision = if driver.idade > 36 && performance_score < 60.0 {
         no_renewal("Veterano com desempenho abaixo da média")
     } else if driver.idade > 36 && performance_score < 75.0 && rng.gen_range(0.0..1.0) < 0.50 {
@@ -48,11 +55,14 @@ pub fn should_renew_contract(
         let salary_ratio = contract.salario_anual / effective_budget;
         if salary_ratio > 0.35 && performance_score < 70.0 {
             no_renewal("Salário desproporcional ao desempenho")
-        } else if contract.papel == TeamRole::Numero2 && performance_score < 55.0 {
+        } else if contract.papel == TeamRole::Numero2
+            && performance_score < 55.0
+            && !n2_consistency_guard.protects_hard_rejection
+        {
             no_renewal("N2 fraco, equipe busca jovem promessa")
         } else if contract.papel == TeamRole::Numero2
             && performance_score < 65.0
-            && rng.gen_range(0.0..1.0) < 0.55
+            && rng.gen_range(0.0..1.0) < n2_consistency_guard.non_renewal_risk
         {
             no_renewal("N2 mediano, chance de buscar melhor")
         } else {
@@ -112,6 +122,32 @@ pub fn should_renew_contract(
     }
 
     decision
+}
+
+fn n2_consistency_retention_guard(driver: &Driver, performance_score: f64) -> N2ConsistencyGuard {
+    if performance_score >= 65.0 {
+        return N2ConsistencyGuard {
+            protects_hard_rejection: true,
+            non_renewal_risk: 0.0,
+        };
+    }
+
+    if driver.atributos.consistencia >= 78.0 && performance_score >= 50.0 {
+        N2ConsistencyGuard {
+            protects_hard_rejection: true,
+            non_renewal_risk: 0.20,
+        }
+    } else if driver.atributos.consistencia >= 70.0 && performance_score >= 50.0 {
+        N2ConsistencyGuard {
+            protects_hard_rejection: true,
+            non_renewal_risk: 0.35,
+        }
+    } else {
+        N2ConsistencyGuard {
+            protects_hard_rejection: false,
+            non_renewal_risk: 0.55,
+        }
+    }
 }
 
 /// Infere o contexto de continuidade a partir de sinais locais da renovação.
@@ -256,6 +292,34 @@ mod tests {
 
         assert!(decision.should_renew);
         assert!(decision.new_salary.expect("salary") > 100_000.0);
+    }
+
+    #[test]
+    fn test_consistent_n2_has_better_renewal_odds() {
+        let mut reliable_n2 = sample_driver(29, None);
+        reliable_n2.atributos.consistencia = 78.0;
+
+        let mut unreliable_n2 = sample_driver(29, None);
+        unreliable_n2.atributos.consistencia = 55.0;
+
+        let contract = sample_contract(TeamRole::Numero2, 55_000.0);
+        let reliable_renewals = (1..=64)
+            .filter(|seed| {
+                let mut rng = StdRng::seed_from_u64(*seed);
+                should_renew_contract(&reliable_n2, 60.0, &contract, 90.0, &mut rng).should_renew
+            })
+            .count();
+        let unreliable_renewals = (1..=64)
+            .filter(|seed| {
+                let mut rng = StdRng::seed_from_u64(*seed);
+                should_renew_contract(&unreliable_n2, 60.0, &contract, 90.0, &mut rng).should_renew
+            })
+            .count();
+
+        assert!(
+            reliable_renewals > unreliable_renewals,
+            "N2 consistente deve ter protecao perceptivel na renovacao"
+        );
     }
 
     fn sample_driver(age: u32, personality: Option<PrimaryPersonality>) -> Driver {

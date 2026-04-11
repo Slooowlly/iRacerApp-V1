@@ -32,6 +32,7 @@ pub fn insert_player_proposal(
 
 pub fn get_pending_player_proposals(
     conn: &Connection,
+    season_id: &str,
     player_id: &str,
 ) -> Result<Vec<MarketProposal>, DbError> {
     let mut stmt = conn.prepare(
@@ -49,17 +50,23 @@ pub fn get_pending_player_proposals(
          FROM market_proposals mp
          INNER JOIN teams t ON t.id = mp.equipe_id
          INNER JOIN drivers d ON d.id = mp.piloto_id
-         WHERE mp.piloto_id = ?1 AND mp.status = 'Pendente'
+         WHERE mp.temporada_id = ?1 AND mp.piloto_id = ?2 AND mp.status = 'Pendente'
          ORDER BY mp.salario DESC, mp.criado_em DESC",
     )?;
-    let rows = stmt.query_map(params![player_id], proposal_from_row)?;
+    let rows = stmt.query_map(params![season_id, player_id], proposal_from_row)?;
     collect_proposals(rows)
 }
 
-pub fn count_pending_player_proposals(conn: &Connection, player_id: &str) -> Result<i32, DbError> {
+pub fn count_pending_player_proposals(
+    conn: &Connection,
+    season_id: &str,
+    player_id: &str,
+) -> Result<i32, DbError> {
     let count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM market_proposals WHERE piloto_id = ?1 AND status = 'Pendente'",
-        params![player_id],
+        "SELECT COUNT(*)
+         FROM market_proposals
+         WHERE temporada_id = ?1 AND piloto_id = ?2 AND status = 'Pendente'",
+        params![season_id, player_id],
         |row| row.get(0),
     )?;
     Ok(count as i32)
@@ -67,6 +74,7 @@ pub fn count_pending_player_proposals(conn: &Connection, player_id: &str) -> Res
 
 pub fn get_market_proposal_by_id(
     conn: &Connection,
+    season_id: &str,
     proposal_id: &str,
 ) -> Result<Option<MarketProposal>, DbError> {
     let mut stmt = conn.prepare(
@@ -84,10 +92,10 @@ pub fn get_market_proposal_by_id(
          FROM market_proposals mp
          INNER JOIN teams t ON t.id = mp.equipe_id
          INNER JOIN drivers d ON d.id = mp.piloto_id
-         WHERE mp.id = ?1
+         WHERE mp.temporada_id = ?1 AND mp.id = ?2
          LIMIT 1",
     )?;
-    stmt.query_row(params![proposal_id], proposal_from_row)
+    stmt.query_row(params![season_id, proposal_id], proposal_from_row)
         .optional()
         .map_err(DbError::from)
 }
@@ -98,25 +106,31 @@ pub fn update_proposal_status(
     new_status: &str,
     reason: Option<&str>,
 ) -> Result<(), DbError> {
-    conn.execute(
+    let affected = conn.execute(
         "UPDATE market_proposals
          SET status = ?1, motivo_recusa = COALESCE(?2, motivo_recusa), respondido_em = ?3
          WHERE id = ?4",
         params![new_status, reason, timestamp_now(), proposal_id],
     )?;
+    if affected == 0 {
+        return Err(DbError::NotFound(format!(
+            "proposta de mercado nao encontrada: {proposal_id}"
+        )));
+    }
     Ok(())
 }
 
 pub fn expire_remaining_proposals(
     conn: &Connection,
+    season_id: &str,
     player_id: &str,
     except_proposal_id: &str,
 ) -> Result<(), DbError> {
     conn.execute(
         "UPDATE market_proposals
          SET status = 'Expirada', respondido_em = ?1
-         WHERE piloto_id = ?2 AND status = 'Pendente' AND id <> ?3",
-        params![timestamp_now(), player_id, except_proposal_id],
+         WHERE temporada_id = ?2 AND piloto_id = ?3 AND status = 'Pendente' AND id <> ?4",
+        params![timestamp_now(), season_id, player_id, except_proposal_id],
     )?;
     Ok(())
 }
@@ -150,15 +164,12 @@ fn proposal_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<MarketProposal
         piloto_id: row.get(3)?,
         piloto_nome: row.get(4)?,
         categoria,
-        papel: TeamRole::from_str(&row.get::<_, String>(6)?),
+        papel: TeamRole::from_str_strict(&row.get::<_, String>(6)?)
+            .map_err(rusqlite::Error::InvalidParameterName)?,
         salario_oferecido: row.get(7)?,
         duracao_anos,
-        status: match row.get::<_, String>(8)?.as_str() {
-            "Aceita" => ProposalStatus::Aceita,
-            "Recusada" => ProposalStatus::Recusada,
-            "Expirada" => ProposalStatus::Expirada,
-            _ => ProposalStatus::Pendente,
-        },
+        status: ProposalStatus::from_str_strict(&row.get::<_, String>(8)?)
+            .map_err(rusqlite::Error::InvalidParameterName)?,
         motivo_recusa: row.get(9)?,
     })
 }
@@ -212,13 +223,34 @@ mod tests {
         )
         .expect("insert rejected proposal");
 
-        let proposals = get_pending_player_proposals(&conn, "P001").expect("pending proposals");
+        let proposals =
+            get_pending_player_proposals(&conn, "S002", "P001").expect("pending proposals");
 
         assert_eq!(proposals.len(), 1);
         assert_eq!(proposals[0].id, "MP-001");
         assert_eq!(proposals[0].equipe_nome, "Team One");
         assert_eq!(proposals[0].categoria, "gt4");
         assert_eq!(proposals[0].duracao_anos, 2);
+    }
+
+    #[test]
+    fn test_get_pending_player_proposals_is_scoped_to_season() {
+        let conn = setup_test_db().expect("test db");
+        insert_team(&conn, "T001", "Team One", "gt4").expect("insert team");
+        insert_driver(&conn, "P001", "Jogador").expect("insert player");
+        insert_season(&conn, "S001", 1).expect("insert season one");
+        insert_season(&conn, "S002", 2).expect("insert season two");
+
+        insert_player_proposal(&conn, "S001", &sample_proposal("MP-OLD", "P001", "T001"))
+            .expect("insert old proposal");
+        insert_player_proposal(&conn, "S002", &sample_proposal("MP-NEW", "P001", "T001"))
+            .expect("insert new proposal");
+
+        let proposals =
+            get_pending_player_proposals(&conn, "S002", "P001").expect("pending proposals");
+
+        assert_eq!(proposals.len(), 1);
+        assert_eq!(proposals[0].id, "MP-NEW");
     }
 
     #[test]
@@ -232,7 +264,7 @@ mod tests {
             .expect("insert proposal");
 
         assert_eq!(
-            count_pending_player_proposals(&conn, "P001").expect("count pending"),
+            count_pending_player_proposals(&conn, "S002", "P001").expect("count pending"),
             1
         );
 
@@ -240,10 +272,10 @@ mod tests {
             .expect("update proposal");
 
         assert_eq!(
-            count_pending_player_proposals(&conn, "P001").expect("count pending"),
+            count_pending_player_proposals(&conn, "S002", "P001").expect("count pending"),
             0
         );
-        let proposal = get_market_proposal_by_id(&conn, "MP-010")
+        let proposal = get_market_proposal_by_id(&conn, "S002", "MP-010")
             .expect("proposal lookup")
             .expect("proposal");
         assert_eq!(proposal.status, ProposalStatus::Recusada);
@@ -263,16 +295,89 @@ mod tests {
         insert_player_proposal(&conn, "S002", &sample_proposal("MP-102", "P001", "T002"))
             .expect("insert proposal two");
 
-        expire_remaining_proposals(&conn, "P001", "MP-101").expect("expire remaining");
+        expire_remaining_proposals(&conn, "S002", "P001", "MP-101").expect("expire remaining");
 
-        let kept = get_market_proposal_by_id(&conn, "MP-101")
+        let kept = get_market_proposal_by_id(&conn, "S002", "MP-101")
             .expect("lookup")
             .expect("kept");
-        let expired = get_market_proposal_by_id(&conn, "MP-102")
+        let expired = get_market_proposal_by_id(&conn, "S002", "MP-102")
             .expect("lookup")
             .expect("expired");
         assert_eq!(kept.status, ProposalStatus::Pendente);
         assert_eq!(expired.status, ProposalStatus::Expirada);
+    }
+
+    #[test]
+    fn test_expire_remaining_proposals_is_scoped_to_season() {
+        let conn = setup_test_db().expect("test db");
+        insert_team(&conn, "T001", "Team One", "gt4").expect("insert team");
+        insert_driver(&conn, "P001", "Jogador").expect("insert player");
+        insert_season(&conn, "S001", 1).expect("insert season one");
+        insert_season(&conn, "S002", 2).expect("insert season two");
+
+        insert_player_proposal(&conn, "S001", &sample_proposal("MP-OLD", "P001", "T001"))
+            .expect("insert old proposal");
+        insert_player_proposal(&conn, "S002", &sample_proposal("MP-NEW", "P001", "T001"))
+            .expect("insert new proposal");
+
+        expire_remaining_proposals(&conn, "S002", "P001", "MP-NEW").expect("expire current season");
+
+        let old = get_market_proposal_by_id(&conn, "S001", "MP-OLD")
+            .expect("lookup old")
+            .expect("old proposal");
+        let current = get_market_proposal_by_id(&conn, "S002", "MP-NEW")
+            .expect("lookup current")
+            .expect("current proposal");
+        assert_eq!(old.status, ProposalStatus::Pendente);
+        assert_eq!(current.status, ProposalStatus::Pendente);
+    }
+
+    #[test]
+    fn test_invalid_team_role_from_db_returns_error() {
+        let conn = setup_test_db().expect("test db");
+        insert_team(&conn, "T001", "Team One", "gt4").expect("insert team");
+        insert_driver(&conn, "P001", "Jogador").expect("insert player");
+        insert_season(&conn, "S002", 2).expect("insert season");
+        insert_player_proposal(&conn, "S002", &sample_proposal("MP-201", "P001", "T001"))
+            .expect("insert proposal");
+        conn.execute(
+            "UPDATE market_proposals SET papel = 'papel_quebrado' WHERE id = 'MP-201'",
+            [],
+        )
+        .expect("corrupt role");
+
+        let err = get_market_proposal_by_id(&conn, "S002", "MP-201")
+            .expect_err("invalid role should fail");
+        assert!(err.to_string().contains("TeamRole inválido"));
+    }
+
+    #[test]
+    fn test_invalid_proposal_status_from_db_returns_error() {
+        let conn = setup_test_db().expect("test db");
+        insert_team(&conn, "T001", "Team One", "gt4").expect("insert team");
+        insert_driver(&conn, "P001", "Jogador").expect("insert player");
+        insert_season(&conn, "S002", 2).expect("insert season");
+        insert_player_proposal(&conn, "S002", &sample_proposal("MP-202", "P001", "T001"))
+            .expect("insert proposal");
+        conn.execute(
+            "UPDATE market_proposals SET status = 'status_quebrado' WHERE id = 'MP-202'",
+            [],
+        )
+        .expect("corrupt status");
+
+        let err = get_market_proposal_by_id(&conn, "S002", "MP-202")
+            .expect_err("invalid status should fail");
+        assert!(err.to_string().contains("ProposalStatus inválido"));
+    }
+
+    #[test]
+    fn test_update_proposal_status_returns_not_found_for_missing_id() {
+        let conn = setup_test_db().expect("test db");
+
+        let err = update_proposal_status(&conn, "MP-404", "Recusada", Some("Nao existe"))
+            .expect_err("missing proposal should fail");
+
+        assert!(matches!(err, DbError::NotFound(_)));
     }
 
     fn sample_proposal(id: &str, player_id: &str, team_id: &str) -> MarketProposal {

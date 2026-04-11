@@ -53,5 +53,6 @@ pub(crate) struct StandingEntry {
     pub(crate) team_id: Option<String>,
     pub(crate) position: i32,
     pub(crate) total_drivers: i32,
+    pub(crate) seasons_in_category: i32,
     pub(crate) stats: SeasonStats,
 }

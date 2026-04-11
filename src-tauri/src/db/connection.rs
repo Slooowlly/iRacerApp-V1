@@ -12,6 +12,8 @@ pub enum DbError {
     Sqlite(#[from] rusqlite::Error),
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
+    #[error("Invalid data: {0}")]
+    InvalidData(String),
     #[error("Migration error: {0}")]
     Migration(String),
     #[error("Not found: {0}")]

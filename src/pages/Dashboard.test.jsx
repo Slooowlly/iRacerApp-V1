@@ -28,6 +28,10 @@ vi.mock("./tabs/NextRaceTab", () => ({
   default: () => <div>Briefing pre-corrida</div>,
 }));
 
+vi.mock("../components/season/ConvocationView", () => ({
+  default: () => <div>Janela de convocacao</div>,
+}));
+
 describe("Dashboard", () => {
   beforeEach(() => {
     mockState = {
@@ -39,6 +43,7 @@ describe("Dashboard", () => {
       showEndOfSeason: false,
       endOfSeasonResult: null,
       showPreseason: false,
+      showConvocation: false,
     };
   });
 
@@ -66,5 +71,14 @@ describe("Dashboard", () => {
 
     expect(screen.getByTestId("main-layout")).toHaveAttribute("data-hide-header", "true");
     expect(screen.getByText("Classificacao final")).toBeInTheDocument();
+  });
+
+  it("renders the convocation screen before the regular tabs", () => {
+    mockState.showRaceBriefing = false;
+    mockState.showConvocation = true;
+
+    render(<Dashboard />);
+
+    expect(screen.getByText("Janela de convocacao")).toBeInTheDocument();
   });
 });

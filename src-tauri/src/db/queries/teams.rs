@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use rusqlite::{params, types::FromSql, Connection, OptionalExtension};
 
 use crate::db::connection::DbError;
@@ -17,7 +19,8 @@ pub fn insert_team(conn: &Connection, team: &Team) -> Result<(), DbError> {
             stats_poles, stats_pontos, stats_melhor_resultado, temp_pontos,
             temp_posicao, temp_vitorias, historico_vitorias, historico_podios,
             historico_poles, historico_pontos, historico_titulos_pilotos,
-            carreira_titulos, carreira_vitorias, temporada_atual, created_at, updated_at
+            carreira_titulos, carreira_vitorias, temporada_atual, created_at, updated_at,
+            categoria_anterior
         ) VALUES (
             :id, :nome, :nome_curto, :cor_primaria, :cor_secundaria, :pais_sede,
             :ano_fundacao, :categoria, :ativa, :marca, :classe, :piloto_1_id, :piloto_2_id,
@@ -30,7 +33,8 @@ pub fn insert_team(conn: &Connection, team: &Team) -> Result<(), DbError> {
             :stats_poles, :stats_pontos, :stats_melhor_resultado, :temp_pontos,
             :temp_posicao, :temp_vitorias, :historico_vitorias, :historico_podios,
             :historico_poles, :historico_pontos, :historico_titulos_pilotos,
-            :carreira_titulos, :carreira_vitorias, :temporada_atual, :created_at, :updated_at
+            :carreira_titulos, :carreira_vitorias, :temporada_atual, :created_at, :updated_at,
+            :categoria_anterior
         )",
         rusqlite::named_params! {
             ":id": &team.id,
@@ -87,6 +91,7 @@ pub fn insert_team(conn: &Connection, team: &Team) -> Result<(), DbError> {
             ":temporada_atual": team.temporada_atual,
             ":created_at": &team.created_at,
             ":updated_at": &team.updated_at,
+            ":categoria_anterior": &team.categoria_anterior,
         },
     )?;
     Ok(())
@@ -165,7 +170,7 @@ pub fn reset_special_team_hierarchies(conn: &Connection) -> Result<(), DbError> 
 }
 
 pub fn update_team(conn: &Connection, team: &Team) -> Result<(), DbError> {
-    conn.execute(
+    let affected = conn.execute(
         "UPDATE teams SET
             nome = :nome,
             nome_curto = :nome_curto,
@@ -218,7 +223,8 @@ pub fn update_team(conn: &Connection, team: &Team) -> Result<(), DbError> {
             carreira_titulos = :carreira_titulos,
             carreira_vitorias = :carreira_vitorias,
             temporada_atual = :temporada_atual,
-            updated_at = :updated_at
+            updated_at = :updated_at,
+            categoria_anterior = :categoria_anterior
         WHERE id = :id",
         rusqlite::named_params! {
             ":id": &team.id,
@@ -274,8 +280,10 @@ pub fn update_team(conn: &Connection, team: &Team) -> Result<(), DbError> {
             ":carreira_vitorias": team.historico_vitorias,
             ":temporada_atual": team.temporada_atual,
             ":updated_at": &team.updated_at,
+            ":categoria_anterior": &team.categoria_anterior,
         },
     )?;
+    ensure_team_rows_affected(affected, &team.id, "atualizar equipe")?;
     Ok(())
 }
 
@@ -285,10 +293,11 @@ pub fn update_team_pilots(
     piloto_1_id: Option<&str>,
     piloto_2_id: Option<&str>,
 ) -> Result<(), DbError> {
-    conn.execute(
+    let affected = conn.execute(
         "UPDATE teams SET piloto_1_id = ?1, piloto_2_id = ?2 WHERE id = ?3",
         params![piloto_1_id, piloto_2_id, team_id],
     )?;
+    ensure_team_rows_affected(affected, team_id, "atualizar pilotos da equipe")?;
     Ok(())
 }
 
@@ -300,8 +309,11 @@ pub fn update_team_hierarchy(
     status: &str,
     tensao: f64,
 ) -> Result<(), DbError> {
-    let normalized = TeamHierarchyClimate::from_str(status).as_str().to_string();
-    conn.execute(
+    let normalized = TeamHierarchyClimate::from_str_strict(status)
+        .map_err(DbError::InvalidData)?
+        .as_str()
+        .to_string();
+    let affected = conn.execute(
         "UPDATE teams
          SET hierarquia_n1_id = ?1,
              hierarquia_n2_id = ?2,
@@ -310,13 +322,15 @@ pub fn update_team_hierarchy(
          WHERE id = ?5",
         params![n1_id, n2_id, normalized, tensao, team_id],
     )?;
+    ensure_team_rows_affected(affected, team_id, "atualizar hierarquia da equipe")?;
     Ok(())
 }
 
 /// Persiste todos os 9 campos da hierarquia interna de uma equipe de uma vez.
 /// Use este após processar o sistema de hierarquia pós-corrida.
 pub fn update_team_hierarchy_full(conn: &Connection, team: &Team) -> Result<(), DbError> {
-    conn.execute(
+    TeamHierarchyClimate::from_str_strict(&team.hierarquia_status).map_err(DbError::InvalidData)?;
+    let affected = conn.execute(
         "UPDATE teams
          SET hierarquia_n1_id = ?1,
              hierarquia_n2_id = ?2,
@@ -341,6 +355,11 @@ pub fn update_team_hierarchy_full(conn: &Connection, team: &Team) -> Result<(), 
             &team.id,
         ],
     )?;
+    ensure_team_rows_affected(
+        affected,
+        &team.id,
+        "atualizar hierarquia completa da equipe",
+    )?;
     Ok(())
 }
 
@@ -353,7 +372,7 @@ pub fn update_team_duel_counters(
     sequencia_n1: i32,
     inversoes_temporada: i32,
 ) -> Result<(), DbError> {
-    conn.execute(
+    let affected = conn.execute(
         "UPDATE teams
          SET hierarquia_duelos_total = ?1,
              hierarquia_duelos_n2_vencidos = ?2,
@@ -370,6 +389,7 @@ pub fn update_team_duel_counters(
             team_id
         ],
     )?;
+    ensure_team_rows_affected(affected, team_id, "atualizar contadores de duelo da equipe")?;
     Ok(())
 }
 
@@ -390,7 +410,20 @@ pub fn remove_pilot_from_team(
     } else {
         team.piloto_2_id.as_deref()
     };
+    let removed_from_hierarchy = team.hierarquia_n1_id.as_deref() == Some(driver_id)
+        || team.hierarquia_n2_id.as_deref() == Some(driver_id);
     update_team_pilots(conn, team_id, piloto_1, piloto_2)?;
+    if removed_from_hierarchy {
+        update_team_hierarchy(
+            conn,
+            team_id,
+            None,
+            None,
+            TeamHierarchyClimate::Estavel.as_str(),
+            0.0,
+        )?;
+        update_team_duel_counters(conn, team_id, 0, 0, 0, 0, 0)?;
+    }
     Ok(())
 }
 
@@ -403,7 +436,7 @@ pub fn update_team_season_stats(
     pontos: i32,
     melhor_resultado: i32,
 ) -> Result<(), DbError> {
-    conn.execute(
+    let affected = conn.execute(
         "UPDATE teams
          SET stats_vitorias = ?1,
              stats_podios = ?2,
@@ -423,11 +456,12 @@ pub fn update_team_season_stats(
             team_id
         ],
     )?;
+    ensure_team_rows_affected(affected, team_id, "atualizar estatisticas da equipe")?;
     Ok(())
 }
 
 pub fn reset_team_season_stats(conn: &Connection, team_id: &str) -> Result<(), DbError> {
-    conn.execute(
+    let affected = conn.execute(
         "UPDATE teams
          SET stats_vitorias = 0,
              stats_podios = 0,
@@ -440,19 +474,22 @@ pub fn reset_team_season_stats(conn: &Connection, team_id: &str) -> Result<(), D
          WHERE id = ?1",
         params![team_id],
     )?;
+    ensure_team_rows_affected(affected, team_id, "resetar estatisticas sazonais da equipe")?;
     Ok(())
 }
 
 pub fn update_team_morale(conn: &Connection, team_id: &str, morale: f64) -> Result<(), DbError> {
-    conn.execute(
+    let affected = conn.execute(
         "UPDATE teams SET morale = ?1 WHERE id = ?2",
         params![morale, team_id],
     )?;
+    ensure_team_rows_affected(affected, team_id, "atualizar moral da equipe")?;
     Ok(())
 }
 
 pub fn delete_team(conn: &Connection, id: &str) -> Result<(), DbError> {
-    conn.execute("DELETE FROM teams WHERE id = ?1", params![id])?;
+    let affected = conn.execute("DELETE FROM teams WHERE id = ?1", params![id])?;
+    ensure_team_rows_affected(affected, id, "remover equipe")?;
     Ok(())
 }
 
@@ -482,40 +519,49 @@ fn team_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Team> {
     let created_at: String = row.get("created_at")?;
     let mut team = placeholder_team_from_db(id, nome, categoria, created_at);
 
-    team.is_player_team = row.get::<_, i64>("is_player_team").unwrap_or(0) != 0;
-    team.car_performance = row.get("car_performance").unwrap_or(50.0);
-    team.confiabilidade = row.get("reliability").unwrap_or(50.0);
-    team.budget = row.get("budget").unwrap_or(50.0);
-    team.facilities = row.get("facilities").unwrap_or(50.0);
-    team.engineering = row.get("engineering").unwrap_or(50.0);
-    team.reputacao = row.get("prestige").unwrap_or(50.0);
-    team.morale = row.get("morale").unwrap_or(1.0);
-    team.aerodinamica = row.get("aerodinamica").unwrap_or(50.0);
-    team.motor = row.get("motor").unwrap_or(50.0);
-    team.chassi = row.get("chassi").unwrap_or(50.0);
-    team.hierarquia_status = row
-        .get::<_, String>("hierarquia_status")
-        .map(|value| TeamHierarchyClimate::from_str(&value).as_str().to_string())
-        .unwrap_or_else(|_| TeamHierarchyClimate::Estavel.as_str().to_string());
+    team.is_player_team = optional_column::<i64>(row, "is_player_team")?.unwrap_or(0) != 0;
+    team.car_performance = optional_column::<f64>(row, "car_performance")?.unwrap_or(50.0);
+    team.confiabilidade = optional_column::<f64>(row, "reliability")?.unwrap_or(50.0);
+    team.budget = optional_column::<f64>(row, "budget")?.unwrap_or(50.0);
+    team.facilities = optional_column::<f64>(row, "facilities")?.unwrap_or(50.0);
+    team.engineering = optional_column::<f64>(row, "engineering")?.unwrap_or(50.0);
+    team.reputacao = optional_column::<f64>(row, "prestige")?.unwrap_or(50.0);
+    team.morale = optional_column::<f64>(row, "morale")?.unwrap_or(1.0);
+    team.aerodinamica = optional_column::<f64>(row, "aerodinamica")?.unwrap_or(50.0);
+    team.motor = optional_column::<f64>(row, "motor")?.unwrap_or(50.0);
+    team.chassi = optional_column::<f64>(row, "chassi")?.unwrap_or(50.0);
+    team.hierarquia_status = optional_column::<String>(row, "hierarquia_status")?
+        .map(|value| {
+            TeamHierarchyClimate::from_str_strict(&value)
+                .map(|status| status.as_str().to_string())
+                .map_err(|error| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        0,
+                        rusqlite::types::Type::Text,
+                        Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, error)),
+                    )
+                })
+        })
+        .transpose()?
+        .unwrap_or_else(|| TeamHierarchyClimate::Estavel.as_str().to_string());
     team.parent_team_id = optional_column(row, "parent_team_id")?;
-    team.aceita_rookies = row.get::<_, i64>("aceita_rookies").unwrap_or(1) != 0;
-    team.meta_posicao = row.get::<_, i64>("meta_posicao").unwrap_or(10) as i32;
-    team.stats_pontos = optional_column::<i64>(row, "stats_pontos")?
-        .map(|value| value as i32)
+    team.aceita_rookies = optional_i32_column(row, "aceita_rookies")?.unwrap_or(1) != 0;
+    team.meta_posicao = optional_i32_column(row, "meta_posicao")?.unwrap_or(10);
+    team.stats_pontos = optional_i32_column(row, "stats_pontos")?
         .or_else(|| {
-            row.get::<_, f64>("temp_pontos")
+            optional_f64_column(row, "temp_pontos")
                 .ok()
-                .map(|value| value.round() as i32)
+                .flatten()
+                .and_then(|value| rounded_f64_to_i32("temp_pontos", value).ok())
         })
         .unwrap_or(0);
-    team.temp_posicao = row.get::<_, i64>("temp_posicao").unwrap_or(0) as i32;
-    team.stats_vitorias = optional_column::<i64>(row, "stats_vitorias")?
-        .map(|value| value as i32)
-        .unwrap_or_else(|| row.get::<_, i64>("temp_vitorias").unwrap_or(0) as i32);
-    team.historico_titulos_construtores = row.get::<_, i64>("carreira_titulos").unwrap_or(0) as i32;
-    team.historico_vitorias = optional_column::<i64>(row, "historico_vitorias")?
-        .map(|value| value as i32)
-        .unwrap_or_else(|| row.get::<_, i64>("carreira_vitorias").unwrap_or(0) as i32);
+    team.temp_posicao = optional_i32_column(row, "temp_posicao")?.unwrap_or(0);
+    team.stats_vitorias = optional_i32_column(row, "stats_vitorias")?
+        .unwrap_or(optional_i32_column(row, "temp_vitorias")?.unwrap_or(0));
+    team.historico_titulos_construtores =
+        optional_i32_column(row, "carreira_titulos")?.unwrap_or(0);
+    team.historico_vitorias = optional_i32_column(row, "historico_vitorias")?
+        .unwrap_or(optional_i32_column(row, "carreira_vitorias")?.unwrap_or(0));
 
     team.nome_curto =
         optional_column::<String>(row, "nome_curto")?.unwrap_or_else(|| team.nome.clone());
@@ -529,48 +575,104 @@ fn team_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Team> {
     team.ativa = optional_column::<i64>(row, "ativa")?.unwrap_or(1) != 0;
     team.marca = optional_column(row, "marca")?;
     team.classe = optional_column(row, "classe")?;
+    team.categoria_anterior = optional_column(row, "categoria_anterior")?;
     team.piloto_1_id = optional_column(row, "piloto_1_id")?;
     team.piloto_2_id = optional_column(row, "piloto_2_id")?;
     team.hierarquia_n1_id = optional_column(row, "hierarquia_n1_id")?;
     team.hierarquia_n2_id = optional_column(row, "hierarquia_n2_id")?;
-    team.hierarquia_tensao = optional_column::<f64>(row, "hierarquia_tensao")?.unwrap_or(0.0);
+    team.hierarquia_tensao = optional_f64_column(row, "hierarquia_tensao")?.unwrap_or(0.0);
     team.hierarquia_duelos_total =
-        optional_column::<i64>(row, "hierarquia_duelos_total")?.unwrap_or(0) as i32;
+        optional_i32_column(row, "hierarquia_duelos_total")?.unwrap_or(0);
     team.hierarquia_duelos_n2_vencidos =
-        optional_column::<i64>(row, "hierarquia_duelos_n2_vencidos")?.unwrap_or(0) as i32;
+        optional_i32_column(row, "hierarquia_duelos_n2_vencidos")?.unwrap_or(0);
     team.hierarquia_sequencia_n2 =
-        optional_column::<i64>(row, "hierarquia_sequencia_n2")?.unwrap_or(0) as i32;
+        optional_i32_column(row, "hierarquia_sequencia_n2")?.unwrap_or(0);
     team.hierarquia_sequencia_n1 =
-        optional_column::<i64>(row, "hierarquia_sequencia_n1")?.unwrap_or(0) as i32;
+        optional_i32_column(row, "hierarquia_sequencia_n1")?.unwrap_or(0);
     team.hierarquia_inversoes_temporada =
-        optional_column::<i64>(row, "hierarquia_inversoes_temporada")?.unwrap_or(0) as i32;
-    team.stats_podios = optional_column::<i64>(row, "stats_podios")?.unwrap_or(0) as i32;
-    team.stats_poles = optional_column::<i64>(row, "stats_poles")?.unwrap_or(0) as i32;
-    team.stats_melhor_resultado =
-        optional_column::<i64>(row, "stats_melhor_resultado")?.unwrap_or(99) as i32;
-    team.historico_podios = optional_column::<i64>(row, "historico_podios")?.unwrap_or(0) as i32;
-    team.historico_poles = optional_column::<i64>(row, "historico_poles")?.unwrap_or(0) as i32;
-    team.historico_pontos = optional_column::<i64>(row, "historico_pontos")?.unwrap_or(0) as i32;
+        optional_i32_column(row, "hierarquia_inversoes_temporada")?.unwrap_or(0);
+    team.stats_podios = optional_i32_column(row, "stats_podios")?.unwrap_or(0);
+    team.stats_poles = optional_i32_column(row, "stats_poles")?.unwrap_or(0);
+    team.stats_melhor_resultado = optional_i32_column(row, "stats_melhor_resultado")?.unwrap_or(99);
+    team.historico_podios = optional_i32_column(row, "historico_podios")?.unwrap_or(0);
+    team.historico_poles = optional_i32_column(row, "historico_poles")?.unwrap_or(0);
+    team.historico_pontos = optional_i32_column(row, "historico_pontos")?.unwrap_or(0);
     team.historico_titulos_pilotos =
-        optional_column::<i64>(row, "historico_titulos_pilotos")?.unwrap_or(0) as i32;
-    team.temporada_atual = optional_column::<i64>(row, "temporada_atual")?.unwrap_or(1) as i32;
+        optional_i32_column(row, "historico_titulos_pilotos")?.unwrap_or(0);
+    team.temporada_atual = optional_i32_column(row, "temporada_atual")?.unwrap_or(1);
     team.updated_at =
         optional_column::<String>(row, "updated_at")?.unwrap_or_else(|| team.created_at.clone());
 
     Ok(team)
 }
 
+fn ensure_team_rows_affected(
+    affected: usize,
+    team_id: &str,
+    operation: &str,
+) -> Result<(), DbError> {
+    if affected == 0 {
+        return Err(DbError::NotFound(format!(
+            "Equipe '{team_id}' nao encontrada ao {operation}"
+        )));
+    }
+    Ok(())
+}
+
 fn optional_column<T>(row: &rusqlite::Row<'_>, column_name: &str) -> rusqlite::Result<Option<T>>
 where
     T: FromSql,
 {
-    match row.get(column_name) {
-        Ok(value) => Ok(Some(value)),
+    match row.get::<_, Option<T>>(column_name) {
+        Ok(value) => Ok(value),
         Err(rusqlite::Error::InvalidColumnName(_)) => Ok(None),
         Err(rusqlite::Error::InvalidColumnIndex(_)) => Ok(None),
-        Err(rusqlite::Error::InvalidColumnType(_, _, _)) => Ok(None),
         Err(error) => Err(error),
     }
+}
+
+fn optional_f64_column(
+    row: &rusqlite::Row<'_>,
+    column_name: &str,
+) -> rusqlite::Result<Option<f64>> {
+    optional_column::<f64>(row, column_name)
+}
+
+fn optional_i32_column(
+    row: &rusqlite::Row<'_>,
+    column_name: &str,
+) -> rusqlite::Result<Option<i32>> {
+    optional_column::<i64>(row, column_name)?
+        .map(|value| {
+            i32::try_from(value).map_err(|_| invalid_integer_conversion_error(column_name, value))
+        })
+        .transpose()
+}
+
+fn rounded_f64_to_i32(column_name: &str, value: f64) -> rusqlite::Result<i32> {
+    let rounded = value.round();
+    if !rounded.is_finite() || rounded < i32::MIN as f64 || rounded > i32::MAX as f64 {
+        return Err(rusqlite::Error::FromSqlConversionFailure(
+            0,
+            rusqlite::types::Type::Real,
+            Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("coluna '{column_name}' fora do range i32: {value}"),
+            )),
+        ));
+    }
+    Ok(rounded as i32)
+}
+
+fn invalid_integer_conversion_error(column_name: &str, value: i64) -> rusqlite::Error {
+    rusqlite::Error::FromSqlConversionFailure(
+        0,
+        rusqlite::types::Type::Integer,
+        Box::new(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("coluna '{column_name}' fora do range i32: {value}"),
+        )),
+    )
 }
 
 #[cfg(test)]
@@ -704,6 +806,152 @@ mod tests {
         assert!(refreshed.piloto_2_id.is_none());
     }
 
+    #[test]
+    fn test_blob_in_optional_text_field_returns_error() {
+        let conn = setup_test_db().expect("test db");
+        conn.execute(
+            "INSERT INTO teams (id, nome, nome_curto, cor_primaria, categoria, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            rusqlite::params![
+                "T_BLOB_TEXT",
+                "Blob Team",
+                "Blob",
+                rusqlite::types::Value::Blob(vec![0xDE, 0xAD, 0xBE, 0xEF]),
+                "gt3",
+                "2026-01-01",
+                "2026-01-01",
+            ],
+        )
+        .expect("insert blob team");
+
+        let result = get_team_by_id(&conn, "T_BLOB_TEXT");
+        assert!(
+            result.is_err(),
+            "BLOB em campo opcional TEXT deve retornar erro"
+        );
+    }
+
+    #[test]
+    fn test_blob_in_optional_real_field_returns_error() {
+        let conn = setup_test_db().expect("test db");
+        conn.execute(
+            "INSERT INTO teams (
+                id, nome, nome_curto, categoria, hierarquia_tensao, created_at, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            rusqlite::params![
+                "T_BLOB_REAL",
+                "Blob Team",
+                "Blob",
+                "gt3",
+                rusqlite::types::Value::Blob(vec![0xBA, 0xAD, 0xF0, 0x0D]),
+                "2026-01-01",
+                "2026-01-01",
+            ],
+        )
+        .expect("insert blob hierarchy");
+
+        let result = get_team_by_id(&conn, "T_BLOB_REAL");
+        assert!(
+            result.is_err(),
+            "BLOB em campo opcional REAL deve retornar erro"
+        );
+    }
+
+    #[test]
+    fn test_update_team_pilots_returns_not_found_for_missing_team() {
+        let conn = setup_test_db().expect("test db");
+
+        let error = update_team_pilots(&conn, "T404", Some("P001"), Some("P002"))
+            .expect_err("missing team should fail");
+
+        assert!(matches!(error, DbError::NotFound(_)));
+    }
+
+    #[test]
+    fn test_remove_pilot_from_team_resets_hierarchy_when_removed_pilot_was_ranked() {
+        let conn = setup_test_db().expect("test db");
+        let mut team = sample_team("gt3", "T777");
+        team.piloto_1_id = Some("P001".to_string());
+        team.piloto_2_id = Some("P002".to_string());
+        team.hierarquia_n1_id = Some("P001".to_string());
+        team.hierarquia_n2_id = Some("P002".to_string());
+        team.hierarquia_status = "competitivo".to_string();
+        team.hierarquia_tensao = 55.0;
+        team.hierarquia_duelos_total = 4;
+        team.hierarquia_duelos_n2_vencidos = 2;
+        team.hierarquia_sequencia_n2 = 1;
+        team.hierarquia_sequencia_n1 = 2;
+        team.hierarquia_inversoes_temporada = 1;
+        insert_team(&conn, &team).expect("insert team");
+
+        remove_pilot_from_team(&conn, "P001", "T777").expect("remove pilot");
+
+        let refreshed = get_team_by_id(&conn, "T777")
+            .expect("team query")
+            .expect("team exists");
+        assert!(refreshed.piloto_1_id.is_none());
+        assert_eq!(refreshed.piloto_2_id.as_deref(), Some("P002"));
+        assert!(refreshed.hierarquia_n1_id.is_none());
+        assert!(refreshed.hierarquia_n2_id.is_none());
+        assert_eq!(refreshed.hierarquia_status, "estavel");
+        assert_eq!(refreshed.hierarquia_tensao, 0.0);
+        assert_eq!(refreshed.hierarquia_duelos_total, 0);
+        assert_eq!(refreshed.hierarquia_duelos_n2_vencidos, 0);
+        assert_eq!(refreshed.hierarquia_sequencia_n2, 0);
+        assert_eq!(refreshed.hierarquia_sequencia_n1, 0);
+        assert_eq!(refreshed.hierarquia_inversoes_temporada, 0);
+    }
+
+    #[test]
+    fn test_invalid_hierarchy_status_from_db_returns_error() {
+        let conn = setup_test_db().expect("test db");
+        conn.execute(
+            "INSERT INTO teams (id, nome, nome_curto, categoria, hierarquia_status, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            rusqlite::params![
+                "T_BAD_HIER",
+                "Bad Team",
+                "BAD",
+                "gt3",
+                "alienigena",
+                "2026-01-01",
+                "2026-01-01",
+            ],
+        )
+        .expect("insert invalid hierarchy team");
+
+        let result = get_team_by_id(&conn, "T_BAD_HIER");
+        assert!(
+            result.is_err(),
+            "hierarquia_status invalido deve retornar erro, nao cair em estavel"
+        );
+    }
+
+    #[test]
+    fn test_invalid_meta_posicao_from_db_returns_error() {
+        let conn = setup_test_db().expect("test db");
+        conn.execute(
+            "INSERT INTO teams (id, nome, nome_curto, categoria, meta_posicao, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            rusqlite::params![
+                "T_BAD_META",
+                "Bad Meta Team",
+                "BMT",
+                "gt3",
+                "abc",
+                "2026-01-01",
+                "2026-01-01",
+            ],
+        )
+        .expect("insert invalid meta_posicao team");
+
+        let result = get_team_by_id(&conn, "T_BAD_META");
+        assert!(
+            result.is_err(),
+            "meta_posicao invalida deve retornar erro, nao cair em default silencioso"
+        );
+    }
+
     fn sample_team(category_id: &str, team_id: &str) -> Team {
         let template = get_team_templates(category_id)[0];
         let mut rng = StdRng::seed_from_u64(55);
@@ -767,7 +1015,8 @@ mod tests {
                 carreira_vitorias INTEGER NOT NULL DEFAULT 0,
                 temporada_atual INTEGER NOT NULL DEFAULT 1,
                 created_at TEXT NOT NULL DEFAULT '',
-                updated_at TEXT NOT NULL DEFAULT ''
+                updated_at TEXT NOT NULL DEFAULT '',
+                categoria_anterior TEXT
             );",
         )?;
         Ok(conn)

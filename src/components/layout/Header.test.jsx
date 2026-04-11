@@ -5,6 +5,8 @@ import Header from "./Header";
 const mockSimulateRace = vi.fn();
 const mockStartCalendarAdvance = vi.fn();
 const mockCloseRaceBriefing = vi.fn();
+const mockAdvanceSeason = vi.fn();
+const mockSkipAllPendingRaces = vi.fn();
 
 let mockState = {};
 
@@ -21,6 +23,8 @@ describe("Header", () => {
     mockSimulateRace.mockReset();
     mockStartCalendarAdvance.mockReset();
     mockCloseRaceBriefing.mockReset();
+    mockAdvanceSeason.mockReset();
+    mockSkipAllPendingRaces.mockReset();
     invoke.mockReset();
     invoke.mockResolvedValue([]);
     mockState = {
@@ -53,9 +57,12 @@ describe("Header", () => {
       },
       showRaceBriefing: false,
       isCalendarAdvancing: false,
+      isAdvancing: false,
       isSimulating: false,
       simulateRace: mockSimulateRace,
       startCalendarAdvance: mockStartCalendarAdvance,
+      advanceSeason: mockAdvanceSeason,
+      skipAllPendingRaces: mockSkipAllPendingRaces,
       closeRaceBriefing: mockCloseRaceBriefing,
     };
   });
@@ -131,5 +138,23 @@ describe("Header", () => {
     expect(screen.getByText(/ano 2026/i)).toBeInTheDocument();
     expect(screen.queryByText(/temporada 1/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/sem corrida pendente/i)).not.toBeInTheDocument();
+  });
+
+  it("uses skip-all flow when the player has no team and advances from the header", () => {
+    mockState.nextRace = null;
+    mockState.playerTeam = null;
+    mockState.temporalSummary = {
+      current_display_date: "2026-03-18",
+      next_event_display_date: null,
+      days_until_next_event: null,
+      pending_in_phase: 0,
+    };
+
+    render(<Header activeTab="standings" onTabChange={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /pular temporada/i }));
+
+    expect(mockSkipAllPendingRaces).toHaveBeenCalledTimes(1);
+    expect(mockAdvanceSeason).not.toHaveBeenCalled();
   });
 });

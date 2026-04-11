@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use crate::models::enums::WeatherCondition;
 
 /// Converte gap de score de qualificação em gap de tempo de volta (ms).

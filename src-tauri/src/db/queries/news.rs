@@ -1,10 +1,13 @@
+#![allow(dead_code)]
+
 #[cfg(test)]
 mod tests {
     use rusqlite::Connection;
 
     use super::{
-        get_news_by_driver, get_news_by_preseason_week, get_news_by_season, get_news_by_type,
-        get_recent_news, insert_news, insert_news_batch, trim_news,
+        get_latest_news_timestamp, get_news_by_driver, get_news_by_preseason_week,
+        get_news_by_season, get_news_by_team, get_news_by_type, get_recent_news, insert_news,
+        insert_news_batch, trim_news,
     };
     use crate::db::migrations;
     use crate::db::queries::seasons::insert_season;
@@ -102,6 +105,21 @@ mod tests {
     }
 
     #[test]
+    fn test_insert_news_batch_rolls_back_if_any_item_fails() {
+        let conn = setup_news_db();
+        let batch = vec![
+            sample_news("N001", 1, Some(1), None, NewsType::Corrida, 10),
+            sample_news("N_INVALID", 999, Some(2), None, NewsType::Mercado, 20),
+        ];
+
+        let err = insert_news_batch(&conn, &batch).expect_err("batch should fail");
+        assert!(err.to_string().contains("Query returned no rows"));
+
+        let items = get_recent_news(&conn, 10).expect("recent");
+        assert!(items.is_empty(), "batch should rollback previous inserts");
+    }
+
+    #[test]
     fn test_news_ordered_by_timestamp() {
         let conn = setup_news_db();
         insert_news(
@@ -135,10 +153,168 @@ mod tests {
         assert_eq!(items[0].id, "N003");
     }
 
+    #[test]
+    fn test_invalid_news_type_from_db_returns_error() {
+        let conn = setup_news_db();
+        insert_news(
+            &conn,
+            &sample_news("N900", 1, Some(1), None, NewsType::Corrida, 10),
+        )
+        .expect("insert");
+        conn.execute(
+            "UPDATE news SET tipo = 'tipo_quebrado' WHERE id = 'N900'",
+            [],
+        )
+        .expect("corrupt type");
+
+        let err = get_recent_news(&conn, 10).expect_err("invalid type should fail");
+        assert!(err.to_string().contains("NewsType inválido"));
+    }
+
+    #[test]
+    fn test_invalid_news_importance_from_payload_returns_error() {
+        let conn = setup_news_db();
+        insert_news(
+            &conn,
+            &sample_news("N901", 1, Some(1), None, NewsType::Corrida, 10),
+        )
+        .expect("insert");
+        conn.execute(
+            "UPDATE news
+             SET texto = '{\"texto\":\"Texto N901\",\"icone\":\"i\",\"semana_pretemporada\":null,\"categoria_id\":\"gt4\",\"categoria_nome\":\"GT4\",\"importancia\":\"importancia_quebrada\",\"timestamp\":10,\"driver_id\":\"P001\",\"driver_id_secondary\":null,\"team_id\":\"T001\"}'
+             WHERE id = 'N901'",
+            [],
+        )
+        .expect("corrupt payload");
+
+        let err = get_recent_news(&conn, 10).expect_err("invalid importance should fail");
+        assert!(err.to_string().contains("NewsImportance inválida"));
+    }
+
+    #[test]
+    fn test_invalid_news_payload_from_db_returns_error() {
+        let conn = setup_news_db();
+        insert_news(
+            &conn,
+            &sample_news("N902", 1, Some(1), None, NewsType::Corrida, 10),
+        )
+        .expect("insert");
+        conn.execute("UPDATE news SET texto = '{' WHERE id = 'N902'", [])
+            .expect("corrupt payload");
+
+        let err = get_recent_news(&conn, 10).expect_err("invalid payload should fail");
+        assert!(err
+            .to_string()
+            .contains("Falha ao interpretar payload da noticia"));
+    }
+
+    #[test]
+    fn test_invalid_latest_news_timestamp_from_db_returns_error() {
+        let conn = setup_news_db();
+        insert_news(
+            &conn,
+            &sample_news("N903", 1, Some(1), None, NewsType::Corrida, 10),
+        )
+        .expect("insert");
+        conn.execute(
+            "UPDATE news SET criado_em = 'quebrado' WHERE id = 'N903'",
+            [],
+        )
+        .expect("corrupt timestamp");
+
+        let err = get_latest_news_timestamp(&conn).expect_err("invalid timestamp should fail");
+        assert!(err.to_string().contains("Timestamp de noticia invalido"));
+    }
+
+    #[test]
+    fn test_invalid_created_at_from_legacy_news_row_returns_error() {
+        let conn = setup_news_db();
+        let season_id: String = conn
+            .query_row("SELECT id FROM seasons WHERE numero = 1", [], |row| {
+                row.get(0)
+            })
+            .expect("season id");
+
+        conn.execute(
+            "INSERT INTO news (
+                id, tipo, titulo, texto, chave_dedup, temporada_id, rodada, criado_em, lida
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0)",
+            (
+                "LEGACY_BAD_TS",
+                "Corrida",
+                "Titulo legado",
+                "Texto legado",
+                "legacy_bad_ts",
+                season_id,
+                1,
+                "quebrado",
+            ),
+        )
+        .expect("insert legacy row");
+
+        let err = get_recent_news(&conn, 10).expect_err("invalid created_at should fail");
+        assert!(err.to_string().contains("Timestamp de noticia invalido"));
+    }
+
+    #[test]
+    fn test_get_news_by_driver_reaches_items_beyond_recent_window() {
+        let conn = setup_news_db();
+
+        let mut target = sample_news("TARGET", 1, Some(1), None, NewsType::Corrida, 1);
+        target.driver_id = Some("P999".to_string());
+        target.driver_id_secondary = None;
+        insert_news(&conn, &target).expect("insert target");
+
+        for idx in 0..450 {
+            let mut item = sample_news(
+                &format!("N{:03}", idx),
+                1,
+                Some(1),
+                None,
+                NewsType::Mercado,
+                100 + idx as i64,
+            );
+            item.driver_id = Some("P001".to_string());
+            insert_news(&conn, &item).expect("insert filler");
+        }
+
+        let items = get_news_by_driver(&conn, "P999", 10).expect("driver news");
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].id, "TARGET");
+    }
+
+    #[test]
+    fn test_get_news_by_team_reaches_items_beyond_recent_window() {
+        let conn = setup_news_db();
+
+        let mut target = sample_news("TEAM_TARGET", 1, Some(1), None, NewsType::Corrida, 1);
+        target.team_id = Some("TEAM_SPECIAL".to_string());
+        insert_news(&conn, &target).expect("insert target");
+
+        for idx in 0..450 {
+            let mut item = sample_news(
+                &format!("T{:03}", idx),
+                1,
+                Some(1),
+                None,
+                NewsType::Mercado,
+                100 + idx as i64,
+            );
+            item.team_id = Some("T001".to_string());
+            insert_news(&conn, &item).expect("insert filler");
+        }
+
+        let items = get_news_by_team(&conn, "TEAM_SPECIAL", 10).expect("team news");
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].id, "TEAM_TARGET");
+    }
+
     fn setup_news_db() -> Connection {
         let conn = Connection::open_in_memory().expect("in-memory db");
         migrations::run_all(&conn).expect("schema");
-        insert_season(&conn, &Season::new("S001".to_string(), 1, 2024)).expect("season 1");
+        let mut season1 = Season::new("S001".to_string(), 1, 2024);
+        season1.finalizar();
+        insert_season(&conn, &season1).expect("season 1");
         insert_season(&conn, &Season::new("S002".to_string(), 2, 2025)).expect("season 2");
         conn
     }
@@ -225,9 +401,11 @@ pub fn insert_news(conn: &Connection, news: &NewsItem) -> Result<(), DbError> {
 }
 
 pub fn insert_news_batch(conn: &Connection, items: &[NewsItem]) -> Result<(), DbError> {
+    let tx = conn.unchecked_transaction()?;
     for item in items {
-        insert_news(conn, item)?;
+        insert_news(&tx, item)?;
     }
+    tx.commit()?;
     Ok(())
 }
 
@@ -298,15 +476,17 @@ pub fn get_news_by_driver(
     driver_id: &str,
     limit: i32,
 ) -> Result<Vec<NewsItem>, DbError> {
-    let items = get_recent_news(conn, 400)?;
-    Ok(items
-        .into_iter()
-        .filter(|item| {
-            item.driver_id.as_deref() == Some(driver_id)
-                || item.driver_id_secondary.as_deref() == Some(driver_id)
-        })
-        .take(limit.max(1) as usize)
-        .collect())
+    load_news(
+        conn,
+        "SELECT n.*, s.numero AS temporada_numero
+         FROM news n
+         JOIN seasons s ON s.id = n.temporada_id
+         WHERE json_extract(n.texto, '$.driver_id') = ?1
+            OR json_extract(n.texto, '$.driver_id_secondary') = ?1
+         ORDER BY CAST(n.criado_em AS INTEGER) DESC, n.id DESC
+         LIMIT ?2",
+        params![driver_id, limit.max(1)],
+    )
 }
 
 pub fn get_news_by_team(
@@ -314,12 +494,16 @@ pub fn get_news_by_team(
     team_id: &str,
     limit: i32,
 ) -> Result<Vec<NewsItem>, DbError> {
-    let items = get_recent_news(conn, 400)?;
-    Ok(items
-        .into_iter()
-        .filter(|item| item.team_id.as_deref() == Some(team_id))
-        .take(limit.max(1) as usize)
-        .collect())
+    load_news(
+        conn,
+        "SELECT n.*, s.numero AS temporada_numero
+         FROM news n
+         JOIN seasons s ON s.id = n.temporada_id
+         WHERE json_extract(n.texto, '$.team_id') = ?1
+         ORDER BY CAST(n.criado_em AS INTEGER) DESC, n.id DESC
+         LIMIT ?2",
+        params![team_id, limit.max(1)],
+    )
 }
 
 pub fn count_news(conn: &Connection) -> Result<i32, DbError> {
@@ -359,7 +543,10 @@ pub fn get_latest_news_timestamp(conn: &Connection) -> Result<i64, DbError> {
             |row| row.get(0),
         )
         .optional()?;
-    Ok(value.and_then(|v| v.parse::<i64>().ok()).unwrap_or(0))
+    match value {
+        Some(raw) => parse_news_timestamp(&raw),
+        None => Ok(0),
+    }
 }
 
 fn load_news<P: rusqlite::Params>(
@@ -378,17 +565,18 @@ fn load_news<P: rusqlite::Params>(
 
 fn news_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<NewsItem> {
     let raw_text: String = row.get("texto")?;
-    let payload = serde_json::from_str::<StoredNewsPayload>(&raw_text).ok();
+    let payload = parse_news_payload(&raw_text)?;
     let rodada: i32 = row.get("rodada")?;
     let timestamp = payload
         .as_ref()
         .map(|payload| payload.timestamp)
-        .or_else(|| row.get::<_, String>("criado_em").ok()?.parse::<i64>().ok())
-        .unwrap_or(0);
+        .map(Ok)
+        .unwrap_or_else(|| parse_news_timestamp_from_row(&row.get::<_, String>("criado_em")?))?;
 
     Ok(NewsItem {
         id: row.get("id")?,
-        tipo: NewsType::from_str(&row.get::<_, String>("tipo")?),
+        tipo: NewsType::from_str_strict(&row.get::<_, String>("tipo")?)
+            .map_err(rusqlite::Error::InvalidParameterName)?,
         icone: payload
             .as_ref()
             .map(|payload| payload.icone.clone())
@@ -410,10 +598,11 @@ fn news_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<NewsItem> {
         categoria_nome: payload
             .as_ref()
             .and_then(|payload| payload.categoria_nome.clone()),
-        importancia: payload
-            .as_ref()
-            .map(|payload| NewsImportance::from_str(&payload.importancia))
-            .unwrap_or(NewsImportance::Media),
+        importancia: match payload.as_ref() {
+            Some(payload) => NewsImportance::from_str_strict(&payload.importancia)
+                .map_err(rusqlite::Error::InvalidParameterName)?,
+            None => NewsImportance::Media,
+        },
         timestamp,
         driver_id: payload
             .as_ref()
@@ -457,4 +646,29 @@ fn season_id_from_number(conn: &Connection, season_number: i32) -> Result<String
         |row| row.get(0),
     )
     .map_err(DbError::from)
+}
+
+fn parse_news_timestamp(raw: &str) -> Result<i64, DbError> {
+    raw.parse::<i64>()
+        .map_err(|_| DbError::InvalidData(format!("Timestamp de noticia invalido: '{raw}'")))
+}
+
+fn parse_news_timestamp_from_row(raw: &str) -> rusqlite::Result<i64> {
+    raw.parse::<i64>().map_err(|_| {
+        rusqlite::Error::InvalidParameterName(format!("Timestamp de noticia invalido: '{raw}'"))
+    })
+}
+
+fn parse_news_payload(raw_text: &str) -> rusqlite::Result<Option<StoredNewsPayload>> {
+    if !raw_text.trim_start().starts_with('{') {
+        return Ok(None);
+    }
+
+    serde_json::from_str::<StoredNewsPayload>(raw_text)
+        .map(Some)
+        .map_err(|error| {
+            rusqlite::Error::InvalidParameterName(format!(
+                "Falha ao interpretar payload da noticia: {error}"
+            ))
+        })
 }

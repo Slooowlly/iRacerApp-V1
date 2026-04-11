@@ -4,5 +4,6 @@ pub mod pipeline;
 pub mod preseason;
 pub mod proposals;
 pub mod renewal;
+pub mod sync;
 pub mod team_ai;
 pub mod visibility;

@@ -3,6 +3,8 @@
 //! Camada A: estado persistido (Team struct + DB) — vive em models/team.rs
 //! Camada B: cálculo pós-corrida — vive aqui
 
+#![allow(dead_code)]
+
 use std::collections::HashMap;
 
 use rusqlite::Connection;
@@ -232,12 +234,14 @@ pub fn has_inversao_trigger(team: &Team, rodada_atual: i32, total_rounds: i32) -
 /// - Troca `hierarquia_n1_id` e `hierarquia_n2_id`
 /// - Incrementa `hierarquia_inversoes_temporada`
 /// - Reduz tensão em 30 (clamp 0..100) e recalcula status
-/// - Zera as sequências (contexto anterior não é mais válido)
+/// - Zera sequências e contadores de duelo (o contexto anterior não é mais válido)
 pub fn apply_inversao(team: &mut Team) {
     std::mem::swap(&mut team.hierarquia_n1_id, &mut team.hierarquia_n2_id);
     team.hierarquia_inversoes_temporada += 1;
     team.hierarquia_tensao = (team.hierarquia_tensao - 30.0).clamp(0.0, 100.0);
     update_status(team);
+    team.hierarquia_duelos_total = 0;
+    team.hierarquia_duelos_n2_vencidos = 0;
     team.hierarquia_sequencia_n2 = 0;
     team.hierarquia_sequencia_n1 = 0;
 }
@@ -564,6 +568,16 @@ mod tests {
         apply_inversao(&mut team);
         assert_eq!(team.hierarquia_sequencia_n2, 0);
         assert_eq!(team.hierarquia_sequencia_n1, 0);
+    }
+
+    #[test]
+    fn test_apply_inversao_resets_duel_counters() {
+        let mut team = sample_team("P001", "P002");
+        team.hierarquia_duelos_total = 10;
+        team.hierarquia_duelos_n2_vencidos = 7;
+        apply_inversao(&mut team);
+        assert_eq!(team.hierarquia_duelos_total, 0);
+        assert_eq!(team.hierarquia_duelos_n2_vencidos, 0);
     }
 
     #[test]

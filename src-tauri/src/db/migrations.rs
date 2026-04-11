@@ -1,10 +1,10 @@
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 
 use crate::db::connection::DbError;
 
 // ── Versão atual do schema ────────────────────────────────────────────────────
 
-const CURRENT_VERSION: u32 = 15;
+const CURRENT_VERSION: u32 = 22;
 
 // ── API pública ───────────────────────────────────────────────────────────────
 
@@ -25,13 +25,20 @@ pub fn run_all(conn: &Connection) -> Result<(), DbError> {
     migrate_v13(conn)?;
     migrate_v14(conn)?;
     migrate_v15(conn)?;
+    migrate_v16(conn)?;
+    migrate_v17(conn)?;
+    migrate_v18(conn)?;
+    migrate_v19(conn)?;
+    migrate_v20(conn)?;
+    migrate_v21(conn)?;
+    migrate_v22(conn)?;
     set_schema_version(conn, CURRENT_VERSION)?;
     Ok(())
 }
 
 /// Aplica apenas as migrações pendentes num banco existente.
 pub fn run_pending(conn: &Connection) -> Result<(), DbError> {
-    let version = get_schema_version(conn).unwrap_or(0);
+    let version = get_schema_version(conn)?;
     if version < 1 {
         migrate_v1(conn)?;
         set_schema_version(conn, 1)?;
@@ -92,6 +99,34 @@ pub fn run_pending(conn: &Connection) -> Result<(), DbError> {
         migrate_v15(conn)?;
         set_schema_version(conn, 15)?;
     }
+    if version < 16 {
+        migrate_v16(conn)?;
+        set_schema_version(conn, 16)?;
+    }
+    if version < 17 {
+        migrate_v17(conn)?;
+        set_schema_version(conn, 17)?;
+    }
+    if version < 18 {
+        migrate_v18(conn)?;
+        set_schema_version(conn, 18)?;
+    }
+    if version < 19 {
+        migrate_v19(conn)?;
+        set_schema_version(conn, 19)?;
+    }
+    if version < 20 {
+        migrate_v20(conn)?;
+        set_schema_version(conn, 20)?;
+    }
+    if version < 21 {
+        migrate_v21(conn)?;
+        set_schema_version(conn, 21)?;
+    }
+    if version < 22 {
+        migrate_v22(conn)?;
+        set_schema_version(conn, 22)?;
+    }
     Ok(())
 }
 
@@ -117,8 +152,11 @@ pub fn get_schema_version(conn: &Connection) -> Result<u32, DbError> {
         [],
         |row| row.get::<_, String>(0),
     )
-    .map(|v| v.parse::<u32>().unwrap_or(0))
     .map_err(DbError::Sqlite)
+    .and_then(|v| {
+        v.parse::<u32>()
+            .map_err(|_| DbError::InvalidData(format!("schema_version invalida em meta: '{v}'")))
+    })
 }
 
 fn set_schema_version(conn: &Connection, version: u32) -> Result<(), DbError> {
@@ -499,9 +537,11 @@ fn migrate_v5(conn: &Connection) -> Result<(), DbError> {
     // However, the application uses `calendar` entries as races and `races` table is entirely unused.
     // Since `race_results` was never populated prior to this update (no insert queries existed),
     // we can safely drop and recreate it to fix the foreign keys and add new module 25 columns.
+    let had_legacy_rows =
+        rebuild_table_preserving_rows(conn, "race_results", "race_results_legacy")?;
+
     conn.execute_batch(
         "
-        DROP TABLE IF EXISTS race_results;
         CREATE TABLE race_results (
             id                  INTEGER PRIMARY KEY AUTOINCREMENT,
             race_id             TEXT NOT NULL,
@@ -526,13 +566,52 @@ fn migrate_v5(conn: &Connection) -> Result<(), DbError> {
         ",
     )?;
 
+    if had_legacy_rows {
+        copy_legacy_rows(
+            conn,
+            "race_results_legacy",
+            "race_results",
+            &[
+                "race_id",
+                "piloto_id",
+                "equipe_id",
+                "posicao_largada",
+                "posicao_final",
+                "voltas_completadas",
+                "dnf",
+                "pontos",
+                "tempo_total",
+                "fastest_lap",
+                "dnf_reason",
+                "dnf_segment",
+                "incidents_count",
+            ],
+            &[
+                column_expr(conn, "race_results_legacy", &["race_id"], "''")?,
+                column_expr(conn, "race_results_legacy", &["piloto_id"], "''")?,
+                column_expr(conn, "race_results_legacy", &["equipe_id"], "''")?,
+                column_expr(conn, "race_results_legacy", &["posicao_largada"], "0")?,
+                column_expr(conn, "race_results_legacy", &["posicao_final"], "0")?,
+                column_expr(conn, "race_results_legacy", &["voltas_completadas"], "0")?,
+                column_expr(conn, "race_results_legacy", &["dnf"], "0")?,
+                column_expr(conn, "race_results_legacy", &["pontos"], "0.0")?,
+                column_expr(conn, "race_results_legacy", &["tempo_total"], "0.0")?,
+                column_expr(conn, "race_results_legacy", &["fastest_lap"], "0")?,
+                column_expr(conn, "race_results_legacy", &["dnf_reason"], "NULL")?,
+                column_expr(conn, "race_results_legacy", &["dnf_segment"], "NULL")?,
+                column_expr(conn, "race_results_legacy", &["incidents_count"], "0")?,
+            ],
+        )?;
+    }
+
     Ok(())
 }
 
 fn migrate_v6(conn: &Connection) -> Result<(), DbError> {
+    let had_legacy_rows = rebuild_table_preserving_rows(conn, "injuries", "injuries_legacy")?;
+
     conn.execute_batch(
         "
-        DROP TABLE IF EXISTS injuries;
         CREATE TABLE injuries (
             id                  TEXT PRIMARY KEY,
             pilot_id            TEXT NOT NULL,
@@ -550,6 +629,65 @@ fn migrate_v6(conn: &Connection) -> Result<(), DbError> {
         CREATE INDEX IF NOT EXISTS idx_injuries_active ON injuries(active);
         ",
     )?;
+
+    if had_legacy_rows {
+        let season_expr = if table_has_any_column(conn, "injuries_legacy", &["temporada_id"])? {
+            "COALESCE((SELECT numero FROM seasons WHERE id = injuries_legacy.temporada_id), 0)"
+                .to_string()
+        } else {
+            column_expr(conn, "injuries_legacy", &["season"], "0")?
+        };
+
+        copy_legacy_rows(
+            conn,
+            "injuries_legacy",
+            "injuries",
+            &[
+                "id",
+                "pilot_id",
+                "type",
+                "modifier",
+                "races_total",
+                "races_remaining",
+                "skill_penalty",
+                "season",
+                "race_occurred",
+                "active",
+            ],
+            &[
+                column_expr(
+                    conn,
+                    "injuries_legacy",
+                    &["id"],
+                    "lower(hex(randomblob(16)))",
+                )?,
+                column_expr(conn, "injuries_legacy", &["pilot_id", "piloto_id"], "''")?,
+                column_expr(conn, "injuries_legacy", &["type", "tipo"], "'Leve'")?,
+                column_expr(conn, "injuries_legacy", &["modifier"], "1.0")?,
+                column_expr(
+                    conn,
+                    "injuries_legacy",
+                    &["races_total", "corridas_restantes"],
+                    "0",
+                )?,
+                column_expr(
+                    conn,
+                    "injuries_legacy",
+                    &["races_remaining", "corridas_restantes"],
+                    "0",
+                )?,
+                column_expr(conn, "injuries_legacy", &["skill_penalty"], "0.0")?,
+                season_expr,
+                column_expr(
+                    conn,
+                    "injuries_legacy",
+                    &["race_occurred", "descricao"],
+                    "''",
+                )?,
+                column_expr(conn, "injuries_legacy", &["active"], "1")?,
+            ],
+        )?;
+    }
 
     Ok(())
 }
@@ -659,7 +797,8 @@ fn migrate_v10(conn: &Connection) -> Result<(), DbError> {
 fn migrate_v11(conn: &Connection) -> Result<(), DbError> {
     if table_exists(conn, "calendar")? {
         // Semana do ano (1-52) — unidade temporal interna do sistema.
-        // Categorias regulares: semanas 2-40. Especiais: semanas 41-50.
+        // week_of_year continua sendo a unidade temporal interna,
+        // mas as corridas são geradas a partir de janelas mensais do calendário anual.
         // Linhas existentes ficam com 0 (semana não atribuída — saves antigos).
         ensure_column(
             conn,
@@ -771,6 +910,68 @@ fn table_exists(conn: &Connection, table_name: &str) -> Result<bool, DbError> {
     Ok(exists > 0)
 }
 
+fn table_has_any_column(
+    conn: &Connection,
+    table_name: &str,
+    candidate_columns: &[&str],
+) -> Result<bool, DbError> {
+    for column in candidate_columns {
+        if table_has_column(conn, table_name, column)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn column_expr(
+    conn: &Connection,
+    table_name: &str,
+    candidate_columns: &[&str],
+    fallback_expr: &str,
+) -> Result<String, DbError> {
+    for column in candidate_columns {
+        if table_has_column(conn, table_name, column)? {
+            return Ok((*column).to_string());
+        }
+    }
+    Ok(fallback_expr.to_string())
+}
+
+fn rebuild_table_preserving_rows(
+    conn: &Connection,
+    table_name: &str,
+    legacy_name: &str,
+) -> Result<bool, DbError> {
+    if !table_exists(conn, table_name)? {
+        return Ok(false);
+    }
+
+    conn.execute_batch(&format!("DROP TABLE IF EXISTS {legacy_name};"))?;
+    conn.execute_batch(&format!(
+        "ALTER TABLE {table_name} RENAME TO {legacy_name};"
+    ))?;
+    Ok(true)
+}
+
+fn copy_legacy_rows(
+    conn: &Connection,
+    source_table: &str,
+    target_table: &str,
+    target_columns: &[&str],
+    select_exprs: &[String],
+) -> Result<(), DbError> {
+    let sql = format!(
+        "INSERT INTO {target_table} ({})
+         SELECT {}
+         FROM {source_table};",
+        target_columns.join(", "),
+        select_exprs.join(", "),
+    );
+    conn.execute_batch(&sql)?;
+    conn.execute_batch(&format!("DROP TABLE IF EXISTS {source_table};"))?;
+    Ok(())
+}
+
 fn migrate_v14(conn: &Connection) -> Result<(), DbError> {
     // 1. Tabela de catálogo de incidentes
     conn.execute_batch(
@@ -808,10 +1009,14 @@ fn migrate_v14(conn: &Connection) -> Result<(), DbError> {
 }
 
 fn migrate_v15(conn: &Connection) -> Result<(), DbError> {
+    let had_legacy_rows = rebuild_table_preserving_rows(
+        conn,
+        "driver_season_results_archive",
+        "driver_season_results_archive_legacy",
+    )?;
+
     conn.execute_batch(
         "
-        DROP TABLE IF EXISTS driver_season_results_archive;
-
         CREATE TABLE IF NOT EXISTS driver_season_archive (
             id                  INTEGER PRIMARY KEY AUTOINCREMENT,
             piloto_id           TEXT    NOT NULL,
@@ -831,6 +1036,341 @@ fn migrate_v15(conn: &Connection) -> Result<(), DbError> {
             ON driver_season_archive(season_number, categoria);
         ",
     )?;
+
+    if had_legacy_rows {
+        copy_legacy_rows(
+            conn,
+            "driver_season_results_archive_legacy",
+            "driver_season_archive",
+            &[
+                "piloto_id",
+                "season_number",
+                "ano",
+                "nome",
+                "categoria",
+                "posicao_campeonato",
+                "pontos",
+                "snapshot_json",
+                "archived_at",
+            ],
+            &[
+                column_expr(
+                    conn,
+                    "driver_season_results_archive_legacy",
+                    &["piloto_id"],
+                    "''",
+                )?,
+                column_expr(
+                    conn,
+                    "driver_season_results_archive_legacy",
+                    &["season_number", "temporada_numero"],
+                    "0",
+                )?,
+                column_expr(conn, "driver_season_results_archive_legacy", &["ano"], "0")?,
+                column_expr(
+                    conn,
+                    "driver_season_results_archive_legacy",
+                    &["nome"],
+                    "''",
+                )?,
+                column_expr(
+                    conn,
+                    "driver_season_results_archive_legacy",
+                    &["categoria"],
+                    "''",
+                )?,
+                column_expr(
+                    conn,
+                    "driver_season_results_archive_legacy",
+                    &["posicao_campeonato"],
+                    "NULL",
+                )?,
+                column_expr(
+                    conn,
+                    "driver_season_results_archive_legacy",
+                    &["pontos"],
+                    "NULL",
+                )?,
+                column_expr(
+                    conn,
+                    "driver_season_results_archive_legacy",
+                    &["snapshot_json"],
+                    "'{}'",
+                )?,
+                column_expr(
+                    conn,
+                    "driver_season_results_archive_legacy",
+                    &["archived_at"],
+                    "datetime('now')",
+                )?,
+            ],
+        )?;
+    }
+    Ok(())
+}
+
+fn migrate_v16(conn: &Connection) -> Result<(), DbError> {
+    if table_exists(conn, "teams")? {
+        ensure_column(conn, "teams", "categoria_anterior", "TEXT")?;
+    }
+    Ok(())
+}
+
+fn migrate_v17(conn: &Connection) -> Result<(), DbError> {
+    if table_exists(conn, "rivalries")? {
+        conn.execute_batch(
+            "
+            UPDATE rivalries
+            SET
+                intensidade = (
+                    SELECT MAX(r2.intensidade)
+                    FROM rivalries r2
+                    WHERE r2.piloto1_id = rivalries.piloto1_id
+                      AND r2.piloto2_id = rivalries.piloto2_id
+                ),
+                historical_intensity = (
+                    SELECT MAX(r2.historical_intensity)
+                    FROM rivalries r2
+                    WHERE r2.piloto1_id = rivalries.piloto1_id
+                      AND r2.piloto2_id = rivalries.piloto2_id
+                ),
+                recent_activity = (
+                    SELECT MAX(r2.recent_activity)
+                    FROM rivalries r2
+                    WHERE r2.piloto1_id = rivalries.piloto1_id
+                      AND r2.piloto2_id = rivalries.piloto2_id
+                ),
+                temporada_update = (
+                    SELECT MAX(r2.temporada_update)
+                    FROM rivalries r2
+                    WHERE r2.piloto1_id = rivalries.piloto1_id
+                      AND r2.piloto2_id = rivalries.piloto2_id
+                ),
+                ultima_atualizacao = (
+                    SELECT MAX(r2.ultima_atualizacao)
+                    FROM rivalries r2
+                    WHERE r2.piloto1_id = rivalries.piloto1_id
+                      AND r2.piloto2_id = rivalries.piloto2_id
+                )
+            WHERE id IN (
+                SELECT MIN(id)
+                FROM rivalries
+                GROUP BY piloto1_id, piloto2_id
+            );
+
+            DELETE FROM rivalries
+            WHERE id NOT IN (
+                SELECT MIN(id)
+                FROM rivalries
+                GROUP BY piloto1_id, piloto2_id
+            );
+
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_rivalries_pair_unique
+                ON rivalries(piloto1_id, piloto2_id);
+            ",
+        )?;
+    }
+    Ok(())
+}
+
+fn migrate_v18(conn: &Connection) -> Result<(), DbError> {
+    if !table_exists(conn, "contracts")? {
+        return Ok(());
+    }
+
+    let duplicate: Option<(String, String, i64)> = conn
+        .query_row(
+            "SELECT piloto_id, tipo, COUNT(*)
+             FROM contracts
+             WHERE status = 'Ativo'
+             GROUP BY piloto_id, tipo
+             HAVING COUNT(*) > 1
+             LIMIT 1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()?;
+
+    if let Some((piloto_id, tipo, total)) = duplicate {
+        return Err(DbError::Migration(format!(
+            "contratos ativos duplicados para piloto '{piloto_id}' e tipo '{tipo}' ({total} registros)"
+        )));
+    }
+
+    conn.execute_batch(
+        "
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_contracts_active_pilot_tipo
+            ON contracts(piloto_id, tipo)
+            WHERE status = 'Ativo';
+        ",
+    )?;
+
+    Ok(())
+}
+
+fn migrate_v19(conn: &Connection) -> Result<(), DbError> {
+    if !table_exists(conn, "seasons")? {
+        return Ok(());
+    }
+
+    conn.execute(
+        "UPDATE seasons SET status = 'EmAndamento' WHERE status = 'Ativa'",
+        [],
+    )?;
+
+    let duplicate: Option<i64> = conn
+        .query_row(
+            "SELECT COUNT(*)
+             FROM seasons
+             WHERE status = 'EmAndamento'
+             HAVING COUNT(*) > 1",
+            [],
+            |row| row.get(0),
+        )
+        .optional()?;
+
+    if let Some(total) = duplicate {
+        return Err(DbError::Migration(format!(
+            "temporadas ativas duplicadas encontradas ({total} registros)"
+        )));
+    }
+
+    conn.execute_batch(
+        "
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_seasons_single_active
+            ON seasons(status)
+            WHERE status = 'EmAndamento';
+        ",
+    )?;
+
+    Ok(())
+}
+
+fn migrate_v20(conn: &Connection) -> Result<(), DbError> {
+    if !table_exists(conn, "race_results")? {
+        return Ok(());
+    }
+
+    let duplicate: Option<(String, String, i64)> = conn
+        .query_row(
+            "SELECT race_id, piloto_id, COUNT(*) AS total
+             FROM race_results
+             GROUP BY race_id, piloto_id
+             HAVING COUNT(*) > 1
+             LIMIT 1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()?;
+
+    if let Some((race_id, piloto_id, total)) = duplicate {
+        return Err(DbError::Migration(format!(
+            "resultados duplicados em race_results para corrida '{race_id}' e piloto '{piloto_id}' ({total} registros)"
+        )));
+    }
+
+    conn.execute_batch(
+        "
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_race_results_unique_race_pilot
+            ON race_results(race_id, piloto_id);
+        ",
+    )?;
+
+    Ok(())
+}
+
+fn migrate_v21(conn: &Connection) -> Result<(), DbError> {
+    if !table_exists(conn, "injuries")? {
+        return Ok(());
+    }
+
+    let duplicate_active = conn
+        .query_row(
+            "
+            SELECT pilot_id, COUNT(*)
+            FROM injuries
+            WHERE active = 1
+            GROUP BY pilot_id
+            HAVING COUNT(*) > 1
+            LIMIT 1
+            ",
+            [],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+        )
+        .optional()?;
+
+    if let Some((pilot_id, count)) = duplicate_active {
+        return Err(DbError::Migration(format!(
+            "lesoes ativas duplicadas em injuries para piloto '{pilot_id}' ({count} registros)"
+        )));
+    }
+
+    conn.execute_batch(
+        "
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_injuries_single_active_per_pilot
+        ON injuries(pilot_id)
+        WHERE active = 1;
+        ",
+    )?;
+
+    Ok(())
+}
+
+fn migrate_v22(conn: &Connection) -> Result<(), DbError> {
+    if !table_exists(conn, "standings")? {
+        return Ok(());
+    }
+
+    let equipe_id_is_not_null = {
+        let mut stmt = conn.prepare("PRAGMA table_info(standings)")?;
+        let mut rows = stmt.query([])?;
+        let mut equipe_id_is_not_null = None;
+        while let Some(row) = rows.next()? {
+            let column_name: String = row.get(1)?;
+            if column_name == "equipe_id" {
+                equipe_id_is_not_null = Some(row.get::<_, i64>(3)? != 0);
+                break;
+            }
+        }
+        equipe_id_is_not_null.unwrap_or(false)
+    };
+
+    if !equipe_id_is_not_null {
+        return Ok(());
+    }
+
+    conn.execute_batch(
+        "
+        ALTER TABLE standings RENAME TO standings_old;
+
+        CREATE TABLE standings (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            temporada_id TEXT NOT NULL,
+            piloto_id    TEXT NOT NULL,
+            equipe_id    TEXT,
+            categoria    TEXT NOT NULL,
+            posicao      INTEGER NOT NULL DEFAULT 0,
+            pontos       REAL NOT NULL DEFAULT 0.0,
+            vitorias     INTEGER NOT NULL DEFAULT 0,
+            podios       INTEGER NOT NULL DEFAULT 0,
+            poles        INTEGER NOT NULL DEFAULT 0,
+            corridas     INTEGER NOT NULL DEFAULT 0,
+            FOREIGN KEY (temporada_id) REFERENCES seasons(id),
+            FOREIGN KEY (piloto_id)    REFERENCES drivers(id),
+            FOREIGN KEY (equipe_id)    REFERENCES teams(id)
+        );
+
+        INSERT INTO standings (
+            id, temporada_id, piloto_id, equipe_id, categoria, posicao, pontos, vitorias, podios, poles, corridas
+        )
+        SELECT
+            id, temporada_id, piloto_id, equipe_id, categoria, posicao, pontos, vitorias, podios, poles, corridas
+        FROM standings_old;
+
+        DROP TABLE standings_old;
+        ",
+    )?;
+
     Ok(())
 }
 
@@ -1833,6 +2373,24 @@ CREATE TABLE IF NOT EXISTS market_proposals (
     FOREIGN KEY (piloto_id)    REFERENCES drivers(id)
 );
 
+-- ── player_special_offers: convocações especiais recebidas pelo jogador ────────────
+CREATE TABLE IF NOT EXISTS player_special_offers (
+    id                TEXT PRIMARY KEY,
+    season_id         TEXT NOT NULL,
+    player_driver_id  TEXT NOT NULL,
+    team_id           TEXT NOT NULL,
+    team_name         TEXT NOT NULL,
+    special_category  TEXT NOT NULL,
+    class_name        TEXT NOT NULL,
+    papel             TEXT NOT NULL DEFAULT 'Numero2',
+    status            TEXT NOT NULL DEFAULT 'Pendente',
+    created_at        TEXT NOT NULL DEFAULT '',
+    responded_at      TEXT,
+    FOREIGN KEY (season_id) REFERENCES seasons(id),
+    FOREIGN KEY (player_driver_id) REFERENCES drivers(id),
+    FOREIGN KEY (team_id) REFERENCES teams(id)
+);
+
 -- ── news: notícias do simulador ───────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS news (
     id           TEXT PRIMARY KEY,
@@ -1905,8 +2463,12 @@ CREATE INDEX IF NOT EXISTS idx_news_lida         ON news(lida);
 CREATE INDEX IF NOT EXISTS idx_injuries_piloto   ON injuries(piloto_id);
 CREATE INDEX IF NOT EXISTS idx_market_proposals_piloto ON market_proposals(piloto_id);
 CREATE INDEX IF NOT EXISTS idx_market_proposals_equipe ON market_proposals(equipe_id);
+CREATE INDEX IF NOT EXISTS idx_player_special_offers_player ON player_special_offers(player_driver_id);
+CREATE INDEX IF NOT EXISTS idx_player_special_offers_team ON player_special_offers(team_id);
 CREATE INDEX IF NOT EXISTS idx_rivalries_piloto1      ON rivalries(piloto1_id);
 CREATE INDEX IF NOT EXISTS idx_rivalries_piloto2      ON rivalries(piloto2_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_rivalries_pair_unique
+    ON rivalries(piloto1_id, piloto2_id);
 
 ";
 
@@ -1938,6 +2500,302 @@ fn seed_meta(conn: &Connection) -> Result<(), DbError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_run_pending_rejects_invalid_schema_version_without_replaying_migrations() {
+        let conn = Connection::open_in_memory().expect("in-memory db");
+
+        conn.execute_batch(
+            "
+            CREATE TABLE meta (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+            INSERT INTO meta (key, value) VALUES ('schema_version', 'quebrada');
+
+            CREATE TABLE race_results (
+                id TEXT PRIMARY KEY,
+                race_id TEXT NOT NULL,
+                piloto_id TEXT NOT NULL,
+                equipe_id TEXT NOT NULL
+            );
+
+            INSERT INTO race_results (id, race_id, piloto_id, equipe_id)
+            VALUES ('legacy', 'R001', 'P001', 'T001');
+            ",
+        )
+        .expect("legacy schema");
+
+        let err = run_pending(&conn).expect_err("invalid schema version should fail");
+        assert!(
+            matches!(err, DbError::InvalidData(_)),
+            "expected invalid-data error, got {err:?}"
+        );
+
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM race_results", [], |row| row.get(0))
+            .expect("existing race_results should remain untouched");
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn test_migrate_v5_preserves_existing_race_results_rows() {
+        let conn = Connection::open_in_memory().expect("in-memory db");
+
+        conn.execute_batch(
+            "
+            CREATE TABLE calendar (
+                id TEXT PRIMARY KEY
+            );
+            CREATE TABLE drivers (
+                id TEXT PRIMARY KEY
+            );
+            CREATE TABLE teams (
+                id TEXT PRIMARY KEY
+            );
+            INSERT INTO calendar (id) VALUES ('R001');
+            INSERT INTO drivers (id) VALUES ('P001');
+            INSERT INTO teams (id) VALUES ('T001');
+
+            CREATE TABLE race_results (
+                id TEXT PRIMARY KEY,
+                race_id TEXT NOT NULL,
+                piloto_id TEXT NOT NULL,
+                equipe_id TEXT NOT NULL,
+                posicao_final INTEGER NOT NULL DEFAULT 0,
+                pontos REAL NOT NULL DEFAULT 0.0
+            );
+
+            INSERT INTO race_results (id, race_id, piloto_id, equipe_id, posicao_final, pontos)
+            VALUES ('legacy', 'R001', 'P001', 'T001', 3, 15.0);
+            ",
+        )
+        .expect("legacy race_results");
+
+        migrate_v5(&conn).expect("migration should preserve rows");
+
+        let row: (String, String, String, i64, f64) = conn
+            .query_row(
+                "SELECT race_id, piloto_id, equipe_id, posicao_final, pontos FROM race_results",
+                [],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                },
+            )
+            .expect("migrated row");
+
+        assert_eq!(row.0, "R001");
+        assert_eq!(row.1, "P001");
+        assert_eq!(row.2, "T001");
+        assert_eq!(row.3, 3);
+        assert_eq!(row.4, 15.0);
+    }
+
+    #[test]
+    fn test_migrate_v6_preserves_existing_injuries_rows() {
+        let conn = Connection::open_in_memory().expect("in-memory db");
+
+        conn.execute_batch(
+            "
+            CREATE TABLE seasons (
+                id TEXT PRIMARY KEY,
+                numero INTEGER NOT NULL,
+                ano INTEGER NOT NULL,
+                status TEXT NOT NULL DEFAULT 'EmAndamento'
+            );
+            INSERT INTO seasons (id, numero, ano, status) VALUES ('S001', 1, 2024, 'EmAndamento');
+
+            CREATE TABLE drivers (
+                id TEXT PRIMARY KEY
+            );
+            INSERT INTO drivers (id) VALUES ('P001');
+
+            CREATE TABLE injuries (
+                id TEXT PRIMARY KEY,
+                piloto_id TEXT NOT NULL,
+                tipo TEXT NOT NULL DEFAULT 'Leve',
+                corridas_restantes INTEGER NOT NULL DEFAULT 0,
+                temporada_id TEXT NOT NULL,
+                descricao TEXT NOT NULL DEFAULT ''
+            );
+
+            INSERT INTO injuries (id, piloto_id, tipo, corridas_restantes, temporada_id, descricao)
+            VALUES ('I001', 'P001', 'Grave', 2, 'S001', 'legacy injury');
+            ",
+        )
+        .expect("legacy injuries");
+
+        migrate_v6(&conn).expect("migration should preserve rows");
+
+        let row: (String, String, i64, i64, i64) = conn
+            .query_row(
+                "SELECT pilot_id, type, races_total, races_remaining, season FROM injuries",
+                [],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                },
+            )
+            .expect("migrated injury");
+
+        assert_eq!(row.0, "P001");
+        assert_eq!(row.1, "Grave");
+        assert_eq!(row.2, 2);
+        assert_eq!(row.3, 2);
+        assert_eq!(row.4, 1);
+    }
+
+    #[test]
+    fn test_migrate_v15_preserves_existing_driver_archive_rows() {
+        let conn = Connection::open_in_memory().expect("in-memory db");
+
+        conn.execute_batch(
+            "
+            CREATE TABLE driver_season_results_archive (
+                piloto_id TEXT NOT NULL,
+                season_number INTEGER NOT NULL,
+                ano INTEGER NOT NULL,
+                nome TEXT NOT NULL,
+                categoria TEXT NOT NULL,
+                posicao_campeonato INTEGER,
+                pontos REAL,
+                snapshot_json TEXT NOT NULL,
+                archived_at TEXT NOT NULL
+            );
+
+            INSERT INTO driver_season_results_archive (
+                piloto_id, season_number, ano, nome, categoria, posicao_campeonato, pontos, snapshot_json, archived_at
+            ) VALUES (
+                'P001', 3, 2026, 'Piloto Legado', 'gt3', 2, 180.5, '{\"ok\":true}', '2026-12-01 00:00:00'
+            );
+            ",
+        )
+        .expect("legacy archive");
+
+        migrate_v15(&conn).expect("migration should preserve rows");
+
+        let row: (String, i64, String, f64) = conn
+            .query_row(
+                "SELECT piloto_id, season_number, categoria, pontos FROM driver_season_archive",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .expect("migrated archive row");
+
+        assert_eq!(row.0, "P001");
+        assert_eq!(row.1, 3);
+        assert_eq!(row.2, "gt3");
+        assert_eq!(row.3, 180.5);
+    }
+
+    #[test]
+    fn test_migrate_v16_allows_partial_schema_without_teams_table() {
+        let conn = Connection::open_in_memory().expect("in-memory db");
+
+        migrate_v16(&conn).expect("migration should ignore missing teams table");
+    }
+
+    #[test]
+    fn test_migrate_v18_rejects_duplicate_active_contracts_for_same_pilot_and_type() {
+        let conn = Connection::open_in_memory().expect("in-memory db");
+
+        conn.execute_batch(
+            "
+            CREATE TABLE contracts (
+                id TEXT PRIMARY KEY,
+                piloto_id TEXT NOT NULL,
+                equipe_id TEXT NOT NULL,
+                piloto_nome TEXT NOT NULL DEFAULT '',
+                equipe_nome TEXT NOT NULL DEFAULT '',
+                temporada_inicio INTEGER NOT NULL DEFAULT 1,
+                duracao_anos INTEGER NOT NULL DEFAULT 1,
+                temporada_fim INTEGER NOT NULL DEFAULT 1,
+                salario REAL NOT NULL DEFAULT 0.0,
+                salario_anual REAL NOT NULL DEFAULT 0.0,
+                papel TEXT NOT NULL DEFAULT 'Numero2',
+                status TEXT NOT NULL DEFAULT 'Ativo',
+                tipo TEXT NOT NULL DEFAULT 'Regular',
+                categoria TEXT NOT NULL DEFAULT '',
+                classe TEXT,
+                created_at TEXT NOT NULL DEFAULT ''
+            );
+
+            INSERT INTO contracts (id, piloto_id, equipe_id, status, tipo, categoria)
+            VALUES
+                ('C001', 'P001', 'T001', 'Ativo', 'Regular', 'gt3'),
+                ('C002', 'P001', 'T002', 'Ativo', 'Regular', 'gt4');
+            ",
+        )
+        .expect("duplicate active contracts");
+
+        let err = migrate_v18(&conn).expect_err("duplicate active contracts should fail");
+        assert!(
+            matches!(err, DbError::Migration(_)),
+            "expected migration error, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn test_run_pending_v18_adds_unique_index_for_active_contracts() {
+        let conn = Connection::open_in_memory().expect("in-memory db");
+
+        conn.execute_batch(
+            "
+            CREATE TABLE meta (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+            INSERT INTO meta (key, value) VALUES ('schema_version', '17');
+
+            CREATE TABLE contracts (
+                id TEXT PRIMARY KEY,
+                piloto_id TEXT NOT NULL,
+                equipe_id TEXT NOT NULL,
+                piloto_nome TEXT NOT NULL DEFAULT '',
+                equipe_nome TEXT NOT NULL DEFAULT '',
+                temporada_inicio INTEGER NOT NULL DEFAULT 1,
+                duracao_anos INTEGER NOT NULL DEFAULT 1,
+                temporada_fim INTEGER NOT NULL DEFAULT 1,
+                salario REAL NOT NULL DEFAULT 0.0,
+                salario_anual REAL NOT NULL DEFAULT 0.0,
+                papel TEXT NOT NULL DEFAULT 'Numero2',
+                status TEXT NOT NULL DEFAULT 'Ativo',
+                tipo TEXT NOT NULL DEFAULT 'Regular',
+                categoria TEXT NOT NULL DEFAULT '',
+                classe TEXT,
+                created_at TEXT NOT NULL DEFAULT ''
+            );
+
+            INSERT INTO contracts (id, piloto_id, equipe_id, status, tipo, categoria)
+            VALUES ('C001', 'P001', 'T001', 'Ativo', 'Regular', 'gt3');
+            ",
+        )
+        .expect("v17 schema");
+
+        run_pending(&conn).expect("migration to v18 should succeed");
+
+        let duplicate_insert = conn.execute(
+            "INSERT INTO contracts (
+                id, piloto_id, equipe_id, status, tipo, categoria
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            ("C002", "P001", "T002", "Ativo", "Regular", "gt4"),
+        );
+        assert!(
+            duplicate_insert.is_err(),
+            "unique index should reject duplicate active contract for same pilot/type"
+        );
+    }
 
     #[test]
     fn test_run_pending_migrates_teams_to_v2_and_preserves_existing_data() {
@@ -1983,7 +2841,10 @@ mod tests {
 
         run_pending(&conn).expect("migration should succeed");
 
-        assert_eq!(get_schema_version(&conn).expect("schema version"), 14);
+        assert_eq!(
+            get_schema_version(&conn).expect("schema version"),
+            CURRENT_VERSION
+        );
         assert!(column_exists(&conn, "teams", "nome_curto"));
         assert!(column_exists(&conn, "teams", "stats_vitorias"));
         assert!(column_exists(&conn, "teams", "stats_pontos"));
@@ -2063,7 +2924,10 @@ mod tests {
 
         run_pending(&conn).expect("migration should succeed");
 
-        assert_eq!(get_schema_version(&conn).expect("schema version"), 14);
+        assert_eq!(
+            get_schema_version(&conn).expect("schema version"),
+            CURRENT_VERSION
+        );
         assert!(column_exists(&conn, "contracts", "piloto_nome"));
         assert!(column_exists(&conn, "contracts", "equipe_nome"));
         assert!(column_exists(&conn, "contracts", "duracao_anos"));
@@ -2116,6 +2980,12 @@ mod tests {
                 status TEXT NOT NULL DEFAULT 'Ativa'
             );
 
+            CREATE TABLE teams (
+                id TEXT PRIMARY KEY,
+                nome TEXT NOT NULL,
+                categoria TEXT NOT NULL
+            );
+
             CREATE TABLE calendar (
                 id TEXT PRIMARY KEY,
                 temporada_id TEXT NOT NULL,
@@ -2136,7 +3006,10 @@ mod tests {
 
         run_pending(&conn).expect("migration should succeed");
 
-        assert_eq!(get_schema_version(&conn).expect("schema version"), 14);
+        assert_eq!(
+            get_schema_version(&conn).expect("schema version"),
+            CURRENT_VERSION
+        );
         assert!(column_exists(&conn, "seasons", "rodada_atual"));
         assert!(column_exists(&conn, "seasons", "updated_at"));
         assert!(column_exists(&conn, "calendar", "season_id"));
@@ -2190,14 +3063,23 @@ mod tests {
                 gap_to_winner_ms REAL NOT NULL DEFAULT 0.0,
                 final_tire_wear  REAL NOT NULL DEFAULT 1.0
             );
+
+            CREATE TABLE teams (
+                id TEXT PRIMARY KEY,
+                nome TEXT NOT NULL,
+                categoria TEXT NOT NULL
+            );
             ",
         )
         .expect("legacy v13 schema");
 
         run_pending(&conn).expect("migration to v14 should succeed");
 
-        // schema_version atualizado
-        assert_eq!(get_schema_version(&conn).expect("schema version"), 14);
+        // schema_version atualizado para a versão corrente
+        assert_eq!(
+            get_schema_version(&conn).expect("schema version"),
+            CURRENT_VERSION
+        );
 
         // Tabela incident_catalog criada
         assert!(
@@ -2245,6 +3127,260 @@ mod tests {
             src, "Mechanical",
             "SB_E_PIT_02 must use Mechanical source (Resolução 1)"
         );
+    }
+
+    #[test]
+    fn test_run_pending_v19_normalizes_legacy_active_status_and_adds_unique_index() {
+        let conn = Connection::open_in_memory().expect("in-memory db");
+
+        conn.execute_batch(
+            "
+            CREATE TABLE meta (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+            INSERT INTO meta (key, value) VALUES ('schema_version', '18');
+
+            CREATE TABLE seasons (
+                id TEXT PRIMARY KEY,
+                numero INTEGER NOT NULL,
+                ano INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                rodada_atual INTEGER NOT NULL DEFAULT 1,
+                fase TEXT NOT NULL DEFAULT 'BlocoRegular',
+                created_at TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL DEFAULT ''
+            );
+
+            INSERT INTO seasons (id, numero, ano, status, rodada_atual, fase, created_at, updated_at)
+            VALUES ('S001', 1, 2024, 'Ativa', 1, 'BlocoRegular', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+            ",
+        )
+        .expect("legacy v18 schema");
+
+        run_pending(&conn).expect("migration to v19 should succeed");
+
+        let status: String = conn
+            .query_row("SELECT status FROM seasons WHERE id = 'S001'", [], |row| {
+                row.get(0)
+            })
+            .expect("season status");
+        assert_eq!(status, "EmAndamento");
+
+        let index_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_seasons_single_active'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("index count");
+        assert_eq!(index_count, 1);
+
+        assert_eq!(
+            get_schema_version(&conn).expect("schema version"),
+            CURRENT_VERSION
+        );
+    }
+
+    #[test]
+    fn test_run_pending_v19_rejects_duplicate_active_seasons() {
+        let conn = Connection::open_in_memory().expect("in-memory db");
+
+        conn.execute_batch(
+            "
+            CREATE TABLE meta (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+            INSERT INTO meta (key, value) VALUES ('schema_version', '18');
+
+            CREATE TABLE seasons (
+                id TEXT PRIMARY KEY,
+                numero INTEGER NOT NULL,
+                ano INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                rodada_atual INTEGER NOT NULL DEFAULT 1,
+                fase TEXT NOT NULL DEFAULT 'BlocoRegular',
+                created_at TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL DEFAULT ''
+            );
+
+            INSERT INTO seasons (id, numero, ano, status, rodada_atual, fase, created_at, updated_at)
+            VALUES
+                ('S001', 1, 2024, 'EmAndamento', 1, 'BlocoRegular', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+                ('S002', 2, 2025, 'EmAndamento', 1, 'BlocoRegular', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+            ",
+        )
+        .expect("legacy v18 schema");
+
+        let err = run_pending(&conn).expect_err("duplicate active seasons should fail");
+        assert!(err.to_string().contains("temporadas ativas duplicadas"));
+    }
+
+    #[test]
+    fn test_run_pending_v20_adds_unique_index_for_race_results() {
+        let conn = Connection::open_in_memory().expect("in-memory db");
+
+        conn.execute_batch(
+            "
+            CREATE TABLE meta (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+            INSERT INTO meta (key, value) VALUES ('schema_version', '19');
+
+            CREATE TABLE race_results (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                race_id TEXT NOT NULL,
+                piloto_id TEXT NOT NULL,
+                equipe_id TEXT NOT NULL
+            );
+
+            INSERT INTO race_results (race_id, piloto_id, equipe_id)
+            VALUES ('R001', 'P001', 'T001');
+            ",
+        )
+        .expect("legacy v19 schema");
+
+        run_pending(&conn).expect("migration to v20 should succeed");
+
+        let index_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_race_results_unique_race_pilot'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("index count");
+        assert_eq!(index_count, 1);
+
+        assert_eq!(
+            get_schema_version(&conn).expect("schema version"),
+            CURRENT_VERSION
+        );
+    }
+
+    #[test]
+    fn test_run_pending_v20_rejects_duplicate_race_results() {
+        let conn = Connection::open_in_memory().expect("in-memory db");
+
+        conn.execute_batch(
+            "
+            CREATE TABLE meta (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+            INSERT INTO meta (key, value) VALUES ('schema_version', '19');
+
+            CREATE TABLE race_results (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                race_id TEXT NOT NULL,
+                piloto_id TEXT NOT NULL,
+                equipe_id TEXT NOT NULL
+            );
+
+            INSERT INTO race_results (race_id, piloto_id, equipe_id)
+            VALUES
+                ('R001', 'P001', 'T001'),
+                ('R001', 'P001', 'T001');
+            ",
+        )
+        .expect("legacy v19 schema with duplicates");
+
+        let err = run_pending(&conn).expect_err("duplicate race results should fail");
+        assert!(err
+            .to_string()
+            .contains("resultados duplicados em race_results"));
+    }
+
+    #[test]
+    fn test_run_pending_v21_adds_unique_index_for_active_injuries() {
+        let conn = Connection::open_in_memory().expect("in-memory db");
+
+        conn.execute_batch(
+            "
+            CREATE TABLE meta (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+            INSERT INTO meta (key, value) VALUES ('schema_version', '20');
+
+            CREATE TABLE injuries (
+                id TEXT PRIMARY KEY,
+                pilot_id TEXT NOT NULL,
+                type TEXT NOT NULL,
+                modifier REAL NOT NULL DEFAULT 1.0,
+                races_total INTEGER NOT NULL,
+                races_remaining INTEGER NOT NULL,
+                skill_penalty REAL NOT NULL DEFAULT 0.0,
+                season INTEGER NOT NULL,
+                race_occurred TEXT NOT NULL,
+                active INTEGER NOT NULL DEFAULT 1
+            );
+
+            INSERT INTO injuries (
+                id, pilot_id, type, modifier, races_total, races_remaining, skill_penalty, season, race_occurred, active
+            ) VALUES (
+                'I001', 'P001', 'Leve', 0.95, 2, 2, 0.05, 1, 'R001', 1
+            );
+            ",
+        )
+        .expect("legacy v20 schema");
+
+        run_pending(&conn).expect("migration to v21 should succeed");
+
+        let index_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_injuries_single_active_per_pilot'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("index count");
+        assert_eq!(index_count, 1);
+
+        assert_eq!(
+            get_schema_version(&conn).expect("schema version"),
+            CURRENT_VERSION
+        );
+    }
+
+    #[test]
+    fn test_run_pending_v21_rejects_duplicate_active_injuries() {
+        let conn = Connection::open_in_memory().expect("in-memory db");
+
+        conn.execute_batch(
+            "
+            CREATE TABLE meta (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+            INSERT INTO meta (key, value) VALUES ('schema_version', '20');
+
+            CREATE TABLE injuries (
+                id TEXT PRIMARY KEY,
+                pilot_id TEXT NOT NULL,
+                type TEXT NOT NULL,
+                modifier REAL NOT NULL DEFAULT 1.0,
+                races_total INTEGER NOT NULL,
+                races_remaining INTEGER NOT NULL,
+                skill_penalty REAL NOT NULL DEFAULT 0.0,
+                season INTEGER NOT NULL,
+                race_occurred TEXT NOT NULL,
+                active INTEGER NOT NULL DEFAULT 1
+            );
+
+            INSERT INTO injuries (
+                id, pilot_id, type, modifier, races_total, races_remaining, skill_penalty, season, race_occurred, active
+            ) VALUES
+                ('I001', 'P001', 'Leve', 0.95, 2, 2, 0.05, 1, 'R001', 1),
+                ('I002', 'P001', 'Moderada', 0.85, 4, 4, 0.10, 1, 'R002', 1);
+            ",
+        )
+        .expect("legacy v20 schema with duplicates");
+
+        let err = run_pending(&conn).expect_err("duplicate active injuries should fail");
+        assert!(err
+            .to_string()
+            .contains("lesoes ativas duplicadas em injuries"));
     }
 
     fn column_exists(conn: &Connection, table: &str, column: &str) -> bool {

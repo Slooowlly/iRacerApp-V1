@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use serde::{Deserialize, Serialize};
 
 use crate::models::enums::TeamRole;
@@ -32,6 +34,16 @@ impl ProposalStatus {
             ProposalStatus::Aceita => "Aceita",
             ProposalStatus::Recusada => "Recusada",
             ProposalStatus::Expirada => "Expirada",
+        }
+    }
+
+    pub fn from_str_strict(value: &str) -> Result<Self, String> {
+        match value.trim() {
+            "Pendente" => Ok(Self::Pendente),
+            "Aceita" => Ok(Self::Aceita),
+            "Recusada" => Ok(Self::Recusada),
+            "Expirada" => Ok(Self::Expirada),
+            other => Err(format!("ProposalStatus inválido: '{other}'")),
         }
     }
 }

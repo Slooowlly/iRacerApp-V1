@@ -19,9 +19,35 @@ pub struct Cotas {
 /// - 10 assentos → A=5, B=2, C=2, D=1
 /// - 12 assentos → A=7, B=2, C=2, D=1
 pub fn calcular_cotas(total_assentos: usize) -> Cotas {
-    let wildcard = 1_usize;
-    let continuidade = ((total_assentos as f64 * 0.20) as usize).max(1);
-    let pool = ((total_assentos as f64 * 0.20) as usize).max(1);
+    if total_assentos == 0 {
+        return Cotas {
+            merito_regular: 0,
+            continuidade: 0,
+            pool_global: 0,
+            wildcard: 0,
+        };
+    }
+
+    let wildcard = 1_usize.min(total_assentos);
+    let remaining_after_wildcard = total_assentos.saturating_sub(wildcard);
+
+    let continuidade = if remaining_after_wildcard == 0 {
+        0
+    } else {
+        ((total_assentos as f64 * 0.20) as usize)
+            .max(1)
+            .min(remaining_after_wildcard)
+    };
+
+    let remaining_after_continuidade = remaining_after_wildcard.saturating_sub(continuidade);
+    let pool = if remaining_after_continuidade == 0 {
+        0
+    } else {
+        ((total_assentos as f64 * 0.20) as usize)
+            .max(1)
+            .min(remaining_after_continuidade)
+    };
+
     let merito = total_assentos.saturating_sub(wildcard + continuidade + pool);
     Cotas {
         merito_regular: merito,
@@ -90,5 +116,53 @@ mod tests {
         assert!(cotas.continuidade >= 1);
         assert!(cotas.pool_global >= 1);
         assert_eq!(cotas.wildcard, 1);
+    }
+
+    #[test]
+    fn test_calcular_cotas_zero_assentos() {
+        let cotas = calcular_cotas(0);
+        assert_eq!(cotas.merito_regular, 0);
+        assert_eq!(cotas.continuidade, 0);
+        assert_eq!(cotas.pool_global, 0);
+        assert_eq!(cotas.wildcard, 0);
+    }
+
+    #[test]
+    fn test_calcular_cotas_um_assento() {
+        let cotas = calcular_cotas(1);
+        assert_eq!(cotas.merito_regular, 0);
+        assert_eq!(cotas.continuidade, 0);
+        assert_eq!(cotas.pool_global, 0);
+        assert_eq!(cotas.wildcard, 1);
+        assert_eq!(
+            cotas.merito_regular + cotas.continuidade + cotas.pool_global + cotas.wildcard,
+            1
+        );
+    }
+
+    #[test]
+    fn test_calcular_cotas_dois_assentos() {
+        let cotas = calcular_cotas(2);
+        assert_eq!(cotas.merito_regular, 0);
+        assert_eq!(cotas.continuidade, 1);
+        assert_eq!(cotas.pool_global, 0);
+        assert_eq!(cotas.wildcard, 1);
+        assert_eq!(
+            cotas.merito_regular + cotas.continuidade + cotas.pool_global + cotas.wildcard,
+            2
+        );
+    }
+
+    #[test]
+    fn test_calcular_cotas_tres_assentos() {
+        let cotas = calcular_cotas(3);
+        assert_eq!(cotas.merito_regular, 0);
+        assert_eq!(cotas.continuidade, 1);
+        assert_eq!(cotas.pool_global, 1);
+        assert_eq!(cotas.wildcard, 1);
+        assert_eq!(
+            cotas.merito_regular + cotas.continuidade + cotas.pool_global + cotas.wildcard,
+            3
+        );
     }
 }

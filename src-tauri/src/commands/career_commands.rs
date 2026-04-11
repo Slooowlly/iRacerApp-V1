@@ -5,18 +5,19 @@ use tauri::{AppHandle, Manager};
 use crate::commands::career::{
     advance_market_week_in_base_dir, advance_season_in_base_dir, create_career_in_base_dir,
     delete_career_in_base_dir, finalize_preseason_in_base_dir,
-    get_briefing_phrase_history_in_base_dir,
-    get_calendar_for_category_in_base_dir, get_driver_detail_in_base_dir, get_driver_in_base_dir,
-    get_drivers_by_category_in_base_dir, get_news_in_base_dir, get_player_proposals_in_base_dir,
+    get_briefing_phrase_history_in_base_dir, get_calendar_for_category_in_base_dir,
+    get_driver_detail_in_base_dir, get_driver_in_base_dir, get_drivers_by_category_in_base_dir,
+    get_news_in_base_dir, get_player_proposals_in_base_dir, get_preseason_free_agents_in_base_dir,
     get_preseason_state_in_base_dir, get_previous_champions_in_base_dir,
-    persist_resume_context_in_base_dir,
     get_race_results_by_category_in_base_dir, get_teams_standings_in_base_dir,
-    list_saves_in_base_dir, load_career_in_base_dir, respond_to_proposal_in_base_dir,
-    save_briefing_phrase_history_in_base_dir, PlayerProposalView, ProposalResponse,
+    list_saves_in_base_dir, load_career_in_base_dir, persist_resume_context_in_base_dir,
+    respond_to_proposal_in_base_dir, save_briefing_phrase_history_in_base_dir,
+    skip_all_pending_races_in_base_dir, PlayerProposalView, ProposalResponse,
 };
 use crate::commands::career_types::{
     BriefingPhraseEntryInput, BriefingPhraseHistory, CareerData, CareerResumeView,
-    CreateCareerInput, CreateCareerResult, DriverDetail, DriverSummary, RaceSummary, SaveInfo, TeamStanding,
+    CreateCareerInput, CreateCareerResult, DriverDetail, DriverSummary, FreeAgentPreview,
+    RaceSummary, SaveInfo, TeamStanding,
 };
 use crate::commands::race_history::{DriverRaceHistory, PreviousChampions};
 use crate::evolution::pipeline::EndOfSeasonResult;
@@ -52,6 +53,12 @@ pub async fn advance_season(
 ) -> Result<EndOfSeasonResult, String> {
     let base_dir = app_data_dir(&app)?;
     advance_season_in_base_dir(&base_dir, &career_id)
+}
+
+#[tauri::command]
+pub async fn skip_all_pending_races(app: AppHandle, career_id: String) -> Result<(), String> {
+    let base_dir = app_data_dir(&app)?;
+    skip_all_pending_races_in_base_dir(&base_dir, &career_id)
 }
 
 #[tauri::command]
@@ -214,4 +221,13 @@ pub async fn save_briefing_phrase_history(
 ) -> Result<BriefingPhraseHistory, String> {
     let base_dir = app_data_dir(&app)?;
     save_briefing_phrase_history_in_base_dir(&base_dir, &career_id, season_number, entries)
+}
+
+#[tauri::command]
+pub async fn get_preseason_free_agents(
+    app: AppHandle,
+    career_id: String,
+) -> Result<Vec<FreeAgentPreview>, String> {
+    let base_dir = app_data_dir(&app)?;
+    get_preseason_free_agents_in_base_dir(&base_dir, &career_id)
 }

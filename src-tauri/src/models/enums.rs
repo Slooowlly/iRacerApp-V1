@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use serde::{Deserialize, Serialize};
 
 // ── Status do piloto ──────────────────────────────────────────────────────────
@@ -72,6 +74,16 @@ impl PrimaryPersonality {
             _ => PrimaryPersonality::Ambicioso,
         }
     }
+
+    pub fn from_str_strict(s: &str) -> Result<Self, String> {
+        match s.trim() {
+            "Ambicioso" => Ok(PrimaryPersonality::Ambicioso),
+            "Consolidador" | "Tecnico" | "Consistente" => Ok(PrimaryPersonality::Consolidador),
+            "Mercenario" | "Agressivo" => Ok(PrimaryPersonality::Mercenario),
+            "Leal" | "Calmo" => Ok(PrimaryPersonality::Leal),
+            other => Err(format!("PrimaryPersonality invalido: '{other}'")),
+        }
+    }
 }
 
 // ── Personalidade secundária ──────────────────────────────────────────────────
@@ -113,6 +125,20 @@ impl SecondaryPersonality {
             "Solitario" => SecondaryPersonality::Solitario,
             "Estudioso" | "Inteligente" => SecondaryPersonality::Estudioso,
             _ => SecondaryPersonality::Calculista,
+        }
+    }
+
+    pub fn from_str_strict(s: &str) -> Result<Self, String> {
+        match s.trim() {
+            "CabecaQuente" => Ok(SecondaryPersonality::CabecaQuente),
+            "SangueFrio" | "Sensivel" => Ok(SecondaryPersonality::SangueFrio),
+            "Apostador" | "Competitivo" => Ok(SecondaryPersonality::Apostador),
+            "Calculista" => Ok(SecondaryPersonality::Calculista),
+            "Showman" | "Lider" => Ok(SecondaryPersonality::Showman),
+            "TeamPlayer" | "Trabalhador" => Ok(SecondaryPersonality::TeamPlayer),
+            "Solitario" => Ok(SecondaryPersonality::Solitario),
+            "Estudioso" | "Inteligente" => Ok(SecondaryPersonality::Estudioso),
+            other => Err(format!("SecondaryPersonality invalido: '{other}'")),
         }
     }
 }
@@ -174,6 +200,16 @@ impl TeamRole {
             "Numero1" | "N1" | "Titular" => TeamRole::Numero1,
             "Numero2" | "N2" | "Reserva" | "Junior" => TeamRole::Numero2,
             _ => TeamRole::Numero2,
+        }
+    }
+
+    /// Parser estrito para leitura de banco de dados.
+    /// Preserva aliases legacy aceitos pelo parser permissivo.
+    pub fn from_str_strict(s: &str) -> Result<Self, String> {
+        match s.trim() {
+            "Numero1" | "N1" | "Titular" => Ok(TeamRole::Numero1),
+            "Numero2" | "N2" | "Reserva" | "Junior" => Ok(TeamRole::Numero2),
+            other => Err(format!("TeamRole inválido: '{other}'")),
         }
     }
 }
@@ -262,6 +298,16 @@ impl WeatherCondition {
             "Wet" => WeatherCondition::Wet,
             "HeavyRain" => WeatherCondition::HeavyRain,
             _ => WeatherCondition::Dry,
+        }
+    }
+
+    pub fn from_str_strict(s: &str) -> Result<Self, String> {
+        match s.trim() {
+            "Dry" => Ok(WeatherCondition::Dry),
+            "Damp" => Ok(WeatherCondition::Damp),
+            "Wet" => Ok(WeatherCondition::Wet),
+            "HeavyRain" => Ok(WeatherCondition::HeavyRain),
+            other => Err(format!("WeatherCondition invalido: '{other}'")),
         }
     }
 }

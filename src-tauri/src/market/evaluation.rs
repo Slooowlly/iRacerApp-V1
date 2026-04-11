@@ -30,14 +30,14 @@ pub fn evaluate_driver_performance(
     score.clamp(0.0, 100.0)
 }
 
-pub fn estimate_expected_position(car_performance: f64, total_teams: i32) -> i32 {
-    if total_teams <= 1 {
+pub fn estimate_expected_position(car_performance: f64, total_positions: i32) -> i32 {
+    if total_positions <= 1 {
         return 1;
     }
 
     let normalized = ((car_performance + 5.0) / 21.0).clamp(0.0, 1.0);
-    let expected = ((1.0 - normalized) * (total_teams as f64 - 1.0)) as i32 + 1;
-    expected.clamp(1, total_teams)
+    let expected = ((1.0 - normalized) * (total_positions as f64 - 1.0)) as i32 + 1;
+    expected.clamp(1, total_positions)
 }
 
 #[cfg(test)]
@@ -63,5 +63,17 @@ mod tests {
 
         assert!(strong < weak);
         assert_eq!(strong, 1);
+    }
+
+    #[test]
+    fn test_expected_position_respects_full_driver_grid_size() {
+        let midfield_car = 5.0;
+        let expected_two_cars = estimate_expected_position(midfield_car, 10);
+        let expected_two_drivers = estimate_expected_position(midfield_car, 20);
+
+        assert!(
+            expected_two_drivers > expected_two_cars,
+            "grid de pilotos maior deve ampliar a expectativa nominal"
+        );
     }
 }

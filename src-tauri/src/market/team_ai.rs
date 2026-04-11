@@ -85,18 +85,18 @@ pub fn generate_team_proposals(
 /// Bônus de apelo público de mercado para score de candidatos.
 ///
 /// Política operacional local de seleção — traduz MarketVisibilityTier em
-/// um diferencial de score pequeno e auditável. Máximo: 0.12 (vs. componente
-/// de skill que pode chegar a 40.0). Fator de desempate marginal, não medida
-/// geral de valor do piloto.
+/// um diferencial de score controlado e auditável. Máximo: 5.0 (vs. componente
+/// de skill que pode chegar a 40.0). É relevante para desempate e perfil
+/// comercial, mas não substitui mérito esportivo claro.
 ///
 /// Nesta v1, o bônus depende apenas do tier (não da posição fina dentro da
 /// faixa), o que o torna previsível e semanticamente controlado.
 fn market_public_visibility_bonus(profile: &MarketVisibilityProfile) -> f64 {
     match profile.tier {
         MarketVisibilityTier::Baixa => 0.0,
-        MarketVisibilityTier::Relevante => 0.03,
-        MarketVisibilityTier::Alta => 0.07,
-        MarketVisibilityTier::Elite => 0.12,
+        MarketVisibilityTier::Relevante => 1.5,
+        MarketVisibilityTier::Alta => 3.0,
+        MarketVisibilityTier::Elite => 5.0,
     }
 }
 
@@ -104,7 +104,7 @@ fn market_public_visibility_bonus(profile: &MarketVisibilityProfile) -> f64 {
 ///
 /// Critério de desempate na sort da shortlist — não é score principal.
 /// Só tem efeito quando `candidate_score()` empata. Escala deliberadamente
-/// menor que `market_public_visibility_bonus()` (máx 0.06 vs. máx 0.12)
+/// menor que `market_public_visibility_bonus()` (máx 0.06 vs. máx 5.0)
 /// para evitar dupla amplificação de mídia.
 ///
 /// Semântica: entre candidatos esportivamente equivalentes, o de maior
@@ -136,15 +136,9 @@ fn proposal_attention_weight(profile: &MarketVisibilityProfile) -> f64 {
 }
 
 fn candidate_score(available: &AvailableDriver) -> f64 {
-    let age_bonus = if available.driver.idade < 24 {
-        80.0
-    } else if available.driver.idade <= 30 {
-        100.0
-    } else {
-        50.0
-    };
+    let age_bonus = age_market_bonus(available.driver.idade);
 
-    // Apelo público de mercado — bônus deliberadamente pequeno.
+    // Apelo público de mercado — bônus controlado, mas perceptível.
     // `calculate_visibility()` mede visibilidade esportiva (posição/vitórias/títulos).
     // Este bônus mede apelo público persistente (midia). São complementares, não equivalentes.
     let media_profile = derive_market_visibility_profile(available.driver.atributos.midia);
@@ -153,8 +147,12 @@ fn candidate_score(available: &AvailableDriver) -> f64 {
     available.driver.atributos.skill * 0.4
         + available.driver.atributos.consistencia * 0.2
         + (available.visibility * 10.0) * 0.2
-        + age_bonus * 0.2
+        + age_bonus
         + media_bonus
+}
+
+fn age_market_bonus(age: u32) -> f64 {
+    (20.0 - f64::from(age.saturating_sub(27)) * 2.0).max(5.0)
 }
 
 fn calculate_offer_salary(vacancy: &Vacancy, driver: &Driver, rng: &mut impl Rng) -> f64 {
@@ -164,6 +162,7 @@ fn calculate_offer_salary(vacancy: &Vacancy, driver: &Driver, rng: &mut impl Rng
         2 => 50_000.0,
         3 => 100_000.0,
         4 => 200_000.0,
+        5 => 250_000.0,
         _ => 150_000.0,
     };
 
@@ -226,6 +225,24 @@ mod tests {
         let high_offer = generate_team_proposals(&high, &available, 2, &mut rng_high);
 
         assert!(high_offer[0].salario_oferecido > low_offer[0].salario_oferecido);
+    }
+
+    #[test]
+    fn test_proposals_salary_scales_to_top_tier() {
+        let gt3 = sample_vacancy(4);
+        let endurance = sample_vacancy(5);
+        let available = vec![sample_available_driver("P001", "gt3", 4, 7.0, 72.0)];
+        let mut rng_gt3 = StdRng::seed_from_u64(33);
+        let mut rng_endurance = StdRng::seed_from_u64(33);
+
+        let gt3_offer = generate_team_proposals(&gt3, &available, 2, &mut rng_gt3);
+        let endurance_offer =
+            generate_team_proposals(&endurance, &available, 2, &mut rng_endurance);
+
+        assert!(
+            endurance_offer[0].salario_oferecido > gt3_offer[0].salario_oferecido,
+            "o tier maximo nao deve oferecer menos que o tier imediatamente anterior"
+        );
     }
 
     fn sample_vacancy(tier: u8) -> Vacancy {
@@ -295,7 +312,7 @@ mod tests {
         // Candidato B: esportivamente inferior, mídia máxima
         // A deve vir primeiro independente da ordem de entrada
         let vacancy = sample_vacancy(3);
-        let mut sporting_better = sample_available_driver("P001", "gt4", 3, 6.5, 75.0);
+        let mut sporting_better = sample_available_driver("P001", "gt4", 3, 6.5, 80.0);
         sporting_better.driver.atributos.midia = 5.0; // Baixa
 
         let mut media_better = sample_available_driver("P002", "gt4", 3, 6.5, 65.0);
@@ -370,7 +387,7 @@ mod tests {
         // Candidato B: esportivamente inferior, midia máxima.
         // candidate_score decide no 1º critério — mérito esportivo domina.
         let vacancy = sample_vacancy(3);
-        let mut sporting_better = sample_available_driver("P001", "gt4", 3, 6.5, 75.0);
+        let mut sporting_better = sample_available_driver("P001", "gt4", 3, 6.5, 80.0);
         sporting_better.driver.atributos.midia = 5.0; // Baixa
 
         let mut media_better = sample_available_driver("P002", "gt4", 3, 6.5, 65.0);
@@ -418,6 +435,23 @@ mod tests {
     // ── Testes semânticos de media_bonus em candidate_score ───────────────────
 
     #[test]
+    fn test_age_bonus_declines_gradually_after_30() {
+        let mut age_30 = sample_available_driver("P001", "gt4", 3, 6.5, 70.0);
+        age_30.driver.atributos.midia = 10.0;
+        age_30.driver.idade = 30;
+
+        let mut age_31 = sample_available_driver("P002", "gt4", 3, 6.5, 70.0);
+        age_31.driver.atributos.midia = 10.0;
+        age_31.driver.idade = 31;
+
+        let diff = candidate_score(&age_30) - candidate_score(&age_31);
+        assert!(
+            (1.5..=2.5).contains(&diff),
+            "a queda entre 30 e 31 anos deve ser gradual, nao um penhasco: diff={diff}"
+        );
+    }
+
+    #[test]
     fn test_media_bonus_breaks_tie_between_similar_candidates() {
         // Dois candidatos esportivamente idênticos, midia diferente →
         // o mais midiático deve ter score maior.
@@ -425,9 +459,14 @@ mod tests {
         low_media.driver.atributos.midia = 10.0; // Baixa → bônus 0.0
 
         let mut high_media = sample_available_driver("P002", "gt4", 3, 6.5, 65.0);
-        high_media.driver.atributos.midia = 90.0; // Elite → bônus 0.12
+        high_media.driver.atributos.midia = 90.0; // Elite → bônus 5.0
 
         assert!(candidate_score(&high_media) > candidate_score(&low_media));
+        let diff = candidate_score(&high_media) - candidate_score(&low_media);
+        assert!(
+            diff >= 4.5,
+            "midia precisa ter impacto perceptivel no score: diff={diff}"
+        );
     }
 
     #[test]
@@ -450,14 +489,14 @@ mod tests {
     #[test]
     fn test_media_bonus_does_not_override_sporting_merit() {
         // Candidato A: skill moderadamente superior, midia mínima.
-        let mut sporting_better = sample_available_driver("P001", "gt4", 3, 6.5, 72.0);
+        let mut sporting_better = sample_available_driver("P001", "gt4", 3, 6.5, 80.0);
         sporting_better.driver.atributos.midia = 5.0; // Baixa → 0.0
 
         // Candidato B: skill inferior, midia máxima.
         let mut media_better = sample_available_driver("P002", "gt4", 3, 6.5, 64.0);
-        media_better.driver.atributos.midia = 100.0; // Elite → 0.12
+        media_better.driver.atributos.midia = 100.0; // Elite → 5.0
 
-        // Diferença de skill (72-64)*0.4 = 3.2 >> bônus máximo (0.12).
+        // Diferença de skill (80-64)*0.4 = 6.4 > bônus máximo de mídia (5.0).
         // Diferença moderada mas clara deve superar o bônus máximo de mídia.
         assert!(
             candidate_score(&sporting_better) > candidate_score(&media_better),

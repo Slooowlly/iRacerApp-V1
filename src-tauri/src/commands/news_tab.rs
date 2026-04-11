@@ -57,16 +57,27 @@ pub(crate) fn get_news_tab_bootstrap_in_base_dir(
     career_id: &str,
 ) -> Result<NewsTabBootstrap, String> {
     let career = load_career_in_base_dir(base_dir, career_id)?;
+    let player_categoria = career
+        .player_team
+        .as_ref()
+        .map(|t| t.categoria.clone())
+        .unwrap_or_default();
     let current_round = career.season.rodada_atual;
-    let calendar = get_calendar_for_category_in_base_dir(
-        base_dir,
-        career_id,
-        &career.player_team.categoria,
-    )
-    .unwrap_or_default();
-    let last_race = calendar.iter().filter(|r| r.rodada < current_round).max_by_key(|r| r.rodada);
+    let calendar = if player_categoria.is_empty() {
+        Vec::new()
+    } else {
+        get_calendar_for_category_in_base_dir(base_dir, career_id, &player_categoria)?
+    };
+    let last_race = calendar
+        .iter()
+        .filter(|r| r.rodada < current_round)
+        .max_by_key(|r| r.rodada);
     let next_race = calendar.iter().find(|r| r.rodada >= current_round);
-    let season_completed = calendar.iter().max_by_key(|r| r.rodada).map(|r| r.status == "Concluida").unwrap_or(false);
+    let season_completed = calendar
+        .iter()
+        .max_by_key(|r| r.rodada)
+        .map(|r| r.status == "Concluida")
+        .unwrap_or(false);
     let pub_date_label = last_race
         .map(|r| format_display_date(&r.display_date))
         .unwrap_or_else(|| career.season.ano.to_string());
@@ -75,7 +86,7 @@ pub(crate) fn get_news_tab_bootstrap_in_base_dir(
     let next_race_name = next_race.map(|r| r.track_name.clone());
     Ok(NewsTabBootstrap {
         default_scope_type: "category".to_string(),
-        default_scope_id: career.player_team.categoria.clone(),
+        default_scope_id: player_categoria.clone(),
         default_primary_filter: Some("Corridas".to_string()),
         default_context_type: last_race.map(|_| "race".to_string()),
         default_context_id: last_race.map(|r| r.id.clone()),
@@ -93,9 +104,18 @@ pub(crate) fn get_news_tab_bootstrap_in_base_dir(
 }
 
 fn format_display_date(date_str: &str) -> String {
-    const MONTHS: [&str; 12] = ["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"];
+    const MONTHS: [&str; 12] = [
+        "Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez",
+    ];
     NaiveDate::parse_from_str(date_str, "%Y-%m-%d")
-        .map(|d| format!("{} {} de {}", d.day(), MONTHS[d.month0() as usize], d.year()))
+        .map(|d| {
+            format!(
+                "{} {} de {}",
+                d.day(),
+                MONTHS[d.month0() as usize],
+                d.year()
+            )
+        })
         .unwrap_or_else(|_| date_str.to_string())
 }
 
@@ -109,7 +129,12 @@ pub(crate) fn get_news_tab_snapshot_in_base_dir(
     let scope_id = normalize_scope_id(
         scope_type,
         &request.scope_id,
-        &context.career.player_team.categoria,
+        context
+            .career
+            .player_team
+            .as_ref()
+            .map(|t| t.categoria.as_str())
+            .unwrap_or(""),
     );
     let scope_class = normalize_scope_class(&scope_id, request.scope_class.as_deref());
     let primary_filter = normalize_primary_filter(scope_type, request.primary_filter.as_deref());
@@ -156,7 +181,7 @@ pub(crate) fn get_news_tab_snapshot_in_base_dir(
     if let Some(selection) = selection.as_ref() {
         selected_items.retain(|item| story_matches_context(&context, item, selection));
     }
-    let stories = build_stories(&context, selected_items);
+    let stories = build_stories(&context, selected_items)?;
 
     Ok(NewsTabSnapshot {
         hero: build_hero(
@@ -234,6 +259,7 @@ pub(crate) struct NewsTabContext {
 pub(crate) struct NextRaceInfo {
     pub(crate) label: String,
     pub(crate) date_label: String,
+    #[allow(dead_code)]
     pub(crate) round: i32,
 }
 
@@ -289,11 +315,8 @@ fn load_context(base_dir: &Path, career_id: &str) -> Result<NewsTabContext, Stri
                 format!("{}:{}", category.id, race.rodada),
                 race.display_date.clone(),
             );
-            if race.rodada >= current_round
-                && !next_race_by_category.contains_key(category.id)
-            {
-                let date_label = format_display_date_label(&race.display_date)
-                    .unwrap_or_default();
+            if race.rodada >= current_round && !next_race_by_category.contains_key(category.id) {
+                let date_label = format_display_date_label(&race.display_date).unwrap_or_default();
                 next_race_by_category.insert(
                     category.id.to_string(),
                     NextRaceInfo {
@@ -309,14 +332,18 @@ fn load_context(base_dir: &Path, career_id: &str) -> Result<NewsTabContext, Stri
     let mut driver_groups: HashMap<String, Vec<&crate::models::driver::Driver>> = HashMap::new();
     for driver in &all_drivers {
         if let Some(cat) = driver.categoria_atual.as_deref() {
-            driver_groups.entry(cat.to_string()).or_default().push(driver);
+            driver_groups
+                .entry(cat.to_string())
+                .or_default()
+                .push(driver);
         }
     }
     let mut driver_positions: HashMap<String, i32> = HashMap::new();
     let mut driver_points: HashMap<String, i32> = HashMap::new();
     for (cat_id, group) in &mut driver_groups {
         group.sort_by(|a, b| {
-            b.stats_temporada.pontos
+            b.stats_temporada
+                .pontos
                 .partial_cmp(&a.stats_temporada.pontos)
                 .unwrap_or(std::cmp::Ordering::Equal)
                 .then(b.stats_temporada.vitorias.cmp(&a.stats_temporada.vitorias))
@@ -332,7 +359,10 @@ fn load_context(base_dir: &Path, career_id: &str) -> Result<NewsTabContext, Stri
     // team standings: chave team_id (uma categoria por equipe)
     let mut team_groups: HashMap<String, Vec<&crate::models::team::Team>> = HashMap::new();
     for team in &all_teams {
-        team_groups.entry(team.categoria.clone()).or_default().push(team);
+        team_groups
+            .entry(team.categoria.clone())
+            .or_default()
+            .push(team);
     }
     let mut team_positions: HashMap<String, i32> = HashMap::new();
     let mut team_points: HashMap<String, i32> = HashMap::new();
@@ -363,9 +393,8 @@ fn load_context(base_dir: &Path, career_id: &str) -> Result<NewsTabContext, Stri
                         .map(|d| d.atributos.midia)
                 })
                 .collect();
-            let tier =
-                team_presence_label(&derive_team_public_presence(&driver_media_values).tier)
-                    .to_string();
+            let tier = team_presence_label(&derive_team_public_presence(&driver_media_values).tier)
+                .to_string();
             (team.id.clone(), tier)
         })
         .collect();
@@ -383,13 +412,9 @@ fn load_context(base_dir: &Path, career_id: &str) -> Result<NewsTabContext, Stri
     let mut driver_win_streaks: HashMap<String, u32> = HashMap::new();
     for driver in &all_drivers {
         if let Some(cat) = driver.categoria_atual.as_deref() {
-            let streak = race_history_queries::get_win_streak(
-                &db.conn,
-                &driver.id,
-                &active_season.id,
-                cat,
-            )
-            .unwrap_or(0);
+            let streak =
+                race_history_queries::get_win_streak(&db.conn, &driver.id, &active_season.id, cat)
+                    .unwrap_or(0);
             if streak > 0 {
                 driver_win_streaks.insert(format!("{cat}:{}", driver.id), streak);
             }
@@ -424,8 +449,10 @@ fn load_context(base_dir: &Path, career_id: &str) -> Result<NewsTabContext, Stri
                 completed_round,
             ) {
                 for (driver_id, grid_pos, finish_pos, is_dnf) in results {
-                    latest_race_results
-                        .insert(format!("{}:{}", category.id, driver_id), (grid_pos, finish_pos, is_dnf));
+                    latest_race_results.insert(
+                        format!("{}:{}", category.id, driver_id),
+                        (grid_pos, finish_pos, is_dnf),
+                    );
                 }
             }
             if let Ok(facts) = race_history_queries::get_dnf_incident_facts_for_round(
@@ -438,7 +465,11 @@ fn load_context(base_dir: &Path, career_id: &str) -> Result<NewsTabContext, Stri
                     let incident_type = incident_fact_type_from_source(incident_source.as_deref());
                     latest_incident_facts.insert(
                         format!("{}:{}", category.id, driver_id),
-                        IncidentEditorialFacts { incident_type, is_dnf, segment },
+                        IncidentEditorialFacts {
+                            incident_type,
+                            is_dnf,
+                            segment,
+                        },
                     );
                 }
             }
@@ -577,7 +608,11 @@ fn build_primary_filters(scope_type: &str) -> Vec<NewsTabFilterOption> {
         .collect()
 }
 
-fn build_scope_label(context: &NewsTabContext, scope_id: &str, scope_class: Option<&str>) -> String {
+fn build_scope_label(
+    context: &NewsTabContext,
+    scope_id: &str,
+    scope_class: Option<&str>,
+) -> String {
     let base_label = context
         .category_names
         .get(scope_id)
@@ -607,14 +642,12 @@ fn scope_team_ids(
         .collect());
     }
 
-    Ok(get_teams_standings_in_base_dir(
-        &context.base_dir,
-        &context.career_id,
-        category_id,
-    )?
-    .into_iter()
-    .map(|team| team.id)
-    .collect())
+    Ok(
+        get_teams_standings_in_base_dir(&context.base_dir, &context.career_id, category_id)?
+            .into_iter()
+            .map(|team| team.id)
+            .collect(),
+    )
 }
 
 fn scope_driver_ids(
@@ -640,8 +673,9 @@ fn scope_driver_ids(
             driver_ids.extend(ids.iter().cloned());
         }
 
-        for contract in contract_queries::get_active_contracts_for_team(&context.db.conn, team_id)
-            .map_err(|e| format!("Falha ao buscar lineup ativo da equipe {team_id}: {e}"))?
+        for contract in
+            contract_queries::get_active_contracts_for_team(&context.db.conn, team_id)
+                .map_err(|e| format!("Falha ao buscar lineup ativo da equipe {team_id}: {e}"))?
         {
             driver_ids.insert(contract.piloto_id);
         }
@@ -713,20 +747,20 @@ fn build_category_context_filters(
             requested_context_id,
         ),
         Some("Equipes") => Ok(scope_team_standings(context, category_id, scope_class)?
-        .into_iter()
-        .map(|team| {
-            let (color_primary, color_secondary) = team_color_pair(context, &team.id);
-            NewsTabFilterOption {
-                id: team.id,
-                label: team.nome,
-                meta: Some(format!("{} pts", team.pontos)),
-                tone: Some("cool".to_string()),
-                kind: Some("team".to_string()),
-                color_primary,
-                color_secondary,
-            }
-        })
-        .collect()),
+            .into_iter()
+            .map(|team| {
+                let (color_primary, color_secondary) = team_color_pair(context, &team.id);
+                NewsTabFilterOption {
+                    id: team.id,
+                    label: team.nome,
+                    meta: Some(format!("{} pts", team.pontos)),
+                    tone: Some("cool".to_string()),
+                    kind: Some("team".to_string()),
+                    color_primary,
+                    color_secondary,
+                }
+            })
+            .collect()),
         Some("Mercado") => Ok(build_entity_context_filters(context, scoped_items, 6)),
         _ => Ok(Vec::new()),
     }
@@ -1156,7 +1190,10 @@ fn select_public_briefing_items(context: &NewsTabContext, items: Vec<NewsItem>) 
 
     selected
 }
-fn build_stories(context: &NewsTabContext, items: Vec<NewsItem>) -> Vec<NewsTabStory> {
+fn build_stories(
+    context: &NewsTabContext,
+    items: Vec<NewsItem>,
+) -> Result<Vec<NewsTabStory>, String> {
     let mut result = Vec::with_capacity(items.len());
 
     for item in items {
@@ -1168,43 +1205,73 @@ fn build_stories(context: &NewsTabContext, items: Vec<NewsItem>) -> Vec<NewsTabS
         let accent_tone = story_accent(&item.importancia, &item.tipo).to_string();
 
         let category_label = item.categoria_nome.clone().or_else(|| {
-            item.categoria_id.as_ref().and_then(|id| context.category_names.get(id).cloned())
+            item.categoria_id
+                .as_ref()
+                .and_then(|id| context.category_names.get(id).cloned())
         });
-        let team_label = item.team_id.as_ref().and_then(|id| context.team_names.get(id).cloned());
-        let driver_label = item.driver_id.as_ref().and_then(|id| context.driver_names.get(id).cloned());
+        let team_label = item
+            .team_id
+            .as_ref()
+            .and_then(|id| context.team_names.get(id).cloned());
+        let driver_label = item
+            .driver_id
+            .as_ref()
+            .and_then(|id| context.driver_names.get(id).cloned());
         let entity_label = team_label.clone().or_else(|| driver_label.clone());
-        let race_label = item.categoria_id.as_ref()
+        let race_label = item
+            .categoria_id
+            .as_ref()
             .and_then(|cat| item.rodada.map(|r| format!("{cat}:{r}")))
             .and_then(|key| context.race_labels.get(&key).cloned());
-        let next_race_info = item.categoria_id.as_ref()
+        let next_race_info = item
+            .categoria_id
+            .as_ref()
             .and_then(|cat| context.next_race_by_category.get(cat));
         let next_race_label = next_race_info.map(|r| r.label.clone());
         let next_race_date_label = next_race_info.map(|r| r.date_label.clone());
-        let driver_secondary_label = item.driver_id_secondary.as_ref()
+        let driver_secondary_label = item
+            .driver_id_secondary
+            .as_ref()
             .and_then(|id| context.driver_names.get(id).cloned());
-        let driver_key = item.categoria_id.as_ref()
+        let driver_key = item
+            .categoria_id
+            .as_ref()
             .zip(item.driver_id.as_ref())
             .map(|(cat, drv)| format!("{cat}:{drv}"));
-        let driver_position = driver_key.as_deref().and_then(|k| context.driver_positions.get(k).copied());
-        let driver_points = driver_key.as_deref().and_then(|k| context.driver_points.get(k).copied());
-        let team_position = item.team_id.as_ref().and_then(|id| context.team_positions.get(id).copied());
-        let team_points = item.team_id.as_ref().and_then(|id| context.team_points.get(id).copied());
-        let (team_color_primary, team_color_secondary) = item.team_id.as_ref()
+        let driver_position = driver_key
+            .as_deref()
+            .and_then(|k| context.driver_positions.get(k).copied());
+        let driver_points = driver_key
+            .as_deref()
+            .and_then(|k| context.driver_points.get(k).copied());
+        let team_position = item
+            .team_id
+            .as_ref()
+            .and_then(|id| context.team_positions.get(id).copied());
+        let team_points = item
+            .team_id
+            .as_ref()
+            .and_then(|id| context.team_points.get(id).copied());
+        let (team_color_primary, team_color_secondary) = item
+            .team_id
+            .as_ref()
             .and_then(|id| context.team_colors.get(id))
             .map(|(p, s)| (Some(p.clone()), Some(s.clone())))
             .unwrap_or((None, None));
-        let team_public_presence_tier = item.team_id.as_ref()
+        let team_public_presence_tier = item
+            .team_id
+            .as_ref()
             .and_then(|id| context.team_public_presence.get(id).cloned());
 
         let titulo = item.titulo.clone();
         let texto = item.texto.clone();
         let bundle = if item.tipo == NewsType::Corrida {
-            compose_race_story_bundle(&item, context)
+            compose_race_story_bundle(&item, context)?
         } else {
             Vec::new()
         };
         let pilot_composed = if item.tipo == NewsType::Hierarquia && item.driver_id.is_some() {
-            compose_pilot_story(&item, context)
+            compose_pilot_story(&item, context)?
         } else {
             None
         };
@@ -1212,6 +1279,7 @@ fn build_stories(context: &NewsTabContext, items: Vec<NewsItem>) -> Vec<NewsTabS
             && item.driver_id.is_none()
             && item.tipo != NewsType::Mercado
             && item.tipo != NewsType::Incidente
+            && item.tipo != NewsType::FramingSazonal
         {
             compose_team_story(&item, context)
         } else {
@@ -1223,12 +1291,12 @@ fn build_stories(context: &NewsTabContext, items: Vec<NewsItem>) -> Vec<NewsTabS
             None
         };
         let injury_composed = if item.tipo == NewsType::Lesao {
-            compose_injury_story(&item, context)
+            compose_injury_story(&item, context)?
         } else {
             None
         };
         let incident_composed = if item.tipo == NewsType::Incidente {
-            compose_incident_story(&item, context)
+            compose_incident_story(&item, context)?
         } else {
             None
         };
@@ -1310,7 +1378,7 @@ fn build_stories(context: &NewsTabContext, items: Vec<NewsItem>) -> Vec<NewsTabS
         }
     }
 
-    result
+    Ok(result)
 }
 
 // ── Sistema editorial de Corrida — Parte 1 ───────────────────────────────────
@@ -1341,6 +1409,7 @@ struct RaceStoryContext {
     driver_name: String,
     category_name: String,
     driver_position: Option<i32>,
+    #[allow(dead_code)]
     driver_points: Option<i32>,
     /// Sequência atual de vitórias consecutivas (0 se desconhecida).
     win_streak: u32,
@@ -1374,7 +1443,7 @@ fn historical_standings_after_round(
     season_number: i32,
     category_id: &str,
     round: i32,
-) -> Option<Vec<(String, i32, i32)>> {
+) -> Result<Option<Vec<(String, i32, i32)>>, String> {
     let mut stmt = context
         .db
         .conn
@@ -1390,24 +1459,26 @@ fn historical_standings_after_round(
              GROUP BY r.piloto_id
              ORDER BY total_points DESC, wins DESC, podiums DESC, r.piloto_id ASC",
         )
-        .ok()?;
+        .map_err(|e| format!("Falha ao preparar standings historicos: {e}"))?;
 
     let rows = stmt
-        .query_map(rusqlite::params![season_number, category_id, round], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, i32>(1)?))
-        })
-        .ok()?;
+        .query_map(
+            rusqlite::params![season_number, category_id, round],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, i32>(1)?)),
+        )
+        .map_err(|e| format!("Falha ao consultar standings historicos: {e}"))?;
 
-    let standings = rows
-        .filter_map(|row| row.ok())
-        .enumerate()
-        .map(|(index, (driver_id, points))| (driver_id, index as i32 + 1, points))
-        .collect::<Vec<_>>();
+    let mut standings = Vec::new();
+    for row in rows {
+        let (driver_id, points) =
+            row.map_err(|e| format!("Falha ao ler standings historicos: {e}"))?;
+        standings.push((driver_id, standings.len() as i32 + 1, points));
+    }
 
     if standings.is_empty() {
-        None
+        Ok(None)
     } else {
-        Some(standings)
+        Ok(Some(standings))
     }
 }
 
@@ -1415,14 +1486,15 @@ fn historical_round_results(
     context: &NewsTabContext,
     category_id: &str,
     round: i32,
-) -> Option<Vec<(String, i32, i32, bool)>> {
+) -> Result<Option<Vec<(String, i32, i32, bool)>>, String> {
     race_history_queries::get_results_for_round(
         &context.db.conn,
         &context.active_season_id,
         category_id,
         round,
     )
-    .ok()
+    .map(Some)
+    .map_err(|e| format!("Falha ao consultar resultados historicos: {e}"))
 }
 
 fn incident_fact_type_from_source(source: Option<&str>) -> Option<IncidentFactType> {
@@ -1439,21 +1511,24 @@ fn historical_incident_facts_for_round(
     category_id: &str,
     driver_id: &str,
     round: i32,
-) -> Option<IncidentEditorialFacts> {
-    race_history_queries::get_dnf_incident_facts_for_round(
+) -> Result<Option<IncidentEditorialFacts>, String> {
+    let facts = race_history_queries::get_dnf_incident_facts_for_round(
         &context.db.conn,
         &context.active_season_id,
         category_id,
         round,
     )
-    .ok()?
-    .into_iter()
-    .find(|(candidate_driver_id, _, _, _)| candidate_driver_id == driver_id)
-    .map(|(_, incident_source, is_dnf, segment)| IncidentEditorialFacts {
-        incident_type: incident_fact_type_from_source(incident_source.as_deref()),
-        is_dnf,
-        segment,
-    })
+    .map_err(|e| format!("Falha ao consultar incidentes historicos: {e}"))?;
+    Ok(facts
+        .into_iter()
+        .find(|(candidate_driver_id, _, _, _)| candidate_driver_id == driver_id)
+        .map(
+            |(_, incident_source, is_dnf, segment)| IncidentEditorialFacts {
+                incident_type: incident_fact_type_from_source(incident_source.as_deref()),
+                is_dnf,
+                segment,
+            },
+        ))
 }
 
 fn historical_driver_position_after_round(
@@ -1462,11 +1537,17 @@ fn historical_driver_position_after_round(
     category_id: &str,
     driver_id: &str,
     round: i32,
-) -> Option<i32> {
-    historical_standings_after_round(context, season_number, category_id, round)?
-        .into_iter()
-        .find(|(candidate_driver_id, _, _)| candidate_driver_id == driver_id)
-        .map(|(_, position, _)| position)
+) -> Result<Option<i32>, String> {
+    Ok(
+        historical_standings_after_round(context, season_number, category_id, round)?.and_then(
+            |standings| {
+                standings
+                    .into_iter()
+                    .find(|(candidate_driver_id, _, _)| candidate_driver_id == driver_id)
+                    .map(|(_, position, _)| position)
+            },
+        ),
+    )
 }
 
 fn historical_win_streak_through_round(
@@ -1475,7 +1556,7 @@ fn historical_win_streak_through_round(
     season_number: i32,
     category_id: &str,
     round: i32,
-) -> Option<u32> {
+) -> Result<Option<u32>, String> {
     let mut stmt = context
         .db
         .conn
@@ -1490,17 +1571,25 @@ fn historical_win_streak_through_round(
                AND c.rodada <= ?4
              ORDER BY c.rodada DESC",
         )
-        .ok()?;
+        .map_err(|e| format!("Falha ao preparar win streak historico: {e}"))?;
 
     let positions = stmt
-        .query_map(rusqlite::params![pilot_id, season_number, category_id, round], |row| {
-            row.get::<_, i32>(0)
-        })
-        .ok()?
-        .filter_map(|row| row.ok())
-        .collect::<Vec<_>>();
+        .query_map(
+            rusqlite::params![pilot_id, season_number, category_id, round],
+            |row| row.get::<_, i32>(0),
+        )
+        .map_err(|e| format!("Falha ao consultar win streak historico: {e}"))?;
+    let mut collected = Vec::new();
+    for row in positions {
+        collected.push(row.map_err(|e| format!("Falha ao ler win streak historico: {e}"))?);
+    }
 
-    Some(positions.iter().take_while(|&&position| position == 1).count() as u32)
+    Ok(Some(
+        collected
+            .iter()
+            .take_while(|&&position| position == 1)
+            .count() as u32,
+    ))
 }
 
 fn historical_season_wins_through_round(
@@ -1509,8 +1598,8 @@ fn historical_season_wins_through_round(
     season_number: i32,
     category_id: &str,
     round: i32,
-) -> Option<u32> {
-    context
+) -> Result<Option<u32>, String> {
+    let count = context
         .db
         .conn
         .query_row(
@@ -1526,8 +1615,8 @@ fn historical_season_wins_through_round(
             rusqlite::params![pilot_id, season_number, category_id, round],
             |row| row.get::<_, i32>(0),
         )
-        .ok()
-        .and_then(|count| u32::try_from(count).ok())
+        .map_err(|e| format!("Falha ao consultar vitorias historicas da temporada: {e}"))?;
+    Ok(u32::try_from(count).ok())
 }
 
 fn historical_career_wins_through_round(
@@ -1535,8 +1624,8 @@ fn historical_career_wins_through_round(
     pilot_id: &str,
     season_number: i32,
     round: i32,
-) -> Option<u32> {
-    context
+) -> Result<Option<u32>, String> {
+    let count = context
         .db
         .conn
         .query_row(
@@ -1553,8 +1642,8 @@ fn historical_career_wins_through_round(
             rusqlite::params![pilot_id, season_number, round],
             |row| row.get::<_, i32>(0),
         )
-        .ok()
-        .and_then(|count| u32::try_from(count).ok())
+        .map_err(|e| format!("Falha ao consultar vitorias historicas da carreira: {e}"))?;
+    Ok(u32::try_from(count).ok())
 }
 
 /// Compõe uma ou duas stories editoriais para um NewsItem de Corrida.
@@ -1562,14 +1651,14 @@ fn historical_career_wins_through_round(
 fn compose_race_story_bundle(
     item: &NewsItem,
     context: &NewsTabContext,
-) -> Vec<ComposedRaceStory> {
+) -> Result<Vec<ComposedRaceStory>, String> {
     let driver_name = match item
         .driver_id
         .as_ref()
         .and_then(|id| context.driver_names.get(id).cloned())
     {
         Some(n) => n,
-        None => return Vec::new(),
+        None => return Ok(Vec::new()),
     };
 
     let category_name = match item.categoria_nome.clone().or_else(|| {
@@ -1578,7 +1667,7 @@ fn compose_race_story_bundle(
             .and_then(|id| context.category_names.get(id).cloned())
     }) {
         Some(n) => n,
-        None => return Vec::new(),
+        None => return Ok(Vec::new()),
     };
 
     let driver_key = item
@@ -1588,28 +1677,33 @@ fn compose_race_story_bundle(
         .map(|(cat, drv)| format!("{cat}:{drv}"));
     let category_id = match item.categoria_id.as_deref() {
         Some(category_id) => category_id,
-        None => return Vec::new(),
+        None => return Ok(Vec::new()),
     };
     let driver_id_str = item.driver_id.as_deref().unwrap_or("");
     let editorial_round = item.rodada.filter(|round| *round > 0);
-    let historical_standings = editorial_round.and_then(|round| {
-        historical_standings_after_round(context, item.temporada, category_id, round)
-    });
-    let historical_results =
-        editorial_round.and_then(|round| historical_round_results(context, category_id, round));
-    let historical_prev_leader = editorial_round.and_then(|round| {
-        race_history_queries::get_category_leader_before_round(
+    let historical_standings = match editorial_round {
+        Some(round) => {
+            historical_standings_after_round(context, item.temporada, category_id, round)?
+        }
+        None => None,
+    };
+    let historical_results = match editorial_round {
+        Some(round) => historical_round_results(context, category_id, round)?,
+        None => None,
+    };
+    let historical_prev_leader = match editorial_round {
+        Some(round) => race_history_queries::get_category_leader_before_round(
             &context.db.conn,
             &context.active_season_id,
             category_id,
             round,
         )
-        .ok()
-        .flatten()
-    });
+        .map_err(|e| format!("Falha ao consultar lider historico da categoria: {e}"))?,
+        None => None,
+    };
 
     let win_streak = editorial_round
-        .and_then(|round| {
+        .map(|round| {
             historical_win_streak_through_round(
                 context,
                 driver_id_str,
@@ -1618,6 +1712,8 @@ fn compose_race_story_bundle(
                 round,
             )
         })
+        .transpose()?
+        .flatten()
         .or_else(|| {
             driver_key
                 .as_deref()
@@ -1674,7 +1770,7 @@ fn compose_race_story_bundle(
         });
     let driver_grid_pos = driver_race_result.map(|(g, _, _)| g).unwrap_or(0);
     let season_wins = editorial_round
-        .and_then(|round| {
+        .map(|round| {
             historical_season_wins_through_round(
                 context,
                 driver_id_str,
@@ -1683,12 +1779,16 @@ fn compose_race_story_bundle(
                 round,
             )
         })
+        .transpose()?
+        .flatten()
         .or_else(|| context.driver_season_wins.get(driver_id_str).copied())
         .unwrap_or(0);
     let career_wins = editorial_round
-        .and_then(|round| {
+        .map(|round| {
             historical_career_wins_through_round(context, driver_id_str, item.temporada, round)
         })
+        .transpose()?
+        .flatten()
         .or_else(|| context.driver_career_wins.get(driver_id_str).copied())
         .unwrap_or(0);
 
@@ -1769,7 +1869,7 @@ fn compose_race_story_bundle(
 
     let main_body = match compose_race_body(trigger, &race_ctx) {
         Some(b) => b,
-        None => return Vec::new(),
+        None => return Ok(Vec::new()),
     };
 
     let mut bundle = vec![ComposedRaceStory {
@@ -1798,7 +1898,7 @@ fn compose_race_story_bundle(
         }
     }
 
-    bundle
+    Ok(bundle)
 }
 
 // ── Sistema editorial de Corrida — Parte 5: story dupla ─────────────────────
@@ -2250,10 +2350,7 @@ fn detect_race_modifiers(ctx: &RaceStoryContext, trigger: RaceTrigger) -> Vec<Ra
     }
 
     // P7: FirstWinOfCareer — ignorado se já é o trigger principal
-    if ctx.first_win_of_career
-        && trigger != RaceTrigger::FirstWinOfCareer
-        && modifiers.len() < 2
-    {
+    if ctx.first_win_of_career && trigger != RaceTrigger::FirstWinOfCareer && modifiers.len() < 2 {
         modifiers.push(RaceModifier::FirstWinOfCareer);
     } else if ctx.first_win_of_season
         && !matches!(
@@ -2634,10 +2731,8 @@ const TOP_TABLE_GAP_THRESHOLD: i32 = 30;
 fn detect_pilot_modifiers(ctx: &PilotStoryContext, trigger: PilotTrigger) -> Vec<PilotModifier> {
     let mut modifiers: Vec<PilotModifier> = Vec::new();
 
-    let has_good_run = ctx.win_streak > 0
-        || matches!(ctx.last_race_finish, Some(p) if p <= 5);
-    let has_bad_run = ctx.last_race_dnf
-        || matches!(ctx.last_race_finish, Some(p) if p > 10);
+    let has_good_run = ctx.win_streak > 0 || matches!(ctx.last_race_finish, Some(p) if p <= 5);
+    let has_bad_run = ctx.last_race_dnf || matches!(ctx.last_race_finish, Some(p) if p > 10);
 
     // Trigger negativo: foco em resultados ruins e urgência
     if matches!(trigger, PilotTrigger::PilotUnderPressure) {
@@ -2656,15 +2751,21 @@ fn detect_pilot_modifiers(ctx: &PilotStoryContext, trigger: PilotTrigger) -> Vec
     if matches!(ctx.driver_position, Some(p) if p <= 8) {
         modifiers.push(PilotModifier::DriverPositionContext);
     }
-    if modifiers.len() >= 2 { return modifiers; }
+    if modifiers.len() >= 2 {
+        return modifiers;
+    }
 
     // P2: TopTableProximity — dentro de alcance do topo
     let is_near_top = matches!(ctx.driver_position, Some(p) if p <= 5)
-        && ctx.points_gap_to_leader.map_or(false, |gap| gap <= TOP_TABLE_GAP_THRESHOLD);
+        && ctx
+            .points_gap_to_leader
+            .map_or(false, |gap| gap <= TOP_TABLE_GAP_THRESHOLD);
     if is_near_top {
         modifiers.push(PilotModifier::TopTableProximity);
     }
-    if modifiers.len() >= 2 { return modifiers; }
+    if modifiers.len() >= 2 {
+        return modifiers;
+    }
 
     // P3: RecentGoodRun
     if has_good_run {
@@ -2715,7 +2816,11 @@ fn compose_pilot_modifier_need_immediate_response(v: usize) -> String {
     }
 }
 
-fn compose_pilot_modifier_phrase(modifier: PilotModifier, ctx: &PilotStoryContext, v: usize) -> String {
+fn compose_pilot_modifier_phrase(
+    modifier: PilotModifier,
+    ctx: &PilotStoryContext,
+    v: usize,
+) -> String {
     match modifier {
         PilotModifier::DriverPositionContext => {
             let pos = ctx.driver_position.unwrap_or(0);
@@ -2754,21 +2859,30 @@ fn compose_pilot_headline(trigger: PilotTrigger, ctx: &PilotStoryContext) -> Str
     }
 }
 
-fn compose_pilot_story(item: &NewsItem, context: &NewsTabContext) -> Option<ComposedRaceStory> {
-    let driver_id = item.driver_id.as_deref()?;
+fn compose_pilot_story(
+    item: &NewsItem,
+    context: &NewsTabContext,
+) -> Result<Option<ComposedRaceStory>, String> {
+    let driver_id = match item.driver_id.as_deref() {
+        Some(driver_id) => driver_id,
+        None => return Ok(None),
+    };
     let driver_name = item
         .driver_id
         .as_ref()
-        .and_then(|id| context.driver_names.get(id).cloned())?;
+        .and_then(|id| context.driver_names.get(id).cloned());
+    let Some(driver_name) = driver_name else {
+        return Ok(None);
+    };
 
-    let category_name = item
-        .categoria_nome
-        .clone()
-        .or_else(|| {
-            item.categoria_id
-                .as_ref()
-                .and_then(|id| context.category_names.get(id).cloned())
-        })?;
+    let category_name = item.categoria_nome.clone().or_else(|| {
+        item.categoria_id
+            .as_ref()
+            .and_then(|id| context.category_names.get(id).cloned())
+    });
+    let Some(category_name) = category_name else {
+        return Ok(None);
+    };
 
     let driver_key = item
         .categoria_id
@@ -2780,12 +2894,12 @@ fn compose_pilot_story(item: &NewsItem, context: &NewsTabContext) -> Option<Comp
     let editorial_round = item.rodada.filter(|round| *round > 0);
     let historical_standings = match (category_id, editorial_round) {
         (Some(category_id), Some(round)) => {
-            historical_standings_after_round(context, item.temporada, category_id, round)
+            historical_standings_after_round(context, item.temporada, category_id, round)?
         }
         _ => None,
     };
     let historical_results = match (category_id, editorial_round) {
-        (Some(category_id), Some(round)) => historical_round_results(context, category_id, round),
+        (Some(category_id), Some(round)) => historical_round_results(context, category_id, round)?,
         _ => None,
     };
 
@@ -2810,15 +2924,15 @@ fn compose_pilot_story(item: &NewsItem, context: &NewsTabContext) -> Option<Comp
             item.temporada,
             category_id,
             round,
-        ),
+        )?,
         _ => None,
     }
-        .or_else(|| {
-            driver_key
-                .as_deref()
-                .and_then(|k| context.driver_win_streaks.get(k).copied())
-        })
-        .unwrap_or(0);
+    .or_else(|| {
+        driver_key
+            .as_deref()
+            .and_then(|k| context.driver_win_streaks.get(k).copied())
+    })
+    .unwrap_or(0);
 
     let last_race_result = historical_results
         .as_ref()
@@ -2874,15 +2988,12 @@ fn compose_pilot_story(item: &NewsItem, context: &NewsTabContext) -> Option<Comp
 
     let trigger = detect_pilot_trigger(&ctx, &item.importancia);
     if trigger == PilotTrigger::FallbackPilotStory {
-        return None;
+        return Ok(None);
     }
     let headline = compose_pilot_headline(trigger, &ctx);
     let body = compose_pilot_body(trigger, &ctx);
 
-    Some(ComposedRaceStory {
-        headline,
-        body,
-    })
+    Ok(Some(ComposedRaceStory { headline, body }))
 }
 
 fn compose_pilot_body(trigger: PilotTrigger, ctx: &PilotStoryContext) -> String {
@@ -2927,6 +3038,7 @@ struct MarketStoryContext {
     driver_name: Option<String>,
     team_name: Option<String>,
     /// None se a notícia não tem categoria identificável.
+    #[allow(dead_code)]
     category_name: Option<String>,
     /// True se o item pertence à pré-temporada.
     is_preseason: bool,
@@ -3041,7 +3153,11 @@ fn compose_market_concrete_move_body(driver: Option<&str>, team: Option<&str>, v
     }
 }
 
-fn compose_market_preseason_pressure_body(driver: Option<&str>, team: Option<&str>, v: usize) -> String {
+fn compose_market_preseason_pressure_body(
+    driver: Option<&str>,
+    team: Option<&str>,
+    v: usize,
+) -> String {
     match driver.or(team) {
         Some(s) => match v % 3 {
             0 => format!(
@@ -3092,14 +3208,19 @@ enum MarketModifier {
     NeedsConcreteFollowUp,
 }
 
-fn detect_market_modifiers(ctx: &MarketStoryContext, trigger: MarketTrigger) -> Vec<MarketModifier> {
+fn detect_market_modifiers(
+    ctx: &MarketStoryContext,
+    trigger: MarketTrigger,
+) -> Vec<MarketModifier> {
     let mut modifiers: Vec<MarketModifier> = Vec::new();
 
     // P1: PreseasonPhaseContext — timing pesa, mas não quando o trigger já é de pré-temporada
     if ctx.is_preseason && trigger != MarketTrigger::PreseasonMarketPressure {
         modifiers.push(MarketModifier::PreseasonPhaseContext);
     }
-    if modifiers.len() >= 2 { return modifiers; }
+    if modifiers.len() >= 2 {
+        return modifiers;
+    }
 
     // P2: Sujeito principal — piloto ou equipe (mutuamente exclusivos; sem redundância com trigger)
     if ctx.subject_is_driver && trigger != MarketTrigger::MarketHeatedAroundDriver {
@@ -3107,13 +3228,17 @@ fn detect_market_modifiers(ctx: &MarketStoryContext, trigger: MarketTrigger) -> 
     } else if ctx.subject_is_team && trigger != MarketTrigger::MarketHeatedAroundTeam {
         modifiers.push(MarketModifier::TeamCenteredMove);
     }
-    if modifiers.len() >= 2 { return modifiers; }
+    if modifiers.len() >= 2 {
+        return modifiers;
+    }
 
     // P3: PublicPresenceContext — visibilidade alta amplifica o caso
     if matches!(ctx.presence_tier.as_deref(), Some("elite") | Some("alta")) {
         modifiers.push(MarketModifier::PublicPresenceContext);
     }
-    if modifiers.len() >= 2 { return modifiers; }
+    if modifiers.len() >= 2 {
+        return modifiers;
+    }
 
     // P4: NeedsConcreteFollowUp — fecho útil que quase sempre cabe
     modifiers.push(MarketModifier::NeedsConcreteFollowUp);
@@ -3181,7 +3306,11 @@ fn compose_market_modifier_needs_followup(v: usize) -> String {
     .to_string()
 }
 
-fn compose_market_modifier_phrase(modifier: MarketModifier, ctx: &MarketStoryContext, v: usize) -> String {
+fn compose_market_modifier_phrase(
+    modifier: MarketModifier,
+    ctx: &MarketStoryContext,
+    v: usize,
+) -> String {
     match modifier {
         MarketModifier::PreseasonPhaseContext => {
             compose_market_modifier_preseason_phase(ctx.preseason_week, v)
@@ -3205,9 +3334,7 @@ fn compose_market_body(trigger: MarketTrigger, ctx: &MarketStoryContext) -> Stri
             compose_market_team_heated_body(t.unwrap_or(""), v)
         }
         MarketTrigger::ConcreteMoveUnderway => compose_market_concrete_move_body(d, t, v),
-        MarketTrigger::PreseasonMarketPressure => {
-            compose_market_preseason_pressure_body(d, t, v)
-        }
+        MarketTrigger::PreseasonMarketPressure => compose_market_preseason_pressure_body(d, t, v),
         MarketTrigger::FallbackMarketStory => return String::new(), // nunca chamado
     };
     let modifiers = detect_market_modifiers(ctx, trigger);
@@ -3229,12 +3356,24 @@ fn compose_market_headline(trigger: MarketTrigger, ctx: &MarketStoryContext) -> 
     let t = ctx.team_name.as_deref();
     match trigger {
         MarketTrigger::MarketHeatedAroundDriver => match v % 2 {
-            0 => format!("{} esquenta o mercado da proxima janela", d.unwrap_or("Nome forte")),
-            _ => format!("Nome de {} ganha forca real no mercado", d.unwrap_or("piloto")),
+            0 => format!(
+                "{} esquenta o mercado da proxima janela",
+                d.unwrap_or("Nome forte")
+            ),
+            _ => format!(
+                "Nome de {} ganha forca real no mercado",
+                d.unwrap_or("piloto")
+            ),
         },
         MarketTrigger::MarketHeatedAroundTeam => match v % 2 {
-            0 => format!("{} puxa a pauta de mercado do paddock", t.unwrap_or("Equipe")),
-            _ => format!("{} entra no centro da proxima janela", t.unwrap_or("Equipe")),
+            0 => format!(
+                "{} puxa a pauta de mercado do paddock",
+                t.unwrap_or("Equipe")
+            ),
+            _ => format!(
+                "{} entra no centro da proxima janela",
+                t.unwrap_or("Equipe")
+            ),
         },
         MarketTrigger::ConcreteMoveUnderway => match d.or(t) {
             Some(subject) => match v % 2 {
@@ -3284,8 +3423,14 @@ fn compose_market_story(item: &NewsItem, context: &NewsTabContext) -> Option<Com
         .as_ref()
         .and_then(|id| context.driver_media.get(id).copied())
         .map(|score| {
-            if score >= 0.8 { "elite" } else if score >= 0.6 { "alta" } else { "baixa" }
-                .to_string()
+            if score >= 0.8 {
+                "elite"
+            } else if score >= 0.6 {
+                "alta"
+            } else {
+                "baixa"
+            }
+            .to_string()
         })
         .or_else(|| {
             item.team_id
@@ -3312,10 +3457,7 @@ fn compose_market_story(item: &NewsItem, context: &NewsTabContext) -> Option<Com
 
     let headline = compose_market_headline(trigger, &ctx);
     let body = compose_market_body(trigger, &ctx);
-    Some(ComposedRaceStory {
-        headline,
-        body,
-    })
+    Some(ComposedRaceStory { headline, body })
 }
 
 // ── Sistema editorial de Incidente — Parte 12 ────────────────────────────────
@@ -3353,6 +3495,7 @@ pub(crate) struct IncidentEditorialFacts {
 struct IncidentStoryContext {
     driver_name: Option<String>,
     secondary_driver_name: Option<String>,
+    #[allow(dead_code)]
     category_name: Option<String>,
     /// True quando não há outro piloto envolvido (falha mecânica, acidente isolado).
     is_mechanical: bool,
@@ -3636,7 +3779,9 @@ fn compose_incident_body(trigger: IncidentTrigger, ctx: &IncidentStoryContext) -
     let main_body = match trigger {
         IncidentTrigger::DriverIncidentDamage => compose_incident_driver_damage_body_polished(d, v),
         IncidentTrigger::TwoDriverIncident => compose_incident_two_driver_body_polished(d, s, v),
-        IncidentTrigger::MechanicalFailureHitStrongly => compose_incident_mechanical_body_polished(d, v),
+        IncidentTrigger::MechanicalFailureHitStrongly => {
+            compose_incident_mechanical_body_polished(d, v)
+        }
         IncidentTrigger::IncidentStillOpen => compose_incident_still_open_body(d, v),
         IncidentTrigger::FallbackIncidentStory => String::new(), // nunca chamado
     };
@@ -3647,7 +3792,9 @@ fn compose_incident_body(trigger: IncidentTrigger, ctx: &IncidentStoryContext) -
 
     let mut parts = vec![main_body];
     for modifier in modifiers {
-        parts.push(compose_incident_modifier_phrase_polished(modifier, trigger, ctx, v));
+        parts.push(compose_incident_modifier_phrase_polished(
+            modifier, trigger, ctx, v,
+        ));
     }
     parts.join(" ")
 }
@@ -3812,8 +3959,10 @@ fn detect_team_modifiers(ctx: &TeamStoryContext, trigger: TeamTrigger) -> Vec<Te
         return modifiers;
     }
 
-    if matches!(trigger, TeamTrigger::TeamInStrongMoment | TeamTrigger::TeamBecameRelevant)
-        && matches!(ctx.presence_tier.as_deref(), Some("elite") | Some("alta"))
+    if matches!(
+        trigger,
+        TeamTrigger::TeamInStrongMoment | TeamTrigger::TeamBecameRelevant
+    ) && matches!(ctx.presence_tier.as_deref(), Some("elite") | Some("alta"))
     {
         modifiers.push(TeamModifier::GrowingPublicWeight);
     }
@@ -3830,7 +3979,10 @@ fn compose_team_modifier_top_table(v: usize) -> String {
     }
 }
 
-fn compose_team_modifier_need_immediate_response(next_race_label: Option<&str>, v: usize) -> String {
+fn compose_team_modifier_need_immediate_response(
+    next_race_label: Option<&str>,
+    v: usize,
+) -> String {
     match next_race_label {
         Some(race) => match v % 3 {
             0 => format!(
@@ -3859,7 +4011,11 @@ fn compose_team_modifier_public_weight(v: usize) -> String {
     }
 }
 
-fn compose_team_modifier_phrase(modifier: TeamModifier, ctx: &TeamStoryContext, v: usize) -> String {
+fn compose_team_modifier_phrase(
+    modifier: TeamModifier,
+    ctx: &TeamStoryContext,
+    v: usize,
+) -> String {
     match modifier {
         TeamModifier::TopTableContext => compose_team_modifier_top_table(v),
         TeamModifier::NeedImmediateResponse => {
@@ -4046,7 +4202,10 @@ fn detect_injury_trigger(ctx: &InjuryStoryContext) -> InjuryTrigger {
     InjuryTrigger::FallbackInjuryStory
 }
 
-fn detect_injury_modifiers(ctx: &InjuryStoryContext, trigger: InjuryTrigger) -> Vec<InjuryModifier> {
+fn detect_injury_modifiers(
+    ctx: &InjuryStoryContext,
+    trigger: InjuryTrigger,
+) -> Vec<InjuryModifier> {
     if trigger == InjuryTrigger::FallbackInjuryStory {
         return Vec::new();
     }
@@ -4274,11 +4433,17 @@ fn compose_injury_body(trigger: InjuryTrigger, ctx: &InjuryStoryContext) -> Stri
     parts.join(" ")
 }
 
-fn compose_injury_story(item: &NewsItem, context: &NewsTabContext) -> Option<ComposedRaceStory> {
+fn compose_injury_story(
+    item: &NewsItem,
+    context: &NewsTabContext,
+) -> Result<Option<ComposedRaceStory>, String> {
     let driver_name = item
         .driver_id
         .as_ref()
-        .and_then(|id| context.driver_names.get(id).cloned())?;
+        .and_then(|id| context.driver_names.get(id).cloned());
+    let Some(driver_name) = driver_name else {
+        return Ok(None);
+    };
     let category_name = item.categoria_nome.clone().or_else(|| {
         item.categoria_id
             .as_ref()
@@ -4296,8 +4461,13 @@ fn compose_injury_story(item: &NewsItem, context: &NewsTabContext) -> Option<Com
                 category_id,
                 driver_id,
                 round,
-            )
-            .or_else(|| context.driver_positions.get(&format!("{category_id}:{driver_id}")).copied())
+            )?
+            .or_else(|| {
+                context
+                    .driver_positions
+                    .get(&format!("{category_id}:{driver_id}"))
+                    .copied()
+            })
         }
         (Some(category_id), Some(driver_id), _) => context
             .driver_positions
@@ -4310,7 +4480,12 @@ fn compose_injury_story(item: &NewsItem, context: &NewsTabContext) -> Option<Com
             .race_labels
             .get(&format!("{category_id}:{}", round + 1))
             .cloned()
-            .or_else(|| context.next_race_by_category.get(category_id).map(|r| r.label.clone())),
+            .or_else(|| {
+                context
+                    .next_race_by_category
+                    .get(category_id)
+                    .map(|r| r.label.clone())
+            }),
         (Some(category_id), _) => context
             .next_race_by_category
             .get(category_id)
@@ -4332,13 +4507,13 @@ fn compose_injury_story(item: &NewsItem, context: &NewsTabContext) -> Option<Com
 
     let trigger = detect_injury_trigger(&ctx);
     if trigger == InjuryTrigger::FallbackInjuryStory {
-        return None;
+        return Ok(None);
     }
 
-    Some(ComposedRaceStory {
+    Ok(Some(ComposedRaceStory {
         headline: compose_injury_headline(trigger, &ctx),
         body: compose_injury_body(trigger, &ctx),
-    })
+    }))
 }
 
 fn is_mechanical_incident(titulo: &str, texto: &str, has_secondary: bool) -> bool {
@@ -4346,9 +4521,17 @@ fn is_mechanical_incident(titulo: &str, texto: &str, has_secondary: bool) -> boo
         return false;
     }
     let combined = format!("{} {}", titulo.to_lowercase(), texto.to_lowercase());
-    ["quebra", "quebrou", "quebrado", "falha mec", "problema mec", "pane", "motor"]
-        .iter()
-        .any(|kw| combined.contains(kw))
+    [
+        "quebra",
+        "quebrou",
+        "quebrado",
+        "falha mec",
+        "problema mec",
+        "pane",
+        "motor",
+    ]
+    .iter()
+    .any(|kw| combined.contains(kw))
 }
 
 fn is_dnf_incident_text(titulo: &str, texto: &str) -> bool {
@@ -4395,7 +4578,10 @@ fn compose_incident_headline(trigger: IncidentTrigger, ctx: &IncidentStoryContex
 
 /// Compõe uma story editorial para um NewsItem de Incidente.
 /// Retorna None se o trigger for Fallback ou o contexto for insuficiente.
-fn compose_incident_story(item: &NewsItem, context: &NewsTabContext) -> Option<ComposedRaceStory> {
+fn compose_incident_story(
+    item: &NewsItem,
+    context: &NewsTabContext,
+) -> Result<Option<ComposedRaceStory>, String> {
     let driver_name = item
         .driver_id
         .as_ref()
@@ -4415,8 +4601,10 @@ fn compose_incident_story(item: &NewsItem, context: &NewsTabContext) -> Option<C
         item.driver_id.as_deref(),
         item.rodada,
     ) {
-        (Some(category_id), Some(driver_id), Some(round)) if round >= 1 && round != completed_round => {
-            historical_incident_facts_for_round(context, category_id, driver_id, round)
+        (Some(category_id), Some(driver_id), Some(round))
+            if round >= 1 && round != completed_round =>
+        {
+            historical_incident_facts_for_round(context, category_id, driver_id, round)?
         }
         (Some(category_id), Some(driver_id), _) => context
             .latest_incident_facts
@@ -4450,12 +4638,12 @@ fn compose_incident_story(item: &NewsItem, context: &NewsTabContext) -> Option<C
 
     let trigger = detect_incident_trigger(&ctx, &item.importancia);
     if trigger == IncidentTrigger::FallbackIncidentStory {
-        return None;
+        return Ok(None);
     }
 
     let headline = compose_incident_headline(trigger, &ctx);
     let body = compose_incident_body(trigger, &ctx);
-    Some(ComposedRaceStory { headline, body })
+    Ok(Some(ComposedRaceStory { headline, body }))
 }
 
 fn build_hero(
@@ -4815,13 +5003,12 @@ mod tests {
         let base_dir = create_test_career_dir("news_bootstrap");
         let bootstrap =
             get_news_tab_bootstrap_in_base_dir(&base_dir, "career_001").expect("bootstrap");
-        let bootstrap_json = serde_json::to_value(&bootstrap).expect("bootstrap json");
 
         assert_eq!(bootstrap.default_scope_type, "category");
         assert_eq!(bootstrap.default_scope_id, "mazda_rookie");
         assert_eq!(
-            bootstrap_json.get("default_primary_filter"),
-            Some(&Value::Null)
+            bootstrap.default_primary_filter.as_deref(),
+            Some("Corridas")
         );
         assert!(bootstrap
             .scopes
@@ -4985,6 +5172,94 @@ mod tests {
     }
 
     #[test]
+    fn test_news_tab_snapshot_rivalry_context_requires_both_drivers_in_story() {
+        let base_dir = create_test_career_dir("news_snapshot_rivalry_strict");
+        seed_news_items(&base_dir, "career_001");
+
+        let snapshot = get_news_tab_snapshot_in_base_dir(
+            &base_dir,
+            "career_001",
+            NewsTabSnapshotRequest {
+                scope_type: "category".to_string(),
+                scope_id: "mazda_rookie".to_string(),
+                scope_class: None,
+                primary_filter: Some("Pilotos".to_string()),
+                context_type: Some("rivalry".to_string()),
+                context_id: Some("P001|P002".to_string()),
+            },
+        )
+        .expect("snapshot");
+
+        assert!(snapshot.stories.iter().any(|story| {
+            story
+                .title
+                .contains("Thomas Baker e Kenji Sato entram em rota de colisao")
+        }));
+        assert!(!snapshot.stories.iter().any(|story| {
+            story
+                .title
+                .contains("Thomas Baker abandona a corrida apos quebra")
+        }));
+
+        let _ = fs::remove_dir_all(base_dir);
+    }
+
+    #[test]
+    fn test_news_tab_bootstrap_returns_error_when_player_calendar_is_invalid() {
+        let base_dir = create_test_career_dir("news_bootstrap_invalid_calendar");
+        let config = AppConfig::load_or_default(&base_dir);
+        let db_path = config.saves_dir().join("career_001").join("career.db");
+        let db = Database::open_existing(&db_path).expect("db");
+        db.conn
+            .execute(
+                "UPDATE calendar SET status = 'status_quebrado' WHERE categoria = 'mazda_rookie'",
+                [],
+            )
+            .expect("corrupt calendar status");
+
+        let err = get_news_tab_bootstrap_in_base_dir(&base_dir, "career_001")
+            .expect_err("bootstrap should fail");
+        assert!(
+            err.contains("RaceStatus inválido"),
+            "erro deve denunciar calendario invalido: {err}"
+        );
+
+        let _ = fs::remove_dir_all(base_dir);
+    }
+
+    #[test]
+    fn test_news_tab_snapshot_returns_error_when_historical_race_queries_fail() {
+        let base_dir = create_test_career_dir("news_snapshot_history_broken");
+        seed_news_items(&base_dir, "career_001");
+        let config = AppConfig::load_or_default(&base_dir);
+        let db_path = config.saves_dir().join("career_001").join("career.db");
+        let db = Database::open_existing(&db_path).expect("db");
+        db.conn
+            .execute_batch("DROP TABLE race_results;")
+            .expect("drop race_results");
+
+        let err = get_news_tab_snapshot_in_base_dir(
+            &base_dir,
+            "career_001",
+            NewsTabSnapshotRequest {
+                scope_type: "category".to_string(),
+                scope_id: "mazda_rookie".to_string(),
+                scope_class: None,
+                primary_filter: Some("Corridas".to_string()),
+                context_type: Some("race".to_string()),
+                context_id: Some("R001".to_string()),
+            },
+        )
+        .expect_err("snapshot should fail");
+        assert!(
+            err.contains("race_results") || err.contains("historic"),
+            "erro deve denunciar historico indisponivel: {err}"
+        );
+
+        let _ = fs::remove_dir_all(base_dir);
+    }
+
+    #[test]
     fn test_news_tab_snapshot_for_famous_scope_uses_reduced_filters() {
         let base_dir = create_test_career_dir("news_snapshot_famous");
         seed_news_items(&base_dir, "career_001");
@@ -5063,7 +5338,6 @@ mod tests {
         let _ = fs::remove_dir_all(base_dir);
     }
 
-
     mod race_editorial_tests {
         use super::super::{
             compose_race_body, detect_race_modifiers, detect_race_trigger, lead_change_bucket,
@@ -5091,11 +5365,18 @@ mod tests {
         }
 
         fn ctx_streak(position: Option<i32>, streak: u32) -> RaceStoryContext {
-            RaceStoryContext { win_streak: streak, ..ctx(position) }
+            RaceStoryContext {
+                win_streak: streak,
+                ..ctx(position)
+            }
         }
 
         fn ctx_seed(position: Option<i32>, streak: u32, seed: u64) -> RaceStoryContext {
-            RaceStoryContext { win_streak: streak, item_seed: seed, ..ctx(position) }
+            RaceStoryContext {
+                win_streak: streak,
+                item_seed: seed,
+                ..ctx(position)
+            }
         }
 
         fn ctx_lead_change(streak: u32) -> RaceStoryContext {
@@ -5111,48 +5392,85 @@ mod tests {
 
         #[test]
         fn test_detect_leader_won() {
-            assert_eq!(detect_race_trigger(&ctx(Some(1)), &NewsImportance::Alta), RaceTrigger::LeaderWon);
-            assert_eq!(detect_race_trigger(&ctx(Some(1)), &NewsImportance::Destaque), RaceTrigger::LeaderWon);
+            assert_eq!(
+                detect_race_trigger(&ctx(Some(1)), &NewsImportance::Alta),
+                RaceTrigger::LeaderWon
+            );
+            assert_eq!(
+                detect_race_trigger(&ctx(Some(1)), &NewsImportance::Destaque),
+                RaceTrigger::LeaderWon
+            );
         }
 
         #[test]
         fn test_detect_leader_had_bad_result() {
-            assert_eq!(detect_race_trigger(&ctx(Some(1)), &NewsImportance::Baixa), RaceTrigger::LeaderHadBadResult);
-            assert_eq!(detect_race_trigger(&ctx(Some(1)), &NewsImportance::Media), RaceTrigger::LeaderHadBadResult);
+            assert_eq!(
+                detect_race_trigger(&ctx(Some(1)), &NewsImportance::Baixa),
+                RaceTrigger::LeaderHadBadResult
+            );
+            assert_eq!(
+                detect_race_trigger(&ctx(Some(1)), &NewsImportance::Media),
+                RaceTrigger::LeaderHadBadResult
+            );
         }
 
         #[test]
         fn test_detect_vice_won() {
-            assert_eq!(detect_race_trigger(&ctx(Some(2)), &NewsImportance::Alta), RaceTrigger::ViceWon);
+            assert_eq!(
+                detect_race_trigger(&ctx(Some(2)), &NewsImportance::Alta),
+                RaceTrigger::ViceWon
+            );
         }
 
         #[test]
         fn test_detect_midfield_won() {
-            assert_eq!(detect_race_trigger(&ctx(Some(7)), &NewsImportance::Destaque), RaceTrigger::MidfieldDriverWon);
-            assert_eq!(detect_race_trigger(&ctx(Some(5)), &NewsImportance::Alta), RaceTrigger::MidfieldDriverWon);
+            assert_eq!(
+                detect_race_trigger(&ctx(Some(7)), &NewsImportance::Destaque),
+                RaceTrigger::MidfieldDriverWon
+            );
+            assert_eq!(
+                detect_race_trigger(&ctx(Some(5)), &NewsImportance::Alta),
+                RaceTrigger::MidfieldDriverWon
+            );
         }
 
         #[test]
         fn test_detect_fallback_when_no_position() {
-            assert_eq!(detect_race_trigger(&ctx(None), &NewsImportance::Alta), RaceTrigger::FallbackRaceResult);
+            assert_eq!(
+                detect_race_trigger(&ctx(None), &NewsImportance::Alta),
+                RaceTrigger::FallbackRaceResult
+            );
         }
 
         #[test]
         fn test_detect_fallback_for_position_3_or_4() {
-            assert_eq!(detect_race_trigger(&ctx(Some(3)), &NewsImportance::Alta), RaceTrigger::FallbackRaceResult);
-            assert_eq!(detect_race_trigger(&ctx(Some(4)), &NewsImportance::Destaque), RaceTrigger::FallbackRaceResult);
+            assert_eq!(
+                detect_race_trigger(&ctx(Some(3)), &NewsImportance::Alta),
+                RaceTrigger::FallbackRaceResult
+            );
+            assert_eq!(
+                detect_race_trigger(&ctx(Some(4)), &NewsImportance::Destaque),
+                RaceTrigger::FallbackRaceResult
+            );
         }
 
         #[test]
         fn test_fallback_trigger_body_is_none() {
             let result = compose_race_body(RaceTrigger::FallbackRaceResult, &ctx(Some(3)));
-            assert!(result.is_none(), "FallbackRaceResult deve retornar None para body");
+            assert!(
+                result.is_none(),
+                "FallbackRaceResult deve retornar None para body"
+            );
         }
 
         #[test]
         fn test_body_mentions_driver_name() {
             // LeaderHadBadResult é intencionalmente impessoal ("O líder do campeonato...")
-            for trigger in [RaceTrigger::LeaderWon, RaceTrigger::ViceWon, RaceTrigger::MidfieldDriverWon] {
+            for trigger in [
+                RaceTrigger::LeaderWon,
+                RaceTrigger::ViceWon,
+                RaceTrigger::MidfieldDriverWon,
+            ] {
                 let body = compose_race_body(trigger, &ctx(Some(1))).expect("body should exist");
                 assert!(
                     body.contains("Carlos Mendes"),
@@ -5171,7 +5489,10 @@ mod tests {
                 RaceTrigger::LeaderHadBadResult,
             ] {
                 let body = compose_race_body(trigger, &ctx(Some(1))).expect("body should exist");
-                assert_ne!(body, headline, "{trigger:?}: body não deve ser idêntico à headline");
+                assert_ne!(
+                    body, headline,
+                    "{trigger:?}: body não deve ser idêntico à headline"
+                );
             }
         }
 
@@ -5179,10 +5500,10 @@ mod tests {
 
         #[test]
         fn test_streak_bucket_mapping() {
-            assert_eq!(streak_bucket(0),  1,  "0 deve cair no bucket 1");
-            assert_eq!(streak_bucket(1),  1);
-            assert_eq!(streak_bucket(5),  5);
-            assert_eq!(streak_bucket(9),  9);
+            assert_eq!(streak_bucket(0), 1, "0 deve cair no bucket 1");
+            assert_eq!(streak_bucket(1), 1);
+            assert_eq!(streak_bucket(5), 5);
+            assert_eq!(streak_bucket(9), 9);
             assert_eq!(streak_bucket(10), 10);
             assert_eq!(streak_bucket(11), 11, "11 deve cair no bucket especial");
             assert_eq!(streak_bucket(20), 11, "20+ deve cair no bucket especial");
@@ -5191,43 +5512,67 @@ mod tests {
 
         #[test]
         fn test_leader_won_text_changes_with_streak() {
-            let body1  = compose_race_body(RaceTrigger::LeaderWon, &ctx_streak(Some(1), 1)).unwrap();
-            let body3  = compose_race_body(RaceTrigger::LeaderWon, &ctx_streak(Some(1), 3)).unwrap();
-            let body10 = compose_race_body(RaceTrigger::LeaderWon, &ctx_streak(Some(1), 10)).unwrap();
-            let body11 = compose_race_body(RaceTrigger::LeaderWon, &ctx_streak(Some(1), 11)).unwrap();
+            let body1 = compose_race_body(RaceTrigger::LeaderWon, &ctx_streak(Some(1), 1)).unwrap();
+            let body3 = compose_race_body(RaceTrigger::LeaderWon, &ctx_streak(Some(1), 3)).unwrap();
+            let body10 =
+                compose_race_body(RaceTrigger::LeaderWon, &ctx_streak(Some(1), 10)).unwrap();
+            let body11 =
+                compose_race_body(RaceTrigger::LeaderWon, &ctx_streak(Some(1), 11)).unwrap();
 
-            assert_ne!(body1, body3,   "streak 1 e 3 devem gerar textos diferentes");
-            assert_ne!(body3, body10,  "streak 3 e 10 devem gerar textos diferentes");
-            assert_ne!(body10, body11, "streak 10 e 11+ devem gerar textos diferentes");
-            assert_ne!(body1, body11,  "streak 1 e 11+ devem gerar textos diferentes");
+            assert_ne!(body1, body3, "streak 1 e 3 devem gerar textos diferentes");
+            assert_ne!(body3, body10, "streak 3 e 10 devem gerar textos diferentes");
+            assert_ne!(
+                body10, body11,
+                "streak 10 e 11+ devem gerar textos diferentes"
+            );
+            assert_ne!(
+                body1, body11,
+                "streak 1 e 11+ devem gerar textos diferentes"
+            );
         }
 
         #[test]
         fn test_vice_won_text_changes_with_streak() {
-            let body1  = compose_race_body(RaceTrigger::ViceWon, &ctx_streak(Some(2), 1)).unwrap();
-            let body3  = compose_race_body(RaceTrigger::ViceWon, &ctx_streak(Some(2), 3)).unwrap();
+            let body1 = compose_race_body(RaceTrigger::ViceWon, &ctx_streak(Some(2), 1)).unwrap();
+            let body3 = compose_race_body(RaceTrigger::ViceWon, &ctx_streak(Some(2), 3)).unwrap();
             let body10 = compose_race_body(RaceTrigger::ViceWon, &ctx_streak(Some(2), 10)).unwrap();
             let body11 = compose_race_body(RaceTrigger::ViceWon, &ctx_streak(Some(2), 11)).unwrap();
 
-            assert_ne!(body1, body3,   "vice streak 1 e 3 devem gerar textos diferentes");
-            assert_ne!(body3, body10,  "vice streak 3 e 10 devem gerar textos diferentes");
-            assert_ne!(body10, body11, "vice streak 10 e 11+ devem gerar textos diferentes");
-            assert_ne!(body1, body11,  "vice streak 1 e 11+ devem gerar textos diferentes");
+            assert_ne!(
+                body1, body3,
+                "vice streak 1 e 3 devem gerar textos diferentes"
+            );
+            assert_ne!(
+                body3, body10,
+                "vice streak 3 e 10 devem gerar textos diferentes"
+            );
+            assert_ne!(
+                body10, body11,
+                "vice streak 10 e 11+ devem gerar textos diferentes"
+            );
+            assert_ne!(
+                body1, body11,
+                "vice streak 1 e 11+ devem gerar textos diferentes"
+            );
         }
 
         #[test]
         fn test_bucket_11plus_uses_special_tone() {
             // O bucket 11+ deve usar linguagem histórica/contemplativa distinta dos outros
-            let body_leader = compose_race_body(RaceTrigger::LeaderWon, &ctx_streak(Some(1), 15)).unwrap();
-            let body_vice   = compose_race_body(RaceTrigger::ViceWon,   &ctx_streak(Some(2), 15)).unwrap();
+            let body_leader =
+                compose_race_body(RaceTrigger::LeaderWon, &ctx_streak(Some(1), 15)).unwrap();
+            let body_vice =
+                compose_race_body(RaceTrigger::ViceWon, &ctx_streak(Some(2), 15)).unwrap();
 
             // Deve ser diferente de bucket 1 e bucket 10
-            let leader1  = compose_race_body(RaceTrigger::LeaderWon, &ctx_streak(Some(1), 1)).unwrap();
-            let leader10 = compose_race_body(RaceTrigger::LeaderWon, &ctx_streak(Some(1), 10)).unwrap();
+            let leader1 =
+                compose_race_body(RaceTrigger::LeaderWon, &ctx_streak(Some(1), 1)).unwrap();
+            let leader10 =
+                compose_race_body(RaceTrigger::LeaderWon, &ctx_streak(Some(1), 10)).unwrap();
             assert_ne!(body_leader, leader1);
             assert_ne!(body_leader, leader10);
 
-            let vice1  = compose_race_body(RaceTrigger::ViceWon, &ctx_streak(Some(2), 1)).unwrap();
+            let vice1 = compose_race_body(RaceTrigger::ViceWon, &ctx_streak(Some(2), 1)).unwrap();
             let vice10 = compose_race_body(RaceTrigger::ViceWon, &ctx_streak(Some(2), 10)).unwrap();
             assert_ne!(body_vice, vice1);
             assert_ne!(body_vice, vice10);
@@ -5238,11 +5583,17 @@ mod tests {
             // seed par e ímpar devem produzir textos diferentes (2 variantes por bucket)
             let v0 = compose_race_body(RaceTrigger::LeaderWon, &ctx_seed(Some(1), 5, 0)).unwrap();
             let v1 = compose_race_body(RaceTrigger::LeaderWon, &ctx_seed(Some(1), 5, 1)).unwrap();
-            assert_ne!(v0, v1, "variante 0 e variante 1 do bucket 5 devem ser diferentes");
+            assert_ne!(
+                v0, v1,
+                "variante 0 e variante 1 do bucket 5 devem ser diferentes"
+            );
 
             let v0v = compose_race_body(RaceTrigger::ViceWon, &ctx_seed(Some(2), 5, 0)).unwrap();
             let v1v = compose_race_body(RaceTrigger::ViceWon, &ctx_seed(Some(2), 5, 1)).unwrap();
-            assert_ne!(v0v, v1v, "vice variante 0 e variante 1 do bucket 5 devem ser diferentes");
+            assert_ne!(
+                v0v, v1v,
+                "vice variante 0 e variante 1 do bucket 5 devem ser diferentes"
+            );
         }
 
         // ── Parte 3: mudança de liderança ────────────────────────────────────
@@ -5265,22 +5616,36 @@ mod tests {
                 is_lead_change: false,
                 ..ctx(Some(2))
             };
-            assert_eq!(detect_race_trigger(&ctx, &NewsImportance::Alta), RaceTrigger::ViceWon);
+            assert_eq!(
+                detect_race_trigger(&ctx, &NewsImportance::Alta),
+                RaceTrigger::ViceWon
+            );
         }
 
         #[test]
         fn test_vice_wins_and_takes_lead_fires_lead_changed() {
             // Piloto assume o topo do campeonato → LeadChanged tem prioridade
             let ctx = ctx_lead_change(1);
-            assert_eq!(detect_race_trigger(&ctx, &NewsImportance::Alta), RaceTrigger::LeadChanged);
-            assert_eq!(detect_race_trigger(&ctx, &NewsImportance::Destaque), RaceTrigger::LeadChanged);
+            assert_eq!(
+                detect_race_trigger(&ctx, &NewsImportance::Alta),
+                RaceTrigger::LeadChanged
+            );
+            assert_eq!(
+                detect_race_trigger(&ctx, &NewsImportance::Destaque),
+                RaceTrigger::LeadChanged
+            );
         }
 
         #[test]
         fn test_lead_changed_body_differs_from_vice_won() {
-            let lead_body = compose_race_body(RaceTrigger::LeadChanged, &ctx_lead_change(1)).unwrap();
-            let vice_body = compose_race_body(RaceTrigger::ViceWon, &ctx_streak(Some(2), 1)).unwrap();
-            assert_ne!(lead_body, vice_body, "LeadChanged e ViceWon devem ter textos distintos");
+            let lead_body =
+                compose_race_body(RaceTrigger::LeadChanged, &ctx_lead_change(1)).unwrap();
+            let vice_body =
+                compose_race_body(RaceTrigger::ViceWon, &ctx_streak(Some(2), 1)).unwrap();
+            assert_ne!(
+                lead_body, vice_body,
+                "LeadChanged e ViceWon devem ter textos distintos"
+            );
         }
 
         #[test]
@@ -5295,7 +5660,8 @@ mod tests {
         #[test]
         fn test_lead_changed_body_mentions_driver() {
             for streak in [1u32, 3, 5] {
-                let body = compose_race_body(RaceTrigger::LeadChanged, &ctx_lead_change(streak)).unwrap();
+                let body =
+                    compose_race_body(RaceTrigger::LeadChanged, &ctx_lead_change(streak)).unwrap();
                 assert!(
                     body.contains("Carlos Mendes"),
                     "streak {streak}: body de LeadChanged deve mencionar o piloto: {body}",
@@ -5311,7 +5677,10 @@ mod tests {
 
             println!("\n=== LEAD CHANGE PROGRESSION ===");
             for &streak in &checkpoints {
-                let ctx = RaceStoryContext { item_seed: 0, ..ctx_lead_change(streak) };
+                let ctx = RaceStoryContext {
+                    item_seed: 0,
+                    ..ctx_lead_change(streak)
+                };
                 let body = compose_race_body(RaceTrigger::LeadChanged, &ctx).unwrap_or_default();
                 println!("streak={streak}: {body}");
             }
@@ -5326,7 +5695,11 @@ mod tests {
             println!("\n=== LEADER WIN STREAK PROGRESSION ===");
             for &streak in &checkpoints {
                 let ctx = ctx_seed(Some(1), streak, 0);
-                let label = if streak >= 11 { "11+".to_string() } else { streak.to_string() };
+                let label = if streak >= 11 {
+                    "11+".to_string()
+                } else {
+                    streak.to_string()
+                };
                 let body = compose_race_body(RaceTrigger::LeaderWon, &ctx).unwrap_or_default();
                 println!("streak={label}: {body}");
             }
@@ -5334,7 +5707,11 @@ mod tests {
             println!("\n=== VICE WIN STREAK PROGRESSION ===");
             for &streak in &checkpoints {
                 let ctx = ctx_seed(Some(2), streak, 0);
-                let label = if streak >= 11 { "11+".to_string() } else { streak.to_string() };
+                let label = if streak >= 11 {
+                    "11+".to_string()
+                } else {
+                    streak.to_string()
+                };
                 let body = compose_race_body(RaceTrigger::ViceWon, &ctx).unwrap_or_default();
                 println!("streak={label}: {body}");
             }
@@ -5369,42 +5746,66 @@ mod tests {
 
         #[test]
         fn test_dominant_win_modifier() {
-            let ctx = RaceStoryContext { is_dominant_win: true, ..base_ctx() };
+            let ctx = RaceStoryContext {
+                is_dominant_win: true,
+                ..base_ctx()
+            };
             let mods = detect_race_modifiers(&ctx, RaceTrigger::LeaderWon);
             assert_eq!(mods, vec![RaceModifier::DominantWin]);
         }
 
         #[test]
         fn test_close_rival_modifier() {
-            let ctx = RaceStoryContext { rival_finish_position: Some(2), ..base_ctx() };
+            let ctx = RaceStoryContext {
+                rival_finish_position: Some(2),
+                ..base_ctx()
+            };
             let mods = detect_race_modifiers(&ctx, RaceTrigger::LeaderWon);
             assert_eq!(mods, vec![RaceModifier::MainRivalFinishedClose]);
         }
 
         #[test]
         fn test_close_rival_position_5_is_close() {
-            let ctx = RaceStoryContext { rival_finish_position: Some(5), ..base_ctx() };
+            let ctx = RaceStoryContext {
+                rival_finish_position: Some(5),
+                ..base_ctx()
+            };
             let mods = detect_race_modifiers(&ctx, RaceTrigger::LeaderWon);
             assert_eq!(mods, vec![RaceModifier::MainRivalFinishedClose]);
         }
 
         #[test]
         fn test_far_rival_position_6_is_far() {
-            let ctx = RaceStoryContext { rival_finish_position: Some(6), ..base_ctx() };
+            let ctx = RaceStoryContext {
+                rival_finish_position: Some(6),
+                ..base_ctx()
+            };
             let mods = detect_race_modifiers(&ctx, RaceTrigger::LeaderWon);
-            assert_eq!(mods, vec![RaceModifier::MainRivalFinishedFar { position: 6 }]);
+            assert_eq!(
+                mods,
+                vec![RaceModifier::MainRivalFinishedFar { position: 6 }]
+            );
         }
 
         #[test]
         fn test_far_rival_modifier() {
-            let ctx = RaceStoryContext { rival_finish_position: Some(8), ..base_ctx() };
+            let ctx = RaceStoryContext {
+                rival_finish_position: Some(8),
+                ..base_ctx()
+            };
             let mods = detect_race_modifiers(&ctx, RaceTrigger::LeaderWon);
-            assert_eq!(mods, vec![RaceModifier::MainRivalFinishedFar { position: 8 }]);
+            assert_eq!(
+                mods,
+                vec![RaceModifier::MainRivalFinishedFar { position: 8 }]
+            );
         }
 
         #[test]
         fn test_dnf_rival_modifier() {
-            let ctx = RaceStoryContext { rival_dnf: true, ..base_ctx() };
+            let ctx = RaceStoryContext {
+                rival_dnf: true,
+                ..base_ctx()
+            };
             let mods = detect_race_modifiers(&ctx, RaceTrigger::LeaderWon);
             assert_eq!(mods, vec![RaceModifier::MainRivalDnf]);
         }
@@ -5460,7 +5861,10 @@ mod tests {
 
         #[test]
         fn test_no_modifiers_for_fallback_trigger() {
-            let ctx = RaceStoryContext { is_dominant_win: true, ..base_ctx() };
+            let ctx = RaceStoryContext {
+                is_dominant_win: true,
+                ..base_ctx()
+            };
             assert!(detect_race_modifiers(&ctx, RaceTrigger::FallbackRaceResult).is_empty());
         }
 
@@ -5473,14 +5877,20 @@ mod tests {
         #[test]
         fn test_dominant_win_fires_for_midfield_trigger() {
             // Parte 6: MidfieldDriverWon agora é elegível para DominantWin
-            let ctx = RaceStoryContext { is_dominant_win: true, ..base_ctx() };
+            let ctx = RaceStoryContext {
+                is_dominant_win: true,
+                ..base_ctx()
+            };
             let mods = detect_race_modifiers(&ctx, RaceTrigger::MidfieldDriverWon);
             assert_eq!(mods, vec![RaceModifier::DominantWin]);
         }
 
         #[test]
         fn test_no_modifiers_for_bad_result_trigger() {
-            let ctx = RaceStoryContext { is_dominant_win: true, ..base_ctx() };
+            let ctx = RaceStoryContext {
+                is_dominant_win: true,
+                ..base_ctx()
+            };
             assert!(detect_race_modifiers(&ctx, RaceTrigger::LeaderHadBadResult).is_empty());
         }
 
@@ -5503,13 +5913,19 @@ mod tests {
                 ..base_ctx()
             };
             let mods = detect_race_modifiers(&ctx, RaceTrigger::ViceWon);
-            assert_eq!(mods, vec![RaceModifier::MainRivalFinishedFar { position: 7 }]);
+            assert_eq!(
+                mods,
+                vec![RaceModifier::MainRivalFinishedFar { position: 7 }]
+            );
         }
 
         #[test]
         fn test_body_with_modifier_is_longer_than_without() {
             let plain = compose_race_body(RaceTrigger::LeaderWon, &base_ctx()).unwrap();
-            let ctx = RaceStoryContext { rival_dnf: true, ..base_ctx() };
+            let ctx = RaceStoryContext {
+                rival_dnf: true,
+                ..base_ctx()
+            };
             let with_mod = compose_race_body(RaceTrigger::LeaderWon, &ctx).unwrap();
             assert!(
                 with_mod.len() > plain.len(),
@@ -5519,7 +5935,10 @@ mod tests {
 
         #[test]
         fn test_body_with_two_modifiers_is_longer_than_one() {
-            let ctx1 = RaceStoryContext { rival_dnf: true, ..base_ctx() };
+            let ctx1 = RaceStoryContext {
+                rival_dnf: true,
+                ..base_ctx()
+            };
             let ctx2 = RaceStoryContext {
                 rival_dnf: true,
                 is_dominant_win: true,
@@ -5527,7 +5946,10 @@ mod tests {
             };
             let body1 = compose_race_body(RaceTrigger::LeaderWon, &ctx1).unwrap();
             let body2 = compose_race_body(RaceTrigger::LeaderWon, &ctx2).unwrap();
-            assert!(body2.len() > body1.len(), "body com 2 modificadores deve ser mais longo que 1");
+            assert!(
+                body2.len() > body1.len(),
+                "body com 2 modificadores deve ser mais longo que 1"
+            );
         }
 
         /// Dump de revisão — não é assertion, só imprime para leitura humana.
@@ -5540,20 +5962,50 @@ mod tests {
                 (RaceTrigger::ViceWon, "ViceWon"),
             ];
             let scenarios: &[(&str, RaceStoryContext)] = &[
-                ("DominantWin", RaceStoryContext { is_dominant_win: true, ..base_ctx() }),
-                ("RivalClose(3)", RaceStoryContext { rival_finish_position: Some(3), ..base_ctx() }),
-                ("RivalFar(8)", RaceStoryContext { rival_finish_position: Some(8), ..base_ctx() }),
-                ("RivalDnf", RaceStoryContext { rival_dnf: true, ..base_ctx() }),
-                ("DnfPlusDominant", RaceStoryContext {
-                    rival_dnf: true,
-                    is_dominant_win: true,
-                    ..base_ctx()
-                }),
-                ("FarPlusDominant", RaceStoryContext {
-                    rival_finish_position: Some(9),
-                    is_dominant_win: true,
-                    ..base_ctx()
-                }),
+                (
+                    "DominantWin",
+                    RaceStoryContext {
+                        is_dominant_win: true,
+                        ..base_ctx()
+                    },
+                ),
+                (
+                    "RivalClose(3)",
+                    RaceStoryContext {
+                        rival_finish_position: Some(3),
+                        ..base_ctx()
+                    },
+                ),
+                (
+                    "RivalFar(8)",
+                    RaceStoryContext {
+                        rival_finish_position: Some(8),
+                        ..base_ctx()
+                    },
+                ),
+                (
+                    "RivalDnf",
+                    RaceStoryContext {
+                        rival_dnf: true,
+                        ..base_ctx()
+                    },
+                ),
+                (
+                    "DnfPlusDominant",
+                    RaceStoryContext {
+                        rival_dnf: true,
+                        is_dominant_win: true,
+                        ..base_ctx()
+                    },
+                ),
+                (
+                    "FarPlusDominant",
+                    RaceStoryContext {
+                        rival_finish_position: Some(9),
+                        is_dominant_win: true,
+                        ..base_ctx()
+                    },
+                ),
             ];
             println!("\n=== RACE MODIFIERS DUMP ===");
             for (trigger, trigger_name) in &triggers {
@@ -5572,28 +6024,40 @@ mod tests {
 
         #[test]
         fn test_pole_plus_win_modifier() {
-            let ctx = RaceStoryContext { pole_plus_win: true, ..base_ctx() };
+            let ctx = RaceStoryContext {
+                pole_plus_win: true,
+                ..base_ctx()
+            };
             let mods = detect_race_modifiers(&ctx, RaceTrigger::LeaderWon);
             assert_eq!(mods, vec![RaceModifier::PolePlusWin]);
         }
 
         #[test]
         fn test_recovery_win_modifier() {
-            let ctx = RaceStoryContext { recovery_win: true, ..base_ctx() };
+            let ctx = RaceStoryContext {
+                recovery_win: true,
+                ..base_ctx()
+            };
             let mods = detect_race_modifiers(&ctx, RaceTrigger::LeaderWon);
             assert_eq!(mods, vec![RaceModifier::RecoveryWin]);
         }
 
         #[test]
         fn test_first_win_of_season_modifier() {
-            let ctx = RaceStoryContext { first_win_of_season: true, ..base_ctx() };
+            let ctx = RaceStoryContext {
+                first_win_of_season: true,
+                ..base_ctx()
+            };
             let mods = detect_race_modifiers(&ctx, RaceTrigger::LeaderWon);
             assert_eq!(mods, vec![RaceModifier::FirstWinOfSeason]);
         }
 
         #[test]
         fn test_first_win_of_career_modifier() {
-            let ctx = RaceStoryContext { first_win_of_career: true, ..base_ctx() };
+            let ctx = RaceStoryContext {
+                first_win_of_career: true,
+                ..base_ctx()
+            };
             let mods = detect_race_modifiers(&ctx, RaceTrigger::LeaderWon);
             assert_eq!(mods, vec![RaceModifier::FirstWinOfCareer]);
         }
@@ -5614,14 +6078,20 @@ mod tests {
         #[test]
         fn test_recovery_win_modifier_for_midfield_trigger() {
             // MidfieldDriverWon agora é elegível para modificadores
-            let ctx = RaceStoryContext { recovery_win: true, ..base_ctx() };
+            let ctx = RaceStoryContext {
+                recovery_win: true,
+                ..base_ctx()
+            };
             let mods = detect_race_modifiers(&ctx, RaceTrigger::MidfieldDriverWon);
             assert_eq!(mods, vec![RaceModifier::RecoveryWin]);
         }
 
         #[test]
         fn test_first_win_of_career_for_midfield_trigger() {
-            let ctx = RaceStoryContext { first_win_of_career: true, ..base_ctx() };
+            let ctx = RaceStoryContext {
+                first_win_of_career: true,
+                ..base_ctx()
+            };
             let mods = detect_race_modifiers(&ctx, RaceTrigger::MidfieldDriverWon);
             assert_eq!(mods, vec![RaceModifier::FirstWinOfCareer]);
         }
@@ -5675,8 +6145,14 @@ mod tests {
         fn test_recovery_win_min_grid_constant() {
             // Grid exatamente no threshold dispara; abaixo não dispara
             // (este teste valida a constante sem depender do DB)
-            assert!(RECOVERY_WIN_MIN_GRID >= 3, "threshold deve ser pelo menos 3");
-            assert!(RECOVERY_WIN_MIN_GRID <= 8, "threshold não deve ser excessivamente alto");
+            assert!(
+                RECOVERY_WIN_MIN_GRID >= 3,
+                "threshold deve ser pelo menos 3"
+            );
+            assert!(
+                RECOVERY_WIN_MIN_GRID <= 8,
+                "threshold não deve ser excessivamente alto"
+            );
         }
 
         #[test]
@@ -5709,7 +6185,10 @@ mod tests {
             for modifier in &new_modifiers {
                 let v0 = compose_modifier_phrase(*modifier, &base_ctx(), 0);
                 let v1 = compose_modifier_phrase(*modifier, &base_ctx(), 1);
-                assert_ne!(v0, v1, "{modifier:?}: variante 0 e variante 1 devem diferir");
+                assert_ne!(
+                    v0, v1,
+                    "{modifier:?}: variante 0 e variante 1 devem diferir"
+                );
             }
         }
 
@@ -5725,7 +6204,11 @@ mod tests {
                 ..base_ctx()
             };
             let mods = detect_race_modifiers(&ctx, RaceTrigger::LeaderWon);
-            assert!(mods.len() <= 2, "nunca deve exceder 2 modificadores: {:?}", mods);
+            assert!(
+                mods.len() <= 2,
+                "nunca deve exceder 2 modificadores: {:?}",
+                mods
+            );
         }
 
         /// Dump de revisão — não é assertion, só imprime para leitura humana.
@@ -5796,7 +6279,7 @@ mod tests {
 
         use super::super::{
             compose_first_win_of_career_body, compose_first_win_of_season_body,
-            compose_shock_win_body, NewsImportance as NewsImportanceAlias, SHOCK_WIN_THRESHOLD,
+            compose_shock_win_body, SHOCK_WIN_THRESHOLD,
         };
 
         fn ctx_first_win_of_career(position: i32) -> RaceStoryContext {
@@ -5950,7 +6433,10 @@ mod tests {
             let midfield_body =
                 compose_race_body(RaceTrigger::MidfieldDriverWon, &midfield_ctx).unwrap();
             let shock_body = compose_race_body(RaceTrigger::ShockWin, &shock_ctx).unwrap();
-            assert_ne!(midfield_body, shock_body, "ShockWin e MidfieldDriverWon devem ter textos distintos");
+            assert_ne!(
+                midfield_body, shock_body,
+                "ShockWin e MidfieldDriverWon devem ter textos distintos"
+            );
         }
 
         #[test]
@@ -6114,11 +6600,15 @@ mod tests {
         // ── Parte 5: story dupla ──────────────────────────────────────────────
 
         use super::super::{
-            compose_leader_bad_result_story, should_generate_second_story,
-            LeaderBadResultContext, LEADER_BAD_RESULT_THRESHOLD,
+            compose_leader_bad_result_story, should_generate_second_story, LeaderBadResultContext,
+            LEADER_BAD_RESULT_THRESHOLD,
         };
 
-        fn leader_bad_ctx(seed: u64, position: Option<i32>, is_dnf: bool) -> LeaderBadResultContext {
+        fn leader_bad_ctx(
+            seed: u64,
+            position: Option<i32>,
+            is_dnf: bool,
+        ) -> LeaderBadResultContext {
             LeaderBadResultContext {
                 leader_name: "Felipe Correa".to_string(),
                 category_name: "GT4".to_string(),
@@ -6144,9 +6634,18 @@ mod tests {
                 rival_finish_position: Some(LEADER_BAD_RESULT_THRESHOLD),
                 ..base_ctx()
             };
-            assert!(!should_generate_second_story(&ctx, RaceTrigger::MidfieldDriverWon));
-            assert!(!should_generate_second_story(&ctx, RaceTrigger::FallbackRaceResult));
-            assert!(!should_generate_second_story(&ctx, RaceTrigger::LeaderHadBadResult));
+            assert!(!should_generate_second_story(
+                &ctx,
+                RaceTrigger::MidfieldDriverWon
+            ));
+            assert!(!should_generate_second_story(
+                &ctx,
+                RaceTrigger::FallbackRaceResult
+            ));
+            assert!(!should_generate_second_story(
+                &ctx,
+                RaceTrigger::LeaderHadBadResult
+            ));
         }
 
         #[test]
@@ -6157,7 +6656,10 @@ mod tests {
                 ..base_ctx()
             };
             assert!(!should_generate_second_story(&ctx, RaceTrigger::ViceWon));
-            assert!(!should_generate_second_story(&ctx, RaceTrigger::LeadChanged));
+            assert!(!should_generate_second_story(
+                &ctx,
+                RaceTrigger::LeadChanged
+            ));
         }
 
         #[test]
@@ -6180,7 +6682,10 @@ mod tests {
 
         #[test]
         fn test_second_story_fires_when_rival_dnf_vice_won() {
-            let ctx = RaceStoryContext { rival_dnf: true, ..base_ctx() };
+            let ctx = RaceStoryContext {
+                rival_dnf: true,
+                ..base_ctx()
+            };
             assert!(should_generate_second_story(&ctx, RaceTrigger::ViceWon));
         }
 
@@ -6196,7 +6701,10 @@ mod tests {
                 ..base_ctx()
             };
             assert!(should_generate_second_story(&ctx_at, RaceTrigger::ViceWon));
-            assert!(!should_generate_second_story(&ctx_below, RaceTrigger::ViceWon));
+            assert!(!should_generate_second_story(
+                &ctx_below,
+                RaceTrigger::ViceWon
+            ));
         }
 
         #[test]
@@ -6256,8 +6764,14 @@ mod tests {
             let ctx1 = leader_bad_ctx(1, Some(9), false);
             let s0 = compose_leader_bad_result_story(&ctx0);
             let s1 = compose_leader_bad_result_story(&ctx1);
-            assert_ne!(s0.body, s1.body, "variante 0 e variante 1 do body devem diferir");
-            assert_ne!(s0.headline, s1.headline, "variante 0 e variante 1 da headline devem diferir");
+            assert_ne!(
+                s0.body, s1.body,
+                "variante 0 e variante 1 do body devem diferir"
+            );
+            assert_ne!(
+                s0.headline, s1.headline,
+                "variante 0 e variante 1 da headline devem diferir"
+            );
         }
 
         /// Dump de revisão — não é assertion, só imprime para leitura humana.
@@ -6316,8 +6830,8 @@ mod tests {
                 } else {
                     RaceTrigger::ViceWon
                 };
-                let story1_body = compose_race_body(trigger, race_ctx)
-                    .unwrap_or_else(|| "None".to_string());
+                let story1_body =
+                    compose_race_body(trigger, race_ctx).unwrap_or_else(|| "None".to_string());
                 println!("  story_1_headline: (do item.titulo)");
                 println!("  story_1_body: {story1_body}");
                 if let Some(lctx) = leader_ctx_opt {
@@ -6369,16 +6883,13 @@ mod tests {
     fn test_news_tab_time_label_uses_round_and_career_date_for_race_news() {
         let base_dir = create_test_career_dir("news_time_label_round");
         seed_news_items(&base_dir, "career_001");
-        let expected_round_label = get_calendar_for_category_in_base_dir(
-            &base_dir,
-            "career_001",
-            "mazda_rookie",
-        )
-        .expect("calendar")
-        .into_iter()
-        .find(|entry| entry.rodada == 1)
-        .and_then(|entry| format_display_date_label(&entry.display_date))
-        .expect("round 1 date");
+        let expected_round_label =
+            get_calendar_for_category_in_base_dir(&base_dir, "career_001", "mazda_rookie")
+                .expect("calendar")
+                .into_iter()
+                .find(|entry| entry.rodada == 1)
+                .and_then(|entry| format_display_date_label(&entry.display_date))
+                .expect("round 1 date");
 
         let snapshot = get_news_tab_snapshot_in_base_dir(
             &base_dir,
@@ -6400,7 +6911,10 @@ mod tests {
             .find(|story| story.title == "Abertura em Okayama esquenta o grid")
             .expect("race story");
 
-        assert_eq!(story.time_label, format!("Rodada 1 · {expected_round_label}"));
+        assert_eq!(
+            story.time_label,
+            format!("Rodada 1 · {expected_round_label}")
+        );
 
         let _ = fs::remove_dir_all(base_dir);
     }
@@ -6492,16 +7006,13 @@ mod tests {
         seed_news_items(&base_dir, "career_001");
         seed_injury_news_item(&base_dir, "career_001");
         advance_active_season_round(&base_dir, "career_001", 3);
-        let expected_next_race = get_calendar_for_category_in_base_dir(
-            &base_dir,
-            "career_001",
-            "mazda_rookie",
-        )
-        .expect("calendar")
-        .into_iter()
-        .find(|entry| entry.rodada == 2)
-        .map(|entry| entry.track_name)
-        .expect("round 2 race");
+        let expected_next_race =
+            get_calendar_for_category_in_base_dir(&base_dir, "career_001", "mazda_rookie")
+                .expect("calendar")
+                .into_iter()
+                .find(|entry| entry.rodada == 2)
+                .map(|entry| entry.track_name)
+                .expect("round 2 race");
 
         let snapshot = get_news_tab_snapshot_in_base_dir(
             &base_dir,
@@ -6583,16 +7094,13 @@ mod tests {
         let base_dir = create_test_career_dir("news_time_label_preseason");
         seed_news_items(&base_dir, "career_001");
         seed_preseason_news_items(&base_dir, "career_001");
-        let first_round_date = get_calendar_for_category_in_base_dir(
-            &base_dir,
-            "career_001",
-            "mazda_rookie",
-        )
-        .expect("calendar")
-        .into_iter()
-        .find(|entry| entry.rodada == 1)
-        .and_then(|entry| parse_iso_date(&entry.display_date))
-        .expect("round 1 date");
+        let first_round_date =
+            get_calendar_for_category_in_base_dir(&base_dir, "career_001", "mazda_rookie")
+                .expect("calendar")
+                .into_iter()
+                .find(|entry| entry.rodada == 1)
+                .and_then(|entry| parse_iso_date(&entry.display_date))
+                .expect("round 1 date");
         let expected_preseason_date = first_round_date - Duration::weeks(1);
 
         let snapshot = get_news_tab_snapshot_in_base_dir(
@@ -6627,8 +7135,8 @@ mod tests {
     }
 
     #[test]
-    fn test_news_tab_snapshot_shared_scope_class_filters_everything_to_the_selected_production_class()
-    {
+    fn test_news_tab_snapshot_shared_scope_class_filters_everything_to_the_selected_production_class(
+    ) {
         let base_dir = create_test_career_dir("news_snapshot_production_scope_class");
         seed_shared_scope_news_items(&base_dir, "career_001");
 
@@ -6722,6 +7230,7 @@ mod tests {
         super::load_career_in_base_dir(base_dir, career_id)
             .expect("career")
             .player_team
+            .expect("player team")
             .id
     }
 
@@ -6980,7 +7489,9 @@ mod tests {
                 tipo: NewsType::Hierarquia,
                 icone: "P".to_string(),
                 titulo: "Thomas Baker cresce internamente depois da abertura".to_string(),
-                texto: "Thomas Baker ganhou moral no paddock depois de um fim de semana muito forte.".to_string(),
+                texto:
+                    "Thomas Baker ganhou moral no paddock depois de um fim de semana muito forte."
+                        .to_string(),
                 rodada: Some(1),
                 semana_pretemporada: None,
                 temporada: season.numero,
@@ -7119,21 +7630,14 @@ mod tests {
         let config = AppConfig::load_or_default(base_dir);
         let db_path = config.saves_dir().join(career_id).join("career.db");
         let db = Database::open_existing(&db_path).expect("db");
+        news_queries::delete_all_news(&db.conn).expect("clear baseline news");
         let season = season_queries::get_active_season(&db.conn)
             .expect("season query")
             .expect("active season");
-        let mazda_team_id = current_team_by_class(
-            base_dir,
-            career_id,
-            "production_challenger",
-            "mazda",
-        );
-        let bmw_team_id = current_team_by_class(
-            base_dir,
-            career_id,
-            "production_challenger",
-            "bmw",
-        );
+        let mazda_team_id =
+            current_team_by_class(base_dir, career_id, "production_challenger", "mazda");
+        let bmw_team_id =
+            current_team_by_class(base_dir, career_id, "production_challenger", "bmw");
 
         news_queries::insert_news_batch(
             &db.conn,
@@ -7389,34 +7893,48 @@ mod tests {
         fn test_driver_damage_body_mentions_driver() {
             let c = ctx(Some("Rodrigo"), None, false, false);
             let body = compose_incident_body(IncidentTrigger::DriverIncidentDamage, &c);
-            assert!(body.contains("Rodrigo"), "body deve mencionar o piloto: {body}");
+            assert!(
+                body.contains("Rodrigo"),
+                "body deve mencionar o piloto: {body}"
+            );
         }
 
         #[test]
         fn test_two_driver_body_mentions_both_drivers() {
             let c = ctx(Some("Rodrigo"), Some("Marcelo"), false, false);
             let body = compose_incident_body(IncidentTrigger::TwoDriverIncident, &c);
-            assert!(body.contains("Rodrigo"), "body deve mencionar o piloto principal: {body}");
-            assert!(body.contains("Marcelo"), "body deve mencionar o piloto secundário: {body}");
+            assert!(
+                body.contains("Rodrigo"),
+                "body deve mencionar o piloto principal: {body}"
+            );
+            assert!(
+                body.contains("Marcelo"),
+                "body deve mencionar o piloto secundário: {body}"
+            );
         }
 
         #[test]
         fn test_mechanical_body_mentions_driver() {
             let c = ctx(Some("Rodrigo"), None, true, false);
             let body = compose_incident_body(IncidentTrigger::MechanicalFailureHitStrongly, &c);
-            assert!(body.contains("Rodrigo"), "body de mecânico deve mencionar o piloto: {body}");
+            assert!(
+                body.contains("Rodrigo"),
+                "body de mecânico deve mencionar o piloto: {body}"
+            );
         }
 
         #[test]
         fn test_still_open_body_mentions_driver() {
             let c = ctx(Some("Rodrigo"), None, false, true);
             let body = compose_incident_body(IncidentTrigger::IncidentStillOpen, &c);
-            assert!(body.contains("Rodrigo"), "body de caso aberto deve mencionar o piloto: {body}");
+            assert!(
+                body.contains("Rodrigo"),
+                "body de caso aberto deve mencionar o piloto: {body}"
+            );
         }
 
         #[test]
         fn test_all_triggers_have_two_body_variants() {
-            let base = ctx(Some("Rodrigo"), Some("Marcelo"), true, true);
             let triggers = [
                 IncidentTrigger::DriverIncidentDamage,
                 IncidentTrigger::TwoDriverIncident,
@@ -7424,11 +7942,20 @@ mod tests {
                 IncidentTrigger::IncidentStillOpen,
             ];
             for trigger in &triggers {
-                let c0 = IncidentStoryContext { item_seed: 0, ..ctx(Some("Rodrigo"), Some("Marcelo"), true, true) };
-                let c1 = IncidentStoryContext { item_seed: 1, ..ctx(Some("Rodrigo"), Some("Marcelo"), true, true) };
+                let c0 = IncidentStoryContext {
+                    item_seed: 0,
+                    ..ctx(Some("Rodrigo"), Some("Marcelo"), true, true)
+                };
+                let c1 = IncidentStoryContext {
+                    item_seed: 1,
+                    ..ctx(Some("Rodrigo"), Some("Marcelo"), true, true)
+                };
                 let b0 = compose_incident_body(*trigger, &c0);
                 let b1 = compose_incident_body(*trigger, &c1);
-                assert_ne!(b0, b1, "{trigger:?}: variante seed=0 e seed=1 devem diferir");
+                assert_ne!(
+                    b0, b1,
+                    "{trigger:?}: variante seed=0 e seed=1 devem diferir"
+                );
             }
         }
 
@@ -7446,15 +7973,24 @@ mod tests {
         fn test_headline_mentions_driver_for_driver_damage() {
             let c = ctx(Some("Rodrigo"), None, false, false);
             let h = compose_incident_headline(IncidentTrigger::DriverIncidentDamage, &c);
-            assert!(h.contains("Rodrigo"), "headline deve mencionar o piloto: {h}");
+            assert!(
+                h.contains("Rodrigo"),
+                "headline deve mencionar o piloto: {h}"
+            );
         }
 
         #[test]
         fn test_headline_mentions_both_drivers_for_two_driver() {
             let c = ctx(Some("Rodrigo"), Some("Marcelo"), false, false);
             let h = compose_incident_headline(IncidentTrigger::TwoDriverIncident, &c);
-            assert!(h.contains("Rodrigo"), "headline deve mencionar piloto principal: {h}");
-            assert!(h.contains("Marcelo"), "headline deve mencionar piloto secundário: {h}");
+            assert!(
+                h.contains("Rodrigo"),
+                "headline deve mencionar piloto principal: {h}"
+            );
+            assert!(
+                h.contains("Marcelo"),
+                "headline deve mencionar piloto secundário: {h}"
+            );
         }
 
         #[test]
@@ -7475,11 +8011,20 @@ mod tests {
                 IncidentTrigger::IncidentStillOpen,
             ];
             for trigger in &triggers {
-                let c0 = IncidentStoryContext { item_seed: 0, ..ctx(Some("Rodrigo"), Some("Marcelo"), true, true) };
-                let c1 = IncidentStoryContext { item_seed: 1, ..ctx(Some("Rodrigo"), Some("Marcelo"), true, true) };
+                let c0 = IncidentStoryContext {
+                    item_seed: 0,
+                    ..ctx(Some("Rodrigo"), Some("Marcelo"), true, true)
+                };
+                let c1 = IncidentStoryContext {
+                    item_seed: 1,
+                    ..ctx(Some("Rodrigo"), Some("Marcelo"), true, true)
+                };
                 let h0 = compose_incident_headline(*trigger, &c0);
                 let h1 = compose_incident_headline(*trigger, &c1);
-                assert_ne!(h0, h1, "{trigger:?}: headline seed=0 e seed=1 devem diferir");
+                assert_ne!(
+                    h0, h1,
+                    "{trigger:?}: headline seed=0 e seed=1 devem diferir"
+                );
             }
         }
 
@@ -7487,33 +8032,57 @@ mod tests {
 
         #[test]
         fn test_is_mechanical_fires_for_quebra_in_titulo() {
-            assert!(is_mechanical_incident("Motor quebrou na reta final", "", false));
+            assert!(is_mechanical_incident(
+                "Motor quebrou na reta final",
+                "",
+                false
+            ));
         }
 
         #[test]
         fn test_is_mechanical_fires_for_motor_in_texto() {
-            assert!(is_mechanical_incident("", "Rodrigo abandona com problema no motor", false));
+            assert!(is_mechanical_incident(
+                "",
+                "Rodrigo abandona com problema no motor",
+                false
+            ));
         }
 
         #[test]
         fn test_is_mechanical_fires_for_pane() {
-            assert!(is_mechanical_incident("Pane elétrica elimina piloto", "", false));
+            assert!(is_mechanical_incident(
+                "Pane elétrica elimina piloto",
+                "",
+                false
+            ));
         }
 
         #[test]
         fn test_is_mechanical_fires_for_falha_mec_prefix() {
-            assert!(is_mechanical_incident("", "falha mecânica destrói chance de pódio", false));
+            assert!(is_mechanical_incident(
+                "",
+                "falha mecânica destrói chance de pódio",
+                false
+            ));
         }
 
         #[test]
         fn test_is_mechanical_does_not_fire_with_secondary_driver() {
             // Se há piloto secundário, é colisão, não mecânico
-            assert!(!is_mechanical_incident("Motor quebrou na batida", "quebra após toque", true));
+            assert!(!is_mechanical_incident(
+                "Motor quebrou na batida",
+                "quebra após toque",
+                true
+            ));
         }
 
         #[test]
         fn test_is_mechanical_does_not_fire_for_generic_text() {
-            assert!(!is_mechanical_incident("Incidente na curva 3", "piloto sai de pista", false));
+            assert!(!is_mechanical_incident(
+                "Incidente na curva 3",
+                "piloto sai de pista",
+                false
+            ));
         }
 
         #[test]
@@ -7572,17 +8141,29 @@ mod tests {
 
         #[test]
         fn test_mechanical_heuristic_matches_motor() {
-            assert!(is_mechanical_incident("Problema no motor afasta piloto", "", false));
+            assert!(is_mechanical_incident(
+                "Problema no motor afasta piloto",
+                "",
+                false
+            ));
         }
 
         #[test]
         fn test_mechanical_heuristic_negative() {
-            assert!(!is_mechanical_incident("Toque entre pilotos", "sairam de pista", false));
+            assert!(!is_mechanical_incident(
+                "Toque entre pilotos",
+                "sairam de pista",
+                false
+            ));
         }
 
         #[test]
         fn test_two_car_overrides_mechanical_heuristic() {
-            assert!(!is_mechanical_incident("quebra no cambio", "outro piloto envolvido", true));
+            assert!(!is_mechanical_incident(
+                "quebra no cambio",
+                "outro piloto envolvido",
+                true
+            ));
         }
 
         #[test]
@@ -7606,7 +8187,10 @@ mod tests {
                 Some(_) => false,
                 None => heuristic_would_say,
             };
-            assert!(!result, "DriverError factual deve anular heuristica mecanica");
+            assert!(
+                !result,
+                "DriverError factual deve anular heuristica mecanica"
+            );
         }
 
         #[test]
@@ -7624,8 +8208,9 @@ mod tests {
 
     mod incident_modifier_tests {
         use super::super::{
-            compose_incident_body, compose_incident_headline, compose_incident_modifier_phrase_polished,
-            detect_incident_modifiers, IncidentModifier, IncidentStoryContext, IncidentTrigger,
+            compose_incident_body, compose_incident_headline,
+            compose_incident_modifier_phrase_polished, detect_incident_modifiers, IncidentModifier,
+            IncidentStoryContext, IncidentTrigger,
         };
 
         fn ctx(
@@ -7654,7 +8239,10 @@ mod tests {
             );
             assert_eq!(
                 mods,
-                vec![IncidentModifier::IncidentCausedDnf, IncidentModifier::LateRaceHit]
+                vec![
+                    IncidentModifier::IncidentCausedDnf,
+                    IncidentModifier::LateRaceHit
+                ]
             );
         }
 
@@ -7673,7 +8261,10 @@ mod tests {
                 &ctx(true, Some("Late"), false, true),
                 IncidentTrigger::TwoDriverIncident,
             );
-            assert!(mods.len() <= 2, "incidente nunca deve exceder dois modificadores: {mods:?}");
+            assert!(
+                mods.len() <= 2,
+                "incidente nunca deve exceder dois modificadores: {mods:?}"
+            );
         }
 
         #[test]
@@ -7877,7 +8468,10 @@ mod tests {
         #[test]
         fn test_market_team_heated_fires_for_alta_with_team_only() {
             assert_eq!(
-                detect_market_trigger(&ctx(None, Some("Equipe Solaris"), false), &NewsImportance::Alta),
+                detect_market_trigger(
+                    &ctx(None, Some("Equipe Solaris"), false),
+                    &NewsImportance::Alta
+                ),
                 MarketTrigger::MarketHeatedAroundTeam
             );
         }
@@ -7897,7 +8491,10 @@ mod tests {
         #[test]
         fn test_concrete_move_fires_for_destaque_non_preseason() {
             assert_eq!(
-                detect_market_trigger(&ctx(Some("Rodrigo"), None, false), &NewsImportance::Destaque),
+                detect_market_trigger(
+                    &ctx(Some("Rodrigo"), None, false),
+                    &NewsImportance::Destaque
+                ),
                 MarketTrigger::ConcreteMoveUnderway
             );
         }
@@ -7905,7 +8502,10 @@ mod tests {
         #[test]
         fn test_concrete_move_fires_for_destaque_with_team() {
             assert_eq!(
-                detect_market_trigger(&ctx(None, Some("Equipe Solaris"), false), &NewsImportance::Destaque),
+                detect_market_trigger(
+                    &ctx(None, Some("Equipe Solaris"), false),
+                    &NewsImportance::Destaque
+                ),
                 MarketTrigger::ConcreteMoveUnderway
             );
         }
@@ -7949,28 +8549,40 @@ mod tests {
         fn test_driver_heated_body_mentions_driver_name() {
             let c = ctx(Some("Rodrigo"), None, false);
             let body = compose_market_body(MarketTrigger::MarketHeatedAroundDriver, &c);
-            assert!(body.contains("Rodrigo"), "body deve mencionar o piloto: {body}");
+            assert!(
+                body.contains("Rodrigo"),
+                "body deve mencionar o piloto: {body}"
+            );
         }
 
         #[test]
         fn test_team_heated_body_mentions_team_name() {
             let c = ctx(None, Some("Equipe Solaris"), false);
             let body = compose_market_body(MarketTrigger::MarketHeatedAroundTeam, &c);
-            assert!(body.contains("Equipe Solaris"), "body deve mencionar a equipe: {body}");
+            assert!(
+                body.contains("Equipe Solaris"),
+                "body deve mencionar a equipe: {body}"
+            );
         }
 
         #[test]
         fn test_concrete_move_body_mentions_subject_when_driver_present() {
             let c = ctx(Some("Rodrigo"), None, false);
             let body = compose_market_body(MarketTrigger::ConcreteMoveUnderway, &c);
-            assert!(body.contains("Rodrigo"), "body de ConcreteMoveUnderway deve mencionar o piloto: {body}");
+            assert!(
+                body.contains("Rodrigo"),
+                "body de ConcreteMoveUnderway deve mencionar o piloto: {body}"
+            );
         }
 
         #[test]
         fn test_preseason_body_mentions_subject_when_driver_present() {
             let c = ctx(Some("Rodrigo"), None, true);
             let body = compose_market_body(MarketTrigger::PreseasonMarketPressure, &c);
-            assert!(body.contains("Rodrigo"), "body de PreseasonMarketPressure deve mencionar o piloto: {body}");
+            assert!(
+                body.contains("Rodrigo"),
+                "body de PreseasonMarketPressure deve mencionar o piloto: {body}"
+            );
         }
 
         #[test]
@@ -7982,11 +8594,20 @@ mod tests {
                 MarketTrigger::PreseasonMarketPressure,
             ];
             for trigger in &triggers {
-                let c0 = MarketStoryContext { item_seed: 0, ..ctx(Some("Rodrigo"), Some("Equipe Solaris"), false) };
-                let c1 = MarketStoryContext { item_seed: 1, ..ctx(Some("Rodrigo"), Some("Equipe Solaris"), false) };
+                let c0 = MarketStoryContext {
+                    item_seed: 0,
+                    ..ctx(Some("Rodrigo"), Some("Equipe Solaris"), false)
+                };
+                let c1 = MarketStoryContext {
+                    item_seed: 1,
+                    ..ctx(Some("Rodrigo"), Some("Equipe Solaris"), false)
+                };
                 let b0 = compose_market_body(*trigger, &c0);
                 let b1 = compose_market_body(*trigger, &c1);
-                assert_ne!(b0, b1, "{trigger:?}: variante seed=0 e seed=1 devem diferir");
+                assert_ne!(
+                    b0, b1,
+                    "{trigger:?}: variante seed=0 e seed=1 devem diferir"
+                );
             }
         }
 
@@ -7994,14 +8615,20 @@ mod tests {
         fn test_concrete_move_body_is_not_empty_without_subject() {
             let c = ctx(None, None, false);
             let body = compose_market_body(MarketTrigger::ConcreteMoveUnderway, &c);
-            assert!(!body.is_empty(), "ConcreteMoveUnderway deve gerar texto mesmo sem driver/team");
+            assert!(
+                !body.is_empty(),
+                "ConcreteMoveUnderway deve gerar texto mesmo sem driver/team"
+            );
         }
 
         #[test]
         fn test_preseason_body_is_not_empty_without_subject() {
             let c = ctx(None, None, true);
             let body = compose_market_body(MarketTrigger::PreseasonMarketPressure, &c);
-            assert!(!body.is_empty(), "PreseasonMarketPressure deve gerar texto mesmo sem driver/team");
+            assert!(
+                !body.is_empty(),
+                "PreseasonMarketPressure deve gerar texto mesmo sem driver/team"
+            );
         }
 
         // ── Parte 11: modificadores de Mercado ───────────────────────────────
@@ -8035,8 +8662,14 @@ mod tests {
                 MarketTrigger::PreseasonMarketPressure,
             ];
             for trigger in &triggers {
-                let c0 = MarketStoryContext { item_seed: 0, ..ctx(Some("Rodrigo"), Some("Equipe Solaris"), false) };
-                let c1 = MarketStoryContext { item_seed: 1, ..ctx(Some("Rodrigo"), Some("Equipe Solaris"), false) };
+                let c0 = MarketStoryContext {
+                    item_seed: 0,
+                    ..ctx(Some("Rodrigo"), Some("Equipe Solaris"), false)
+                };
+                let c1 = MarketStoryContext {
+                    item_seed: 1,
+                    ..ctx(Some("Rodrigo"), Some("Equipe Solaris"), false)
+                };
                 let h0 = compose_market_headline(*trigger, &c0);
                 let h1 = compose_market_headline(*trigger, &c1);
                 assert_ne!(h0, h1, "{trigger:?}: variante 0 e 1 devem diferir");
@@ -8123,12 +8756,21 @@ mod tests {
             // Tudo ativo: pré-temporada, driver, alta presença → ≤ 2
             let c = ctx_mod(Some("Rodrigo"), None, true, Some(4), Some("elite"));
             let mods = detect_market_modifiers(&c, MarketTrigger::ConcreteMoveUnderway);
-            assert!(mods.len() <= 2, "nunca deve exceder 2 modificadores: {mods:?}");
+            assert!(
+                mods.len() <= 2,
+                "nunca deve exceder 2 modificadores: {mods:?}"
+            );
         }
 
         #[test]
         fn test_market_modifier_phrases_have_two_variants() {
-            let c = ctx_mod(Some("Rodrigo"), Some("Equipe Solaris"), true, Some(4), Some("alta"));
+            let c = ctx_mod(
+                Some("Rodrigo"),
+                Some("Equipe Solaris"),
+                true,
+                Some(4),
+                Some("alta"),
+            );
             let modifiers = [
                 MarketModifier::PreseasonPhaseContext,
                 MarketModifier::DriverCenteredMove,
@@ -8150,10 +8792,18 @@ mod tests {
             let late = ctx_mod(None, None, true, Some(6), None);
             let phrases: Vec<String> = [&early, &mid, &late]
                 .iter()
-                .map(|c| compose_market_modifier_phrase(MarketModifier::PreseasonPhaseContext, c, 0))
+                .map(|c| {
+                    compose_market_modifier_phrase(MarketModifier::PreseasonPhaseContext, c, 0)
+                })
                 .collect();
-            assert_ne!(phrases[0], phrases[1], "semana 1 e 3 devem gerar frases diferentes");
-            assert_ne!(phrases[1], phrases[2], "semana 3 e 6 devem gerar frases diferentes");
+            assert_ne!(
+                phrases[0], phrases[1],
+                "semana 1 e 3 devem gerar frases diferentes"
+            );
+            assert_ne!(
+                phrases[1], phrases[2],
+                "semana 3 e 6 devem gerar frases diferentes"
+            );
         }
 
         #[test]
@@ -8166,7 +8816,9 @@ mod tests {
             let body = compose_market_body(MarketTrigger::ConcreteMoveUnderway, &c);
             // DriverCenteredMove v0: "A fase recente ajuda..."
             assert!(
-                body.contains("fase recente") || body.contains("aposta lateral") || body.contains("desempenho e mercado"),
+                body.contains("fase recente")
+                    || body.contains("aposta lateral")
+                    || body.contains("desempenho e mercado"),
                 "body deve conter frase de DriverCenteredMove: {body}"
             );
         }
@@ -8267,8 +8919,7 @@ mod tests {
         use super::super::{
             compose_pilot_body, compose_pilot_headline, compose_pilot_modifier_phrase,
             detect_pilot_modifiers, detect_pilot_trigger, PilotModifier, PilotStoryContext,
-            PilotTrigger,
-            TOP_TABLE_GAP_THRESHOLD,
+            PilotTrigger, TOP_TABLE_GAP_THRESHOLD,
         };
         use crate::news::NewsImportance;
 
@@ -8368,8 +9019,14 @@ mod tests {
 
         #[test]
         fn test_pilot_body_has_at_least_two_variants() {
-            let ctx0 = PilotStoryContext { item_seed: 0, ..ctx(Some(1), 2) };
-            let ctx1 = PilotStoryContext { item_seed: 1, ..ctx(Some(1), 2) };
+            let ctx0 = PilotStoryContext {
+                item_seed: 0,
+                ..ctx(Some(1), 2)
+            };
+            let ctx1 = PilotStoryContext {
+                item_seed: 1,
+                ..ctx(Some(1), 2)
+            };
             for trigger in [
                 PilotTrigger::PilotInStrongForm,
                 PilotTrigger::PilotUnderPressure,
@@ -8378,7 +9035,10 @@ mod tests {
             ] {
                 let b0 = compose_pilot_body(trigger, &ctx0);
                 let b1 = compose_pilot_body(trigger, &ctx1);
-                assert_ne!(b0, b1, "{trigger:?}: variante seed=0 e seed=1 devem diferir");
+                assert_ne!(
+                    b0, b1,
+                    "{trigger:?}: variante seed=0 e seed=1 devem diferir"
+                );
             }
         }
 
@@ -8402,8 +9062,14 @@ mod tests {
 
         #[test]
         fn test_pilot_headline_has_at_least_two_variants() {
-            let ctx0 = PilotStoryContext { item_seed: 0, ..ctx(Some(1), 2) };
-            let ctx1 = PilotStoryContext { item_seed: 1, ..ctx(Some(1), 2) };
+            let ctx0 = PilotStoryContext {
+                item_seed: 0,
+                ..ctx(Some(1), 2)
+            };
+            let ctx1 = PilotStoryContext {
+                item_seed: 1,
+                ..ctx(Some(1), 2)
+            };
             for trigger in [
                 PilotTrigger::PilotInStrongForm,
                 PilotTrigger::PilotUnderPressure,
@@ -8412,14 +9078,23 @@ mod tests {
             ] {
                 let h0 = compose_pilot_headline(trigger, &ctx0);
                 let h1 = compose_pilot_headline(trigger, &ctx1);
-                assert_ne!(h0, h1, "{trigger:?}: variante seed=0 e seed=1 devem diferir");
+                assert_ne!(
+                    h0, h1,
+                    "{trigger:?}: variante seed=0 e seed=1 devem diferir"
+                );
             }
         }
 
         #[test]
         fn test_pilot_strong_form_headline_uses_individual_editorial_voice() {
-            let ctx0 = PilotStoryContext { item_seed: 0, ..ctx(Some(1), 2) };
-            let ctx1 = PilotStoryContext { item_seed: 1, ..ctx(Some(1), 2) };
+            let ctx0 = PilotStoryContext {
+                item_seed: 0,
+                ..ctx(Some(1), 2)
+            };
+            let ctx1 = PilotStoryContext {
+                item_seed: 1,
+                ..ctx(Some(1), 2)
+            };
 
             assert_eq!(
                 compose_pilot_headline(PilotTrigger::PilotInStrongForm, &ctx0),
@@ -8488,22 +9163,34 @@ mod tests {
                 (
                     "strong_form destaque streak3",
                     PilotTrigger::PilotInStrongForm,
-                    PilotStoryContext { item_seed: 0, ..ctx(Some(1), 3) },
+                    PilotStoryContext {
+                        item_seed: 0,
+                        ..ctx(Some(1), 3)
+                    },
                 ),
                 (
                     "under_pressure media p2",
                     PilotTrigger::PilotUnderPressure,
-                    PilotStoryContext { item_seed: 0, ..ctx(Some(2), 0) },
+                    PilotStoryContext {
+                        item_seed: 0,
+                        ..ctx(Some(2), 0)
+                    },
                 ),
                 (
                     "became_relevant alta p7",
                     PilotTrigger::PilotBecameRelevant,
-                    PilotStoryContext { item_seed: 0, ..ctx(Some(7), 0) },
+                    PilotStoryContext {
+                        item_seed: 0,
+                        ..ctx(Some(7), 0)
+                    },
                 ),
                 (
                     "momentum_shift destaque p4",
                     PilotTrigger::PilotMomentumShift,
-                    PilotStoryContext { item_seed: 0, ..ctx(Some(4), 0) },
+                    PilotStoryContext {
+                        item_seed: 0,
+                        ..ctx(Some(4), 0)
+                    },
                 ),
             ];
             println!("\n=== PILOT PRIMARY TRIGGERS ===");
@@ -8605,7 +9292,10 @@ mod tests {
             // Tudo ativo: position P3, gap pequeno, win_streak, good last race → ≤ 2
             let c = ctx_mod(Some(3), 3, Some(2), false, Some(10));
             let mods = detect_pilot_modifiers(&c, PilotTrigger::PilotInStrongForm);
-            assert!(mods.len() <= 2, "nunca deve exceder 2 modificadores: {mods:?}");
+            assert!(
+                mods.len() <= 2,
+                "nunca deve exceder 2 modificadores: {mods:?}"
+            );
         }
 
         #[test]
@@ -8613,7 +9303,10 @@ mod tests {
             // bad run + NeedImmediateResponse ≤ 2
             let c = ctx_mod(Some(6), 0, Some(15), true, None);
             let mods = detect_pilot_modifiers(&c, PilotTrigger::PilotUnderPressure);
-            assert!(mods.len() <= 2, "pressão: nunca deve exceder 2 modificadores: {mods:?}");
+            assert!(
+                mods.len() <= 2,
+                "pressão: nunca deve exceder 2 modificadores: {mods:?}"
+            );
         }
 
         #[test]
@@ -8645,7 +9338,10 @@ mod tests {
         #[test]
         fn test_composed_body_includes_modifier_text() {
             // PilotBecameRelevant com position=7 → DriverPositionContext deve aparecer no body
-            let c = PilotStoryContext { item_seed: 0, ..ctx_mod(Some(7), 0, None, false, None) };
+            let c = PilotStoryContext {
+                item_seed: 0,
+                ..ctx_mod(Some(7), 0, None, false, None)
+            };
             let body = compose_pilot_body(PilotTrigger::PilotBecameRelevant, &c);
             assert!(
                 body.contains("7º"),
@@ -8707,8 +9403,8 @@ mod tests {
 
     mod team_editorial_tests {
         use super::super::{
-            compose_team_body, compose_team_headline, detect_team_modifiers,
-            detect_team_trigger, TeamModifier, TeamStoryContext, TeamTrigger,
+            compose_team_body, compose_team_headline, detect_team_modifiers, detect_team_trigger,
+            TeamModifier, TeamStoryContext, TeamTrigger,
         };
         use crate::news::NewsImportance;
 
@@ -8732,7 +9428,10 @@ mod tests {
         #[test]
         fn test_team_in_strong_moment_for_top_team_with_high_importance() {
             assert_eq!(
-                detect_team_trigger(&ctx(Some(2), Some(88), Some("alta"), Some("Laguna Seca")), &NewsImportance::Destaque),
+                detect_team_trigger(
+                    &ctx(Some(2), Some(88), Some("alta"), Some("Laguna Seca")),
+                    &NewsImportance::Destaque
+                ),
                 TeamTrigger::TeamInStrongMoment
             );
         }
@@ -8740,7 +9439,10 @@ mod tests {
         #[test]
         fn test_team_became_relevant_for_midfield_team_with_high_importance() {
             assert_eq!(
-                detect_team_trigger(&ctx(Some(6), Some(41), Some("relevante"), Some("Laguna Seca")), &NewsImportance::Alta),
+                detect_team_trigger(
+                    &ctx(Some(6), Some(41), Some("relevante"), Some("Laguna Seca")),
+                    &NewsImportance::Alta
+                ),
                 TeamTrigger::TeamBecameRelevant
             );
         }
@@ -8748,7 +9450,10 @@ mod tests {
         #[test]
         fn test_team_under_pressure_for_top_team_without_high_importance() {
             assert_eq!(
-                detect_team_trigger(&ctx(Some(3), Some(72), Some("alta"), Some("Laguna Seca")), &NewsImportance::Media),
+                detect_team_trigger(
+                    &ctx(Some(3), Some(72), Some("alta"), Some("Laguna Seca")),
+                    &NewsImportance::Media
+                ),
                 TeamTrigger::TeamUnderPressure
             );
         }
@@ -8756,7 +9461,10 @@ mod tests {
         #[test]
         fn test_team_lost_ground_for_high_presence_team_outside_front_group() {
             assert_eq!(
-                detect_team_trigger(&ctx(Some(7), Some(35), Some("elite"), Some("Laguna Seca")), &NewsImportance::Media),
+                detect_team_trigger(
+                    &ctx(Some(7), Some(35), Some("elite"), Some("Laguna Seca")),
+                    &NewsImportance::Media
+                ),
                 TeamTrigger::TeamLostGround
             );
         }
@@ -8841,7 +9549,10 @@ mod tests {
                 &ctx(Some(2), Some(88), Some("elite"), Some("Laguna Seca")),
                 TeamTrigger::TeamInStrongMoment,
             );
-            assert!(mods.len() <= 2, "Equipe nunca deve exceder 2 modificadores: {mods:?}");
+            assert!(
+                mods.len() <= 2,
+                "Equipe nunca deve exceder 2 modificadores: {mods:?}"
+            );
         }
 
         #[test]
@@ -9259,7 +9970,10 @@ mod tests {
                 &ctx(false, true, false, Some(2), Some("Laguna Seca")),
                 InjuryTrigger::DriverReturnsFromInjury,
             );
-            assert!(mods.len() <= 2, "Lesao nunca deve exceder 2 modificadores: {mods:?}");
+            assert!(
+                mods.len() <= 2,
+                "Lesao nunca deve exceder 2 modificadores: {mods:?}"
+            );
         }
 
         #[test]
@@ -9433,7 +10147,11 @@ mod tests {
             }
         }
 
-        fn market_ctx(driver: Option<&str>, team: Option<&str>, is_preseason: bool) -> MarketStoryContext {
+        fn market_ctx(
+            driver: Option<&str>,
+            team: Option<&str>,
+            is_preseason: bool,
+        ) -> MarketStoryContext {
             MarketStoryContext {
                 driver_name: driver.map(|s| s.to_string()),
                 team_name: team.map(|s| s.to_string()),
@@ -9533,7 +10251,8 @@ mod tests {
             );
             println!();
 
-            let incident_damage = incident_ctx(Some("Rodrigo"), None, false, false, true, Some("Late"));
+            let incident_damage =
+                incident_ctx(Some("Rodrigo"), None, false, false, true, Some("Late"));
             let incident_two_driver =
                 incident_ctx(Some("Rodrigo"), Some("Marcelo"), false, false, false, None);
             println!("type=incident");
@@ -9606,7 +10325,8 @@ mod tests {
                 &market_ctx(Some("Rodrigo"), None, false),
             );
 
-            let incident_damage = incident_ctx(Some("Rodrigo"), None, false, false, true, Some("Late"));
+            let incident_damage =
+                incident_ctx(Some("Rodrigo"), None, false, false, true, Some("Late"));
             let incident_two_driver =
                 incident_ctx(Some("Rodrigo"), Some("Marcelo"), false, false, false, None);
             let incident_damage_body =

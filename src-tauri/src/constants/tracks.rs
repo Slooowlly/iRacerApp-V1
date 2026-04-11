@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use crate::constants::categories::get_category_config;
 use crate::models::enums::{RainGroup, TrackType};
 

@@ -89,13 +89,30 @@ pub(crate) fn build_story_time_label(context: &NewsTabContext, item: &NewsItem) 
     if let Some(label) = build_preseason_time_label(context, item) {
         return label;
     }
-    format!("Temporada {} · {}", item.temporada, context.career.season.ano)
+    format!(
+        "Temporada {} · {}",
+        item.temporada,
+        infer_story_season_year(
+            context.career.season.numero,
+            context.career.season.ano,
+            item.temporada,
+        )
+    )
 }
 
-pub(crate) fn build_round_time_label(
-    context: &NewsTabContext,
-    item: &NewsItem,
-) -> Option<String> {
+pub(crate) fn infer_story_season_year(
+    current_season_number: i32,
+    current_year: i32,
+    item_season_number: i32,
+) -> i32 {
+    if current_season_number <= 0 || item_season_number <= 0 {
+        return current_year;
+    }
+
+    current_year + (item_season_number - current_season_number)
+}
+
+pub(crate) fn build_round_time_label(context: &NewsTabContext, item: &NewsItem) -> Option<String> {
     let category_id = item.categoria_id.as_deref()?;
     let round = item.rodada.filter(|value| *value > 0)?;
     let display_date = context.race_dates.get(&format!("{category_id}:{round}"))?;
@@ -155,4 +172,25 @@ pub(crate) fn format_naive_date_label(date: NaiveDate) -> String {
         _ => "jan",
     };
     format!("{:02} {} {}", date.day(), month, date.year())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_infer_story_season_year_keeps_current_year_for_current_season() {
+        assert_eq!(infer_story_season_year(3, 2026, 3), 2026);
+    }
+
+    #[test]
+    fn test_infer_story_season_year_recovers_previous_season_year() {
+        assert_eq!(infer_story_season_year(3, 2026, 1), 2024);
+    }
+
+    #[test]
+    fn test_infer_story_season_year_falls_back_for_invalid_numbers() {
+        assert_eq!(infer_story_season_year(0, 2026, 1), 2026);
+        assert_eq!(infer_story_season_year(3, 2026, 0), 2026);
+    }
 }

@@ -41,9 +41,7 @@ pub(crate) fn archive_driver_season(
 
     for driver in &drivers {
         let standing = standings_by_driver.get(&driver.id);
-        let categoria = standing
-            .map(|s| s.category.as_str())
-            .unwrap_or_default();
+        let categoria = standing.map(|s| s.category.as_str()).unwrap_or_default();
         let team_id = standing.and_then(|s| s.team_id.as_deref());
         let posicao_campeonato = standing.map(|s| s.position);
         let total_pilotos = standing.map(|s| s.total_drivers);

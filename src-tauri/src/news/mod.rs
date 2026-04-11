@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -76,6 +78,26 @@ impl NewsType {
         }
     }
 
+    pub fn from_str_strict(value: &str) -> Result<Self, String> {
+        match value.trim() {
+            "Corrida" => Ok(Self::Corrida),
+            "Incidente" => Ok(Self::Incidente),
+            "Mercado" => Ok(Self::Mercado),
+            "Promocao" => Ok(Self::Promocao),
+            "Rebaixamento" => Ok(Self::Rebaixamento),
+            "Aposentadoria" => Ok(Self::Aposentadoria),
+            "Rookies" => Ok(Self::Rookies),
+            "Hierarquia" => Ok(Self::Hierarquia),
+            "Milestone" => Ok(Self::Milestone),
+            "Lesao" => Ok(Self::Lesao),
+            "Evolucao" => Ok(Self::Evolucao),
+            "PreTemporada" => Ok(Self::PreTemporada),
+            "Rivalidade" => Ok(Self::Rivalidade),
+            "FramingSazonal" => Ok(Self::FramingSazonal),
+            other => Err(format!("NewsType inválido: '{other}'")),
+        }
+    }
+
     pub fn icone(&self) -> &'static str {
         match self {
             NewsType::Corrida => "🏆",
@@ -120,6 +142,16 @@ impl NewsImportance {
             "Alta" => Self::Alta,
             "Destaque" => Self::Destaque,
             _ => Self::Media,
+        }
+    }
+
+    pub fn from_str_strict(value: &str) -> Result<Self, String> {
+        match value.trim() {
+            "Baixa" => Ok(Self::Baixa),
+            "Media" => Ok(Self::Media),
+            "Alta" => Ok(Self::Alta),
+            "Destaque" => Ok(Self::Destaque),
+            other => Err(format!("NewsImportance inválida: '{other}'")),
         }
     }
 }

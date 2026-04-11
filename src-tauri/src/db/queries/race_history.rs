@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use rusqlite::Connection;
 
 use crate::db::connection::DbError;
@@ -60,13 +62,17 @@ pub fn get_category_standings(
     categoria: &str,
 ) -> Result<Vec<StandingEntry>, DbError> {
     let mut stmt = conn.prepare(
-        "SELECT r.piloto_id, d.nome, SUM(r.pontos) as total_points
+        "SELECT
+            r.piloto_id,
+            d.nome,
+            SUM(r.pontos) as total_points,
+            SUM(CASE WHEN r.posicao_final = 1 THEN 1 ELSE 0 END) as total_wins
          FROM race_results r
          JOIN calendar c ON r.race_id = c.id
          JOIN drivers d ON r.piloto_id = d.id
          WHERE c.temporada_id = ?1 AND c.categoria = ?2
          GROUP BY r.piloto_id
-         ORDER BY total_points DESC",
+         ORDER BY total_points DESC, total_wins DESC, d.nome ASC",
     )?;
 
     let mut standings = Vec::new();
@@ -125,10 +131,11 @@ pub fn get_win_streak(
            AND c.categoria = ?3
          ORDER BY c.rodada DESC",
     )?;
-    let positions: Vec<i32> = stmt
-        .query_map(rusqlite::params![pilot_id, temporada_id, categoria], |row| row.get(0))?
-        .filter_map(|r| r.ok())
-        .collect();
+    let mut positions: Vec<i32> = Vec::new();
+    let mut rows = stmt.query(rusqlite::params![pilot_id, temporada_id, categoria])?;
+    while let Some(row) = rows.next()? {
+        positions.push(row.get::<_, i32>(0)?);
+    }
     let streak = positions.iter().take_while(|&&pos| pos == 1).count() as u32;
     Ok(streak)
 }
@@ -149,7 +156,10 @@ pub fn get_category_leader_before_round(
          JOIN calendar c ON r.race_id = c.id
          WHERE c.temporada_id = ?1 AND c.categoria = ?2 AND c.rodada < ?3
          GROUP BY r.piloto_id
-         ORDER BY SUM(r.pontos) DESC
+         ORDER BY
+            SUM(r.pontos) DESC,
+            SUM(CASE WHEN r.posicao_final = 1 THEN 1 ELSE 0 END) DESC,
+            r.piloto_id ASC
          LIMIT 1",
         rusqlite::params![temporada_id, categoria, before_round],
         |row| row.get::<_, String>(0),
@@ -176,17 +186,16 @@ pub fn get_results_for_round(
          WHERE c.temporada_id = ?1 AND c.categoria = ?2 AND c.rodada = ?3
          ORDER BY r.posicao_final ASC",
     )?;
-    let results = stmt
-        .query_map(rusqlite::params![temporada_id, categoria, round], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, i32>(1)?,
-                row.get::<_, i32>(2)?,
-                row.get::<_, i32>(3)? != 0,
-            ))
-        })?
-        .filter_map(|r| r.ok())
-        .collect();
+    let mut results = Vec::new();
+    let mut rows = stmt.query(rusqlite::params![temporada_id, categoria, round])?;
+    while let Some(row) = rows.next()? {
+        results.push((
+            row.get::<_, String>(0)?,
+            row.get::<_, i32>(1)?,
+            row.get::<_, i32>(2)?,
+            row.get::<_, i32>(3)? != 0,
+        ));
+    }
     Ok(results)
 }
 
@@ -207,17 +216,16 @@ pub fn get_dnf_incident_facts_for_round(
          LEFT JOIN incident_catalog ic ON r.dnf_catalog_id = ic.id
          WHERE c.temporada_id = ?1 AND c.categoria = ?2 AND c.rodada = ?3",
     )?;
-    let results = stmt
-        .query_map(rusqlite::params![temporada_id, categoria, round], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, Option<String>>(1)?,
-                row.get::<_, i32>(2)? != 0,
-                row.get::<_, Option<String>>(3)?,
-            ))
-        })?
-        .filter_map(|r| r.ok())
-        .collect();
+    let mut results = Vec::new();
+    let mut rows = stmt.query(rusqlite::params![temporada_id, categoria, round])?;
+    while let Some(row) = rows.next()? {
+        results.push((
+            row.get::<_, String>(0)?,
+            row.get::<_, Option<String>>(1)?,
+            row.get::<_, i32>(2)? != 0,
+            row.get::<_, Option<String>>(3)?,
+        ));
+    }
     Ok(results)
 }
 
@@ -334,5 +342,53 @@ mod tests {
             get_category_wins_this_season(&conn, "P001", "S2", "gt4").unwrap(),
             0
         );
+    }
+
+    #[test]
+    fn test_get_category_standings_breaks_ties_by_name_when_points_and_wins_tie() {
+        let conn = setup_db();
+        conn.execute_batch(
+            "INSERT INTO race_results (race_id, piloto_id, equipe_id, posicao_final, pontos) VALUES
+             ('R3', 'P001', 'T001', 2, 18.0),
+             ('R3', 'P002', 'T002', 2, 18.0);",
+        )
+        .unwrap();
+
+        let standings = get_category_standings(&conn, "S2", "gt4").unwrap();
+        assert_eq!(standings.len(), 2);
+        assert_eq!(standings[0].pilot_id, "P002");
+        assert_eq!(standings[1].pilot_id, "P001");
+    }
+
+    #[test]
+    fn test_get_category_leader_before_round_uses_deterministic_tiebreak() {
+        let conn = setup_db();
+        conn.execute_batch(
+            "INSERT INTO race_results (race_id, piloto_id, equipe_id, posicao_final, pontos) VALUES
+             ('R1', 'P001', 'T001', 1, 25.0),
+             ('R1', 'P002', 'T002', 2, 18.0),
+             ('R2', 'P001', 'T001', 2, 18.0),
+             ('R2', 'P002', 'T002', 1, 25.0);",
+        )
+        .unwrap();
+
+        let leader = get_category_leader_before_round(&conn, "S1", "gt4", 3).unwrap();
+        assert_eq!(leader.as_deref(), Some("P001"));
+    }
+
+    #[test]
+    fn test_get_results_for_round_propagates_invalid_row_error() {
+        let conn = setup_db();
+        conn.execute(
+            "INSERT INTO race_results
+                (race_id, piloto_id, equipe_id, posicao_largada, posicao_final, dnf, pontos)
+             VALUES ('R1', 'P001', 'T001', 1, 'quebrado', 0, 25.0)",
+            [],
+        )
+        .unwrap();
+
+        let err = get_results_for_round(&conn, "S1", "gt4", 1)
+            .expect_err("invalid row should fail instead of being ignored");
+        assert!(err.to_string().contains("SQLite error"));
     }
 }

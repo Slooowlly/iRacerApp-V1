@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use chrono::NaiveDate;
 use rusqlite::{params, Connection, OptionalExtension};
 
@@ -251,8 +253,12 @@ pub fn get_season_temporal_summary(
         None
     };
 
-    let current_display_date =
-        resolve_current_display_date(conn, season_id, effective_week, next_player_event.as_ref())?;
+    let current_display_date = resolve_current_display_date(
+        conn,
+        season_id,
+        effective_week,
+        next_player_event.as_ref().or(next_any_event.as_ref()),
+    )?;
 
     let next_event_display_date = next_player_event
         .as_ref()
@@ -313,37 +319,89 @@ fn calendar_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<CalendarEntry>
                 pista
             )
         }),
-        track_id: optional_i64(row, "track_id")?.unwrap_or_default() as u32,
+        track_id: parse_non_negative_u32(row, "track_id", 0)?,
         track_name: optional_string(row, "track_name")?
             .or_else(|| optional_string(row, "pista").ok().flatten())
             .unwrap_or_default(),
         track_config: optional_string(row, "track_config")?.unwrap_or_default(),
-        clima: WeatherCondition::from_str(&row.get::<_, String>("clima")?),
+        clima: WeatherCondition::from_str_strict(&row.get::<_, String>("clima")?)
+            .map_err(rusqlite::Error::InvalidParameterName)?,
         temperatura: optional_f64(row, "temperatura")?.unwrap_or(25.0),
-        voltas: optional_i64(row, "voltas")?.unwrap_or(10) as i32,
+        voltas: parse_non_negative_i32(row, "voltas", 10)?,
         duracao_corrida_min: optional_i64(row, "duracao_corrida_min")?
             .or_else(|| optional_i64(row, "duracao").ok().flatten())
-            .unwrap_or(60) as i32,
-        duracao_classificacao_min: optional_i64(row, "duracao_classificacao_min")?.unwrap_or(15)
-            as i32,
+            .map(|value| parse_non_negative_i32_value("duracao_corrida_min", value))
+            .transpose()?
+            .unwrap_or(60),
+        duracao_classificacao_min: parse_non_negative_i32(row, "duracao_classificacao_min", 15)?,
         status: RaceStatus::from_str_strict(
             &optional_string(row, "status")?.unwrap_or_else(|| "Pendente".to_string()),
         )
         .map_err(rusqlite::Error::InvalidParameterName)?,
         horario: optional_string(row, "horario")?.unwrap_or_else(|| "14:00".to_string()),
-        week_of_year: optional_i64(row, "week_of_year")?.unwrap_or(0) as i32,
-        season_phase: optional_string(row, "season_phase")?
-            .and_then(|s| SeasonPhase::from_str_strict(&s).ok())
-            .unwrap_or(SeasonPhase::BlocoRegular),
+        week_of_year: parse_non_negative_i32(row, "week_of_year", 0)?,
+        season_phase: match optional_string(row, "season_phase")? {
+            None => SeasonPhase::BlocoRegular,
+            Some(s) => {
+                SeasonPhase::from_str_strict(&s).map_err(rusqlite::Error::InvalidParameterName)?
+            }
+        },
         display_date: optional_string(row, "data")?.unwrap_or_default(),
         thematic_slot: match optional_string(row, "thematic_slot")? {
             // NULL no banco (saves pré-v12) → NaoClassificado
             None => ThematicSlot::NaoClassificado,
             // string presente: parse estrito — string inválida é erro, não fallback silencioso
-            Some(s) => ThematicSlot::from_str_strict(&s)
-                .map_err(|e| rusqlite::Error::InvalidColumnName(e))?,
+            Some(s) => {
+                ThematicSlot::from_str_strict(&s).map_err(rusqlite::Error::InvalidParameterName)?
+            }
         },
     })
+}
+
+fn invalid_calendar_data_error(message: impl Into<String>) -> rusqlite::Error {
+    rusqlite::Error::InvalidParameterName(message.into())
+}
+
+fn parse_non_negative_u32(
+    row: &rusqlite::Row<'_>,
+    column_name: &str,
+    default: u32,
+) -> rusqlite::Result<u32> {
+    optional_i64(row, column_name)?
+        .map(|value| {
+            u32::try_from(value).map_err(|_| {
+                invalid_calendar_data_error(format!(
+                    "Campo '{column_name}' invalido: esperado inteiro nao negativo, recebido {value}"
+                ))
+            })
+        })
+        .transpose()
+        .map(|value| value.unwrap_or(default))
+}
+
+fn parse_non_negative_i32(
+    row: &rusqlite::Row<'_>,
+    column_name: &str,
+    default: i32,
+) -> rusqlite::Result<i32> {
+    optional_i64(row, column_name)?
+        .map(|value| parse_non_negative_i32_value(column_name, value))
+        .transpose()
+        .map(|value| value.unwrap_or(default))
+}
+
+fn parse_non_negative_i32_value(column_name: &str, value: i64) -> rusqlite::Result<i32> {
+    let parsed = i32::try_from(value).map_err(|_| {
+        invalid_calendar_data_error(format!(
+            "Campo '{column_name}' invalido: esperado inteiro nao negativo, recebido {value}"
+        ))
+    })?;
+    if parsed < 0 {
+        return Err(invalid_calendar_data_error(format!(
+            "Campo '{column_name}' invalido: esperado inteiro nao negativo, recebido {value}"
+        )));
+    }
+    Ok(parsed)
 }
 
 fn optional_string(row: &rusqlite::Row<'_>, column_name: &str) -> rusqlite::Result<Option<String>> {
@@ -379,8 +437,8 @@ fn resolve_current_display_date(
         }
     }
 
-    if let Some(date) = next_player_event
-        .and_then(|entry| infer_pre_event_display_date(&entry.display_date))
+    if let Some(date) =
+        next_player_event.and_then(|entry| infer_pre_event_display_date(&entry.display_date))
     {
         return Ok(date);
     }
@@ -501,7 +559,7 @@ mod tests {
             generate_calendar_for_category("S001", "gt3", &mut rng).expect("gt3 calendar");
         insert_calendar_entries(&conn, &entries).expect("insert");
 
-        // A primeira corrida tem week_of_year >= 2 (REGULAR_SEASON_START).
+        // A primeira corrida regular cai apenas após a abertura da janela de fevereiro.
         // Com target=1 não deve retornar nada; com target=52 deve retornar todas.
         let none = get_pending_races_up_to_week(&conn, "S001", "gt3", 1).expect("query");
         assert!(
@@ -554,7 +612,77 @@ mod tests {
     }
 
     #[test]
-    fn test_specials_excluded_below_41() {
+    fn test_invalid_weather_condition_from_db_returns_error() {
+        let conn = Connection::open_in_memory().expect("db");
+        migrations::run_all(&conn).expect("schema");
+        insert_season(&conn, &Season::new("S001".to_string(), 1, 2024)).expect("season");
+        let mut rng = StdRng::seed_from_u64(23);
+        let entry = generate_calendar_for_category("S001", "gt4", &mut rng)
+            .expect("calendar")
+            .into_iter()
+            .next()
+            .expect("entry");
+
+        insert_calendar_entry(&conn, &entry).expect("insert");
+        conn.execute(
+            "UPDATE calendar SET clima = 'tempo_quebrado' WHERE id = ?1",
+            [entry.id.as_str()],
+        )
+        .expect("corrupt weather");
+
+        let err =
+            get_calendar_entry_by_id(&conn, &entry.id).expect_err("invalid weather should fail");
+        assert!(err.to_string().contains("WeatherCondition inv"));
+    }
+
+    #[test]
+    fn test_negative_track_id_from_db_returns_error() {
+        let conn = Connection::open_in_memory().expect("db");
+        migrations::run_all(&conn).expect("schema");
+        insert_season(&conn, &Season::new("S001".to_string(), 1, 2024)).expect("season");
+        let mut rng = StdRng::seed_from_u64(24);
+        let entry = generate_calendar_for_category("S001", "gt4", &mut rng)
+            .expect("calendar")
+            .into_iter()
+            .next()
+            .expect("entry");
+
+        insert_calendar_entry(&conn, &entry).expect("insert");
+        conn.execute(
+            "UPDATE calendar SET track_id = -1 WHERE id = ?1",
+            params![&entry.id],
+        )
+        .expect("corrupt track id");
+
+        let err = get_calendar_entry_by_id(&conn, &entry.id).expect_err("invalid track id");
+        assert!(err.to_string().contains("track_id"));
+    }
+
+    #[test]
+    fn test_negative_week_of_year_from_db_returns_error() {
+        let conn = Connection::open_in_memory().expect("db");
+        migrations::run_all(&conn).expect("schema");
+        insert_season(&conn, &Season::new("S001".to_string(), 1, 2024)).expect("season");
+        let mut rng = StdRng::seed_from_u64(25);
+        let entry = generate_calendar_for_category("S001", "gt4", &mut rng)
+            .expect("calendar")
+            .into_iter()
+            .next()
+            .expect("entry");
+
+        insert_calendar_entry(&conn, &entry).expect("insert");
+        conn.execute(
+            "UPDATE calendar SET week_of_year = -3 WHERE id = ?1",
+            params![&entry.id],
+        )
+        .expect("corrupt week");
+
+        let err = get_calendar_entry_by_id(&conn, &entry.id).expect_err("invalid week");
+        assert!(err.to_string().contains("week_of_year"));
+    }
+
+    #[test]
+    fn test_specials_excluded_before_special_window() {
         use crate::calendar::generate_and_insert_special_calendars;
         let conn = Connection::open_in_memory().expect("db");
         migrations::run_all(&conn).expect("schema");
@@ -565,19 +693,44 @@ mod tests {
         generate_and_insert_special_calendars(&conn, "S001", 2024, &mut rng)
             .expect("special calendars");
 
-        // Com target_week=40 (máx do bloco regular) não deve retornar nenhuma corrida especial
-        let pc = get_pending_races_up_to_week(&conn, "S001", "production_challenger", 40)
-            .expect("query pc");
-        let end = get_pending_races_up_to_week(&conn, "S001", "endurance", 40).expect("query end");
+        let first_special_week: i32 = conn
+            .query_row(
+                "SELECT MIN(week_of_year) FROM calendar WHERE categoria = 'production_challenger'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("first special week");
+        let last_special_week: i32 = conn
+            .query_row(
+                "SELECT MAX(week_of_year) FROM calendar WHERE categoria = 'production_challenger'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("last special week");
+
+        // Antes da primeira semana especial não deve retornar nenhuma corrida especial.
+        let pc = get_pending_races_up_to_week(
+            &conn,
+            "S001",
+            "production_challenger",
+            first_special_week - 1,
+        )
+        .expect("query pc");
+        let end = get_pending_races_up_to_week(&conn, "S001", "endurance", first_special_week - 1)
+            .expect("query end");
         assert!(
             pc.is_empty(),
-            "production_challenger should not appear before week 41"
+            "production_challenger should not appear before the first scheduled special week"
         );
-        assert!(end.is_empty(), "endurance should not appear before week 41");
+        assert!(
+            end.is_empty(),
+            "endurance should not appear before the first scheduled special week"
+        );
 
-        // Com target_week=50 deve retornar todas
-        let pc_all = get_pending_races_up_to_week(&conn, "S001", "production_challenger", 50)
-            .expect("query pc all");
+        // Na última semana especial, todas já devem estar visíveis.
+        let pc_all =
+            get_pending_races_up_to_week(&conn, "S001", "production_challenger", last_special_week)
+                .expect("query pc all");
         assert_eq!(
             pc_all.len(),
             10,
@@ -709,10 +862,64 @@ mod tests {
 
         assert_eq!(summary.pending_in_phase, (entries.len() - 2) as i32);
         assert_eq!(summary.current_display_date, entries[1].display_date);
-        assert_eq!(summary.next_event_display_date.as_deref(), Some(entries[2].display_date.as_str()));
+        assert_eq!(
+            summary.next_event_display_date.as_deref(),
+            Some(entries[2].display_date.as_str())
+        );
         let expected_days_until = (parse_display_date(&entries[2].display_date).expect("next date")
             - parse_display_date(&entries[1].display_date).expect("current date"))
         .num_days() as i32;
         assert_eq!(summary.days_until_next_event, Some(expected_days_until));
+    }
+
+    #[test]
+    fn test_get_temporal_summary_uses_next_any_event_when_player_has_no_pending_race() {
+        let conn = Connection::open_in_memory().expect("db");
+        migrations::run_all(&conn).expect("schema");
+        insert_season(&conn, &Season::new("S001".to_string(), 1, 2024)).expect("season");
+        let mut rng = StdRng::seed_from_u64(45);
+        generate_and_insert_special_calendars(&conn, "S001", 2024, &mut rng)
+            .expect("special calendars");
+
+        let next_any = get_next_any_race_in_phase(&conn, "S001", &SeasonPhase::BlocoEspecial)
+            .expect("next any")
+            .expect("special event");
+        let expected_current =
+            infer_pre_event_display_date(&next_any.display_date).expect("pre event display date");
+
+        let summary =
+            get_season_temporal_summary(&conn, "S001", "gt3", &SeasonPhase::BlocoEspecial)
+                .expect("summary");
+
+        assert!(summary.next_player_event.is_none());
+        assert_eq!(
+            summary.next_event_display_date.as_deref(),
+            Some(next_any.display_date.as_str())
+        );
+        assert_eq!(summary.current_display_date, expected_current);
+        assert_eq!(summary.days_until_next_event, Some(7));
+    }
+
+    #[test]
+    fn test_invalid_season_phase_in_calendar_row_returns_error() {
+        let conn = Connection::open_in_memory().expect("db");
+        migrations::run_all(&conn).expect("schema");
+        insert_season(&conn, &Season::new("S001".to_string(), 1, 2024)).expect("season");
+        let mut rng = StdRng::seed_from_u64(44);
+        let entry = generate_calendar_for_category("S001", "gt3", &mut rng)
+            .expect("calendar")
+            .into_iter()
+            .next()
+            .expect("entry");
+
+        insert_calendar_entry(&conn, &entry).expect("insert");
+        conn.execute(
+            "UPDATE calendar SET season_phase = 'fase_quebrada' WHERE id = ?1",
+            params![&entry.id],
+        )
+        .expect("corrupt season phase");
+
+        let err = get_calendar_entry_by_id(&conn, &entry.id).expect_err("invalid season phase");
+        assert!(err.to_string().contains("SeasonPhase inválido"));
     }
 }

@@ -3,6 +3,7 @@ import { Navigate } from "react-router-dom";
 
 import MainLayout from "../components/layout/MainLayout";
 import RaceResultView from "../components/race/RaceResultView";
+import ConvocationView from "../components/season/ConvocationView";
 import EndOfSeasonView from "../components/season/EndOfSeasonView";
 import PreSeasonView from "../components/season/PreSeasonView";
 import useCareerStore from "../stores/useCareerStore";
@@ -20,6 +21,7 @@ function Dashboard() {
   const showEndOfSeason = useCareerStore((state) => state.showEndOfSeason);
   const endOfSeasonResult = useCareerStore((state) => state.endOfSeasonResult);
   const showPreseason = useCareerStore((state) => state.showPreseason);
+  const showConvocation = useCareerStore((state) => state.showConvocation);
   const showRaceBriefing = useCareerStore((state) => state.showRaceBriefing);
   const [activeTab, setActiveTab] = useState("standings");
 
@@ -58,6 +60,12 @@ function Dashboard() {
   if (showPreseason) {
     return (
       <PreSeasonView />
+    );
+  }
+
+  if (showConvocation) {
+    return (
+      <ConvocationView />
     );
   }
 

@@ -15,62 +15,89 @@ use crate::promotion::effects::{
 use crate::promotion::pilots::{apply_pilot_effect, resolve_pilot_situations};
 use crate::promotion::{MovementType, PromotionResult, TeamMovement};
 
+fn with_savepoint<T, F>(conn: &Connection, name: &str, action: F) -> Result<T, String>
+where
+    F: FnOnce() -> Result<T, String>,
+{
+    conn.execute_batch(&format!("SAVEPOINT {name}"))
+        .map_err(|e| format!("Falha ao abrir savepoint '{name}': {e}"))?;
+
+    match action() {
+        Ok(value) => {
+            conn.execute_batch(&format!("RELEASE SAVEPOINT {name}"))
+                .map_err(|e| format!("Falha ao confirmar savepoint '{name}': {e}"))?;
+            Ok(value)
+        }
+        Err(err) => {
+            conn.execute_batch(&format!(
+                "ROLLBACK TO SAVEPOINT {name}; RELEASE SAVEPOINT {name};"
+            ))
+            .map_err(|rollback_err| {
+                format!("{err}; alem disso falhou o rollback do savepoint '{name}': {rollback_err}")
+            })?;
+            Err(err)
+        }
+    }
+}
+
 pub fn run_promotion_relegation(
     conn: &Connection,
     season_number: i32,
     rng: &mut impl Rng,
 ) -> Result<PromotionResult, String> {
-    if season_number <= 1 {
+    if season_number < 1 {
         return Ok(PromotionResult::empty());
     }
 
-    let mut all_movements = Vec::new();
-    let block1_movements = execute_block1(conn, rng)?;
-    let excluded_from_block2: HashSet<String> = block1_movements
-        .iter()
-        .filter(|movement| {
-            movement.movement_type == MovementType::Rebaixamento
-                && (movement.from_category == "mazda_amador"
-                    || movement.from_category == "toyota_amador")
+    with_savepoint(conn, "promotion_run", || {
+        let mut all_movements = Vec::new();
+        let block1_movements = execute_block1(conn, rng)?;
+        let excluded_from_block2: HashSet<String> = block1_movements
+            .iter()
+            .filter(|movement| {
+                movement.movement_type == MovementType::Rebaixamento
+                    && (movement.from_category == "mazda_amador"
+                        || movement.from_category == "toyota_amador")
+            })
+            .map(|movement| movement.team_id.clone())
+            .collect();
+        let block2_movements = execute_block2_with_exclusions(conn, &excluded_from_block2, rng)?;
+        let block3_movements = execute_block3(conn, rng)?;
+
+        all_movements.extend(block1_movements);
+        all_movements.extend(block2_movements);
+        all_movements.extend(block3_movements);
+
+        for movement in &all_movements {
+            apply_team_category_change(conn, movement)?;
+        }
+
+        let pilot_effects = resolve_pilot_situations(conn, &all_movements)?;
+        for effect in &pilot_effects {
+            apply_pilot_effect(conn, effect, &all_movements)?;
+        }
+
+        let mut attribute_deltas = Vec::new();
+        for movement in &all_movements {
+            let team = team_queries::get_team_by_id(conn, &movement.team_id)
+                .map_err(|e| format!("Falha ao buscar equipe '{}': {e}", movement.team_id))?
+                .ok_or_else(|| format!("Equipe '{}' nao encontrada", movement.team_id))?;
+            let delta = match movement.movement_type {
+                MovementType::Promocao => calculate_promotion_effects(&team, rng),
+                MovementType::Rebaixamento => calculate_relegation_effects(&team, rng),
+            };
+            apply_attribute_deltas(conn, &movement.team_id, &delta)?;
+            attribute_deltas.push(delta);
+        }
+
+        let mut errors = verify_team_driver_consistency(conn, &all_movements);
+        errors.extend(verify_category_sizes(conn)?);
+        Ok(PromotionResult {
+            movements: all_movements,
+            pilot_effects,
+            attribute_deltas,
+            errors,
         })
-        .map(|movement| movement.team_id.clone())
-        .collect();
-    let block2_movements = execute_block2_with_exclusions(conn, &excluded_from_block2, rng)?;
-    let block3_movements = execute_block3(conn, rng)?;
-
-    all_movements.extend(block1_movements);
-    all_movements.extend(block2_movements);
-    all_movements.extend(block3_movements);
-
-    for movement in &all_movements {
-        apply_team_category_change(conn, movement)?;
-    }
-
-    let pilot_effects = resolve_pilot_situations(conn, &all_movements)?;
-    for effect in &pilot_effects {
-        apply_pilot_effect(conn, effect, &all_movements)?;
-    }
-
-    let mut attribute_deltas = Vec::new();
-    for movement in &all_movements {
-        let team = team_queries::get_team_by_id(conn, &movement.team_id)
-            .map_err(|e| format!("Falha ao buscar equipe '{}': {e}", movement.team_id))?
-            .ok_or_else(|| format!("Equipe '{}' nao encontrada", movement.team_id))?;
-        let delta = match movement.movement_type {
-            MovementType::Promocao => calculate_promotion_effects(&team, rng),
-            MovementType::Rebaixamento => calculate_relegation_effects(&team, rng),
-        };
-        apply_attribute_deltas(conn, &movement.team_id, &delta)?;
-        attribute_deltas.push(delta);
-    }
-
-    let mut errors = verify_team_driver_consistency(conn, &all_movements);
-    errors.extend(verify_category_sizes(conn));
-    Ok(PromotionResult {
-        movements: all_movements,
-        pilot_effects,
-        attribute_deltas,
-        errors,
     })
 }
 
@@ -78,6 +105,8 @@ fn apply_team_category_change(conn: &Connection, movement: &TeamMovement) -> Res
     let mut team = team_queries::get_team_by_id(conn, &movement.team_id)
         .map_err(|e| format!("Falha ao buscar equipe '{}': {e}", movement.team_id))?
         .ok_or_else(|| format!("Equipe '{}' nao encontrada", movement.team_id))?;
+    // Persiste a categoria de origem para exibição na pré-temporada
+    team.categoria_anterior = Some(team.categoria.clone());
     team.categoria = movement.to_category.clone();
     team.classe = infer_team_class(movement);
     team_queries::update_team(conn, &team)
@@ -155,7 +184,7 @@ fn verify_team_driver_consistency(conn: &Connection, movements: &[TeamMovement])
     errors
 }
 
-fn verify_category_sizes(conn: &Connection) -> Vec<String> {
+fn verify_category_sizes(conn: &Connection) -> Result<Vec<String>, String> {
     let expected_sizes = [
         ("mazda_rookie", 6),
         ("toyota_rookie", 6),
@@ -169,14 +198,15 @@ fn verify_category_sizes(conn: &Connection) -> Vec<String> {
     ];
     let mut errors = Vec::new();
     for (category, expected) in expected_sizes {
-        let actual = team_queries::count_teams_by_category(conn, category).unwrap_or(0);
+        let actual = team_queries::count_teams_by_category(conn, category)
+            .map_err(|e| format!("Falha ao contar equipes em '{category}': {e}"))?;
         if actual != expected {
             errors.push(format!(
                 "INVARIANTE VIOLADO: {category} tem {actual} equipes (esperado {expected})"
             ));
         }
     }
-    errors
+    Ok(errors)
 }
 
 #[cfg(test)]
@@ -187,20 +217,36 @@ mod tests {
     use super::*;
     use crate::constants::teams::get_team_templates;
     use crate::db::migrations;
+    use crate::db::queries::contracts as contract_queries;
+    use crate::db::queries::drivers as driver_queries;
     use crate::db::queries::teams as team_queries;
+    use crate::models::contract::Contract;
+    use crate::models::driver::Driver;
+    use crate::models::enums::TeamRole;
     use crate::models::team::Team;
 
     #[test]
-    fn test_no_promotion_season_1() {
+    fn test_no_promotion_invalid_season() {
         let conn = setup_promotion_db();
         let mut rng = StdRng::seed_from_u64(50);
 
-        let result = run_promotion_relegation(&conn, 1, &mut rng).expect("promotion should run");
+        let result = run_promotion_relegation(&conn, 0, &mut rng).expect("promotion should run");
 
         assert!(result.movements.is_empty());
         assert!(result.pilot_effects.is_empty());
         assert!(result.attribute_deltas.is_empty());
         assert!(result.errors.is_empty());
+    }
+
+    #[test]
+    fn test_full_promotion_season_1() {
+        let conn = setup_promotion_db();
+        let mut rng = StdRng::seed_from_u64(50);
+
+        let result = run_promotion_relegation(&conn, 1, &mut rng).expect("promotion should run");
+
+        assert_eq!(result.movements.len(), 34);
+        assert!(!result.attribute_deltas.is_empty());
     }
 
     #[test]
@@ -222,6 +268,73 @@ mod tests {
         let result = run_promotion_relegation(&conn, 2, &mut rng).expect("promotion should run");
 
         assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+    }
+
+    #[test]
+    fn test_run_promotion_relegation_rolls_back_if_pilot_effect_fails_midway() {
+        let conn = setup_promotion_db();
+        let mut rng = StdRng::seed_from_u64(50);
+
+        let mut driver = Driver::new(
+            "P901".to_string(),
+            "Piloto Teste".to_string(),
+            "Brasil".to_string(),
+            "M".to_string(),
+            24,
+            2020,
+        );
+        driver.categoria_atual = Some("mazda_rookie".to_string());
+        driver_queries::insert_driver(&conn, &driver).expect("insert driver");
+        team_queries::update_team_pilots(&conn, "MR1", Some("P901"), None)
+            .expect("attach driver to champion team");
+
+        let champion_team = team_queries::get_team_by_id(&conn, "MR1")
+            .expect("team query")
+            .expect("team exists");
+        let contract = Contract::new(
+            "C901".to_string(),
+            "P901".to_string(),
+            "Piloto Teste".to_string(),
+            champion_team.id.clone(),
+            champion_team.nome.clone(),
+            1,
+            2,
+            50_000.0,
+            TeamRole::Numero1,
+            "mazda_rookie".to_string(),
+        );
+        contract_queries::insert_contract(&conn, &contract).expect("insert contract");
+
+        conn.execute("DROP TABLE contracts", [])
+            .expect("drop contracts table");
+
+        let err = run_promotion_relegation(&conn, 1, &mut rng)
+            .expect_err("promotion should fail when pilot effect cannot update contract");
+
+        assert!(err.contains("contrato regular"), "unexpected error: {err}");
+
+        let team = team_queries::get_team_by_id(&conn, "MR1")
+            .expect("team query after failure")
+            .expect("team still exists");
+        assert_eq!(team.categoria, "mazda_rookie");
+        assert_eq!(team.categoria_anterior, None);
+
+        let driver = driver_queries::get_driver(&conn, "P901").expect("driver query after failure");
+        assert_eq!(driver.categoria_atual.as_deref(), Some("mazda_rookie"));
+    }
+
+    #[test]
+    fn test_verify_category_sizes_propagates_database_errors() {
+        let conn = setup_promotion_db();
+        conn.execute("DROP TABLE teams", [])
+            .expect("drop teams table");
+
+        let err = verify_category_sizes(&conn).expect_err("count failure should propagate");
+
+        assert!(
+            err.contains("Falha ao contar equipes"),
+            "unexpected error: {err}"
+        );
     }
 
     fn setup_promotion_db() -> Connection {

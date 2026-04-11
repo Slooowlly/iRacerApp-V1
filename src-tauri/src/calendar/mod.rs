@@ -2,6 +2,7 @@ mod generator;
 
 use std::collections::{HashMap, HashSet};
 
+use chrono::{Datelike, NaiveDate, Weekday};
 use rand::{seq::SliceRandom, Rng};
 use serde::{Deserialize, Serialize};
 
@@ -48,13 +49,12 @@ pub struct CalendarEntry {
 
 // ── Constantes de calendário ──────────────────────────────────────────────────
 
-/// Semanas do bloco regular (categorias escaladas no BlocoRegular).
-const REGULAR_SEASON_START: i32 = 2;
-const REGULAR_SEASON_END: i32 = 40;
-
-/// Semanas do bloco especial (production_challenger e endurance).
-const SPECIAL_SEASON_START: i32 = 41;
-const SPECIAL_SEASON_END: i32 = 50;
+/// Janelas mensais da temporada.
+/// O dia exato continua flexível, mas cada bloco precisa caber na sua faixa do ano.
+const REGULAR_WINDOW_START_MONTH: u32 = 2;
+const REGULAR_WINDOW_END_MONTH: u32 = 8;
+const SPECIAL_WINDOW_START_MONTH: u32 = 9;
+const SPECIAL_WINDOW_END_MONTH: u32 = 12;
 
 const SCHEDULE_HOURS: [&str; 5] = ["10:00", "12:00", "14:00", "16:00", "18:00"];
 
@@ -62,25 +62,19 @@ const SCHEDULE_HOURS: [&str; 5] = ["10:00", "12:00", "14:00", "16:00", "18:00"];
 
 /// Gera o calendário de uma categoria para uso em produção.
 /// Requer o ano da temporada para calcular datas visuais.
+#[allow(dead_code)]
 pub fn generate_calendar_for_category_with_year(
     season_id: &str,
     season_year: i32,
     categoria: &str,
     rng: &mut impl Rng,
 ) -> Result<Vec<CalendarEntry>, String> {
-    let (week_start, week_end, phase) = if is_especial(categoria) {
-        (
-            SPECIAL_SEASON_START,
-            SPECIAL_SEASON_END,
-            SeasonPhase::BlocoEspecial,
-        )
+    let phase = if is_especial(categoria) {
+        SeasonPhase::BlocoEspecial
     } else {
-        (
-            REGULAR_SEASON_START,
-            REGULAR_SEASON_END,
-            SeasonPhase::BlocoRegular,
-        )
+        SeasonPhase::BlocoRegular
     };
+    let (week_start, week_end) = season_week_window(season_year, phase);
     let mut next_id = 1_u32;
     generate_calendar_for_category_with_constraints(
         season_id,
@@ -129,6 +123,8 @@ where
     R: Rng,
 {
     let mut calendars: HashMap<String, Vec<CalendarEntry>> = HashMap::new();
+    let (regular_week_start, regular_week_end) =
+        season_week_window(season_year, SeasonPhase::BlocoRegular);
 
     for category in get_all_categories() {
         // Categorias especiais não têm calendário no BlocoRegular.
@@ -155,8 +151,8 @@ where
             season_id,
             season_year,
             category.id,
-            REGULAR_SEASON_START,
-            REGULAR_SEASON_END,
+            regular_week_start,
+            regular_week_end,
             SeasonPhase::BlocoRegular,
             &conflicts,
             id_generator,
@@ -171,7 +167,7 @@ where
 /// Gera e insere as entradas de calendário para as categorias especiais.
 /// Chamada durante `iniciar_bloco_especial`, após a transição de fase.
 ///
-/// Semanas 41–50 (bloco especial):
+/// Janela setembro–dezembro (bloco especial):
 /// - production_challenger: 10 rodadas
 /// - endurance: 6 rodadas
 ///
@@ -183,6 +179,9 @@ pub fn generate_and_insert_special_calendars(
     season_year: i32,
     rng: &mut impl Rng,
 ) -> Result<(), String> {
+    let (special_week_start, special_week_end) =
+        season_week_window(season_year, SeasonPhase::BlocoEspecial);
+
     // Guard: verificar por categoria especial (não por season_phase, para não
     // bloquear futuros eventos não-corrida dentro do mesmo bloco).
     let existing: i64 = conn
@@ -213,8 +212,8 @@ pub fn generate_and_insert_special_calendars(
             season_id,
             season_year,
             category.id,
-            SPECIAL_SEASON_START,
-            SPECIAL_SEASON_END,
+            special_week_start,
+            special_week_end,
             SeasonPhase::BlocoEspecial,
             &HashMap::new(),
             &mut || ids_iter.next().expect("race id"),
@@ -729,6 +728,61 @@ fn week_for_rodada(rodada: i32, total: i32, start: i32, end: i32) -> i32 {
     start + (rodada - 1) * (end - start) / (total - 1)
 }
 
+fn season_week_window(year: i32, phase: SeasonPhase) -> (i32, i32) {
+    let (start_date, end_date) = season_date_window(year, phase);
+    (
+        start_date.iso_week().week() as i32,
+        end_date.iso_week().week() as i32,
+    )
+}
+
+fn season_date_window(year: i32, phase: SeasonPhase) -> (NaiveDate, NaiveDate) {
+    match phase {
+        // Começo mais para o fim de fevereiro para abrir espaço real ao mercado de dezembro-fevereiro.
+        SeasonPhase::BlocoRegular => (
+            last_weekday_of_month(year, REGULAR_WINDOW_START_MONTH, Weekday::Sat),
+            nth_weekday_of_month(year, REGULAR_WINDOW_END_MONTH, Weekday::Sat, 3),
+        ),
+        // Deixa a virada agosto/setembro para convocação e preserva o restante de dezembro para o mercado aberto.
+        SeasonPhase::BlocoEspecial => (
+            nth_weekday_of_month(year, SPECIAL_WINDOW_START_MONTH, Weekday::Sat, 2),
+            nth_weekday_of_month(year, SPECIAL_WINDOW_END_MONTH, Weekday::Sat, 2),
+        ),
+        _ => (
+            last_weekday_of_month(year, REGULAR_WINDOW_START_MONTH, Weekday::Sat),
+            nth_weekday_of_month(year, REGULAR_WINDOW_END_MONTH, Weekday::Sat, 3),
+        ),
+    }
+}
+
+fn nth_weekday_of_month(year: i32, month: u32, weekday: Weekday, nth: u32) -> NaiveDate {
+    let first_day = NaiveDate::from_ymd_opt(year, month, 1).expect("valid month");
+    let offset = (7 + weekday.num_days_from_monday() as i64
+        - first_day.weekday().num_days_from_monday() as i64)
+        % 7;
+    let day = 1 + offset as u32 + (nth.saturating_sub(1) * 7);
+    NaiveDate::from_ymd_opt(year, month, day)
+        .or_else(|| last_day_of_month(year, month))
+        .expect("valid nth weekday fallback")
+}
+
+fn last_weekday_of_month(year: i32, month: u32, weekday: Weekday) -> NaiveDate {
+    let mut current = last_day_of_month(year, month).expect("valid last day");
+    while current.weekday() != weekday {
+        current = current.pred_opt().expect("previous day within month");
+    }
+    current
+}
+
+fn last_day_of_month(year: i32, month: u32) -> Option<NaiveDate> {
+    let (next_year, next_month) = if month == 12 {
+        (year + 1, 1)
+    } else {
+        (year, month + 1)
+    };
+    NaiveDate::from_ymd_opt(next_year, next_month, 1)?.pred_opt()
+}
+
 /// Converte week_of_year + year em uma data visual ISO "YYYY-MM-DD" (Sábado da semana).
 /// Apenas para display — a lógica temporal usa week_of_year diretamente.
 fn week_to_display_date(year: i32, week: i32) -> String {
@@ -787,6 +841,7 @@ fn split_track_name(full_name: &str) -> (String, String) {
 
 #[cfg(test)]
 mod tests {
+    use chrono::Datelike;
     use rand::{rngs::StdRng, SeedableRng};
 
     use super::*;
@@ -934,16 +989,17 @@ mod tests {
     // ── Testes de generate_calendar_for_category_with_year ───────────────────
 
     #[test]
-    fn test_regular_calendar_week_range() {
+    fn test_regular_calendar_month_window() {
         let mut rng = StdRng::seed_from_u64(10);
         let calendar = generate_calendar_for_category_with_year("S001", 2028, "gt3", &mut rng)
             .expect("gt3 calendar");
         for entry in &calendar {
+            let date = chrono::NaiveDate::parse_from_str(&entry.display_date, "%Y-%m-%d")
+                .expect("valid regular display_date");
             assert!(
-                entry.week_of_year >= REGULAR_SEASON_START
-                    && entry.week_of_year <= REGULAR_SEASON_END,
-                "week_of_year {} fora do range regular",
-                entry.week_of_year
+                (2..=8).contains(&date.month()),
+                "data regular {} fora da janela fevereiro-agosto",
+                entry.display_date
             );
             assert_eq!(entry.season_phase, SeasonPhase::BlocoRegular);
         }
@@ -980,7 +1036,7 @@ mod tests {
     // ── Testes de generate_and_insert_special_calendars ───────────────────────
 
     #[test]
-    fn test_special_calendars_week_range() {
+    fn test_special_calendars_month_window() {
         use crate::db::migrations;
         use crate::db::queries::seasons::insert_season;
         use crate::models::season::Season;
@@ -994,16 +1050,33 @@ mod tests {
         generate_and_insert_special_calendars(&conn, "S001", 2028, &mut rng)
             .expect("special calendars");
 
-        let out_of_range: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM calendar
-             WHERE season_phase = 'BlocoEspecial'
-               AND (week_of_year < 41 OR week_of_year > 50)",
-                [],
-                |row| row.get(0),
+        let mut stmt = conn
+            .prepare(
+                "SELECT data FROM calendar
+                 WHERE season_phase = 'BlocoEspecial'
+                 ORDER BY week_of_year ASC, data ASC",
             )
-            .unwrap_or(0);
-        assert_eq!(out_of_range, 0, "entradas especiais fora do range 41-50");
+            .expect("prepare special dates");
+        let dates: Vec<String> = stmt
+            .query_map([], |row| row.get(0))
+            .expect("query special dates")
+            .collect::<Result<_, _>>()
+            .expect("collect special dates");
+
+        assert!(
+            !dates.is_empty(),
+            "calendário especial deveria gerar ao menos uma data"
+        );
+
+        for display_date in dates {
+            let date = chrono::NaiveDate::parse_from_str(&display_date, "%Y-%m-%d")
+                .expect("valid special display_date");
+            assert!(
+                (9..=12).contains(&date.month()),
+                "data especial {} fora da janela setembro-dezembro",
+                display_date
+            );
+        }
     }
 
     #[test]
@@ -1088,6 +1161,7 @@ mod tests {
 
     // ── Testes de storyline temático ──────────────────────────────────────────
 
+    #[allow(dead_code)]
     fn all_free_regional_ids() -> HashSet<u32> {
         use generator::{free_tracks_for_region, CalendarRegion};
         [

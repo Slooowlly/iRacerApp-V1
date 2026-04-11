@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 pub struct MultiClassInfo {
     pub class_name: &'static str,
     pub num_equipes: u8,

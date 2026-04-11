@@ -25,6 +25,7 @@ function Header({ activeTab, onTabChange }) {
   const showRaceBriefing = useCareerStore((state) => state.showRaceBriefing);
   const startCalendarAdvance = useCareerStore((state) => state.startCalendarAdvance);
   const advanceSeason = useCareerStore((state) => state.advanceSeason);
+  const skipAllPendingRaces = useCareerStore((state) => state.skipAllPendingRaces);
   const closeRaceBriefing = useCareerStore((state) => state.closeRaceBriefing);
   const [seasonChampion, setSeasonChampion] = useState(null);
 
@@ -32,6 +33,7 @@ function Header({ activeTab, onTabChange }) {
   const visibleCountdown = displayDaysUntilNextEvent ?? temporalSummary?.days_until_next_event;
   const canAdvanceCalendar = nextRace || (temporalSummary?.pending_in_phase > 0);
   const hasNoPendingRace = !nextRace;
+  const isFreeAgent = !playerTeam;
 
   useEffect(() => {
     let mounted = true;
@@ -80,6 +82,11 @@ function Header({ activeTab, onTabChange }) {
 
   async function handleAdvanceSeason() {
     try {
+      if (isFreeAgent && hasNoPendingRace) {
+        await skipAllPendingRaces?.();
+        return;
+      }
+
       await advanceSeason?.();
     } catch (error) {
       console.error("Erro ao avancar temporada pelo header:", error);
@@ -151,7 +158,9 @@ function Header({ activeTab, onTabChange }) {
                     ? "Avancando..."
                     : canAdvanceCalendar
                       ? "Avancar calendario"
-                      : "Avancar temporada"}
+                      : isFreeAgent && hasNoPendingRace
+                        ? "Pular temporada"
+                        : "Avancar temporada"}
                 </GlassButton>
               )}
             </div>
@@ -200,16 +209,18 @@ function Header({ activeTab, onTabChange }) {
                   />
                 </div>
               </div>
-            ) : hasNoPendingRace ? (
+            ) : hasNoPendingRace && playerTeam?.categoria ? (
               <SeasonFinishedBanner
                 season={season}
-                category={playerTeam?.categoria}
+                category={playerTeam.categoria}
                 champion={seasonChampion}
               />
             ) : (
               <p className="text-sm text-text-muted">
                 {season
-                  ? `${formatSurfaceSeasonLabel(season)} - Sem corrida pendente`
+                  ? isFreeAgent
+                    ? `${formatSurfaceSeasonLabel(season)} - Sem equipe nesta temporada`
+                    : `${formatSurfaceSeasonLabel(season)} - Sem corrida pendente`
                   : "Carregando..."}
               </p>
             )}

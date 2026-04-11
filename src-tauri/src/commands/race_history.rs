@@ -196,11 +196,65 @@ fn read_race_history(career_dir: &Path) -> Result<RaceHistoryStore, String> {
 
 fn write_race_history(career_dir: &Path, store: &RaceHistoryStore) -> Result<(), String> {
     let path = race_history_path(career_dir);
+    let temp_path = race_history_temp_path(career_dir);
     let json = serde_json::to_string_pretty(store)
         .map_err(|e| format!("Falha ao serializar race_results.json: {e}"))?;
-    std::fs::write(path, json).map_err(|e| format!("Falha ao gravar race_results.json: {e}"))
+    std::fs::write(&temp_path, json)
+        .map_err(|e| format!("Falha ao gravar race_results.json: {e}"))?;
+
+    if path.exists() {
+        std::fs::remove_file(&path)
+            .map_err(|e| format!("Falha ao substituir race_results.json: {e}"))?;
+    }
+
+    std::fs::rename(&temp_path, &path)
+        .map_err(|e| format!("Falha ao finalizar race_results.json: {e}"))
 }
 
 fn race_history_path(career_dir: &Path) -> PathBuf {
     career_dir.join("race_results.json")
+}
+
+fn race_history_temp_path(career_dir: &Path) -> PathBuf {
+    career_dir.join("race_results.json.tmp")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_career_dir(test_name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "iracer_race_history_{}_{}_{}",
+            test_name,
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn write_race_history_preserves_existing_file_when_staged_write_fails() {
+        let career_dir = temp_career_dir("preserve_existing");
+        let history_path = race_history_path(&career_dir);
+        let original =
+            r#"{"categories":{"gt4":{"rounds":{"1":[{"driver_id":"P001","position":1}]}}}}"#;
+        std::fs::write(&history_path, original).unwrap();
+
+        let temp_path = career_dir.join("race_results.json.tmp");
+        std::fs::create_dir_all(&temp_path).unwrap();
+
+        let store = RaceHistoryStore::default();
+        let err = write_race_history(&career_dir, &store).expect_err("staged write should fail");
+        assert!(err.contains("Falha ao gravar race_results.json"));
+
+        let preserved = std::fs::read_to_string(&history_path).unwrap();
+        assert_eq!(preserved, original);
+
+        std::fs::remove_dir_all(&career_dir).unwrap();
+    }
 }

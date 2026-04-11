@@ -12,6 +12,23 @@ import {
   classifyWeekendState,
 } from "./nextRaceEditorial";
 
+function getDisplayError(error, fallback) {
+  if (typeof error === "string") {
+    return error;
+  }
+
+  if (typeof error?.message === "string" && error.message.trim()) {
+    return error.message;
+  }
+
+  const rendered = error?.toString?.();
+  if (typeof rendered === "string" && rendered.trim() && rendered !== "[object Object]") {
+    return rendered;
+  }
+
+  return fallback;
+}
+
 function NextRaceTab() {
   const [error, setError] = useState("");
   const [exportNotice, setExportNotice] = useState("");
@@ -32,7 +49,10 @@ function NextRaceTab() {
   const careerId = useCareerStore((state) => state.careerId);
   const simulateRace = useCareerStore((state) => state.simulateRace);
   const advanceSeason = useCareerStore((state) => state.advanceSeason);
+  const skipAllPendingRaces = useCareerStore((state) => state.skipAllPendingRaces);
   const enterPreseason = useCareerStore((state) => state.enterPreseason);
+  const finishSpecialBlock = useCareerStore((state) => state.finishSpecialBlock);
+  const isConvocating = useCareerStore((state) => state.isConvocating);
 
   useEffect(() => {
     let active = true;
@@ -219,11 +239,7 @@ function NextRaceTab() {
     try {
       await simulateRace();
     } catch (invokeError) {
-      setError(
-        typeof invokeError === "string"
-          ? invokeError
-          : invokeError?.toString?.() ?? "Nao foi possivel simular a corrida.",
-      );
+      setError(getDisplayError(invokeError, "Nao foi possivel simular a corrida."));
     }
   }
 
@@ -232,6 +248,11 @@ function NextRaceTab() {
     setExportNotice("");
 
     try {
+      if (season?.fase === "BlocoEspecial") {
+        await finishSpecialBlock();
+        return;
+      }
+
       if (hasExistingPreseason) {
         await enterPreseason();
         return;
@@ -239,11 +260,7 @@ function NextRaceTab() {
 
       await advanceSeason();
     } catch (invokeError) {
-      setError(
-        typeof invokeError === "string"
-          ? invokeError
-          : invokeError?.toString?.() ?? "Nao foi possivel avancar para a pre-temporada.",
-      );
+      setError(getDisplayError(invokeError, "Nao foi possivel avancar para a pre-temporada."));
     }
   }
 
@@ -252,39 +269,67 @@ function NextRaceTab() {
   }
 
   if (!nextRace) {
+    const isFreeAgent = !playerTeam;
     return (
       <div className="relative">
         <LoadingOverlay
-          open={isAdvancing}
-          title="Virando a temporada"
-          message="Evolucao, aposentadorias, promocoes e preparacao da pre-temporada em andamento."
+          open={isAdvancing || isConvocating}
+          title={isFreeAgent ? "Pulando temporada" : season?.fase === "BlocoEspecial" ? "Simulando bloco especial" : "Virando a temporada"}
+          message={
+            isFreeAgent
+              ? "Simulando todas as corridas da temporada sem sua participacao."
+              : season?.fase === "BlocoEspecial"
+              ? "As corridas especiais restantes estao sendo resolvidas em lote para avancar o calendario."
+              : "Evolucao, aposentadorias, promocoes e preparacao da pre-temporada em andamento."
+          }
         />
 
         <GlassCard hover={false} className="rounded-[28px] p-10">
           <div className="py-6 text-center">
-            <div className="text-6xl">PQ</div>
+            <div className="text-6xl">{isFreeAgent ? "🏳️" : "PQ"}</div>
             <p className="mt-4 text-sm uppercase tracking-[0.22em] text-accent-primary">
-              Proxima corrida
+              {isFreeAgent ? "Agente livre" : "Proxima corrida"}
             </p>
             <h2 className="mt-3 text-3xl font-semibold text-text-primary">
-              Temporada finalizada
+              {isFreeAgent
+                ? "Sem equipe nesta temporada"
+                : season?.fase === "BlocoEspecial"
+                ? "Bloco especial em andamento"
+                : "Temporada finalizada"}
             </h2>
             <p className="mt-3 text-sm text-text-secondary">
-              {hasExistingPreseason
+              {isFreeAgent
+                ? "Voce nao tem equipe nesta temporada. Pule para a proxima pre-temporada e tente o mercado novamente."
+                : season?.fase === "BlocoEspecial"
+                ? "Voce ficou fora das categorias especiais. Use este atalho para simular o restante do bloco e avancar o calendario."
+                : hasExistingPreseason
                 ? "A pre-temporada ja foi iniciada. Voce pode voltar direto para o mercado semanal."
                 : "Todas as corridas da temporada atual ja foram disputadas."}
             </p>
             <div className="mt-6">
               <GlassButton
                 variant="primary"
-                disabled={isAdvancing}
-                onClick={() => void handleSeasonAdvance()}
+                disabled={isAdvancing || isConvocating}
+                onClick={() => {
+                if (isFreeAgent) {
+                  setError("");
+                  skipAllPendingRaces().catch((e) => {
+                    setError(getDisplayError(e, "Erro ao pular temporada."));
+                  });
+                } else {
+                  void handleSeasonAdvance();
+                }
+              }}
               >
-                {isAdvancing
+                {isAdvancing || isConvocating
                   ? "Processando..."
+                  : isFreeAgent
+                  ? "Pular temporada"
+                  : season?.fase === "BlocoEspecial"
+                  ? "Pular bloco especial"
                   : hasExistingPreseason
-                    ? "Continuar pre-temporada"
-                    : "Avancar para pre-temporada"}
+                  ? "Continuar pre-temporada"
+                  : "Avancar para pre-temporada"}
               </GlassButton>
             </div>
             {error ? <p className="mt-4 text-sm text-status-red">{error}</p> : null}
