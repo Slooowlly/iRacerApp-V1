@@ -13,9 +13,10 @@ use crate::db::queries::calendar as calendar_queries;
 use crate::db::queries::contracts as contract_queries;
 use crate::db::queries::drivers as driver_queries;
 use crate::db::queries::teams as team_queries;
+use crate::finance::cashflow::apply_offseason_competitiveness_impact;
+use crate::finance::state::{choose_season_strategy, refresh_team_financial_state};
 use crate::generators::ids::{next_id, IdType};
 use crate::market::car_build_strategy::choose_car_build_profile;
-use crate::finance::state::{choose_season_strategy, refresh_team_financial_state};
 use crate::market::pipeline::run_market;
 use crate::market::pit_strategy::{
     recalculate_pit_crew_quality, recalculate_pit_strategy_risk, PreviousTeamStanding,
@@ -463,14 +464,16 @@ fn assign_seasonal_team_attributes(
             updated_team.car_build_profile =
                 choose_car_build_profile(team, &category_teams, &calendar);
             updated_team.pit_strategy_risk = recalculate_pit_strategy_risk(team, &category_teams);
+            updated_team.budget = (updated_team.budget
+                - profile_budget_cost(updated_team.car_build_profile))
+            .clamp(0.0, 100.0);
+            refresh_team_financial_state(&mut updated_team);
+            updated_team.season_strategy = choose_season_strategy(&updated_team).to_string();
+            apply_offseason_competitiveness_impact(&mut updated_team);
             updated_team.pit_crew_quality = recalculate_pit_crew_quality(
-                team,
+                &updated_team,
                 previous_standings.get(&team.id).copied(),
             );
-            updated_team.budget =
-                (updated_team.budget - profile_budget_cost(updated_team.car_build_profile))
-                    .clamp(0.0, 100.0);
-            updated_team.season_strategy = choose_season_strategy(&updated_team).to_string();
             refresh_team_financial_state(&mut updated_team);
             team_queries::update_team(conn, &updated_team).map_err(|e| {
                 format!(
@@ -1670,8 +1673,7 @@ mod tests {
             updated_team_b.car_build_profile,
             CarBuildProfile::PowerIntermediate | CarBuildProfile::PowerExtreme
         ));
-        let expected_budget =
-            18.0 - profile_budget_cost(updated_team_b.car_build_profile);
+        let expected_budget = 18.0 - profile_budget_cost(updated_team_b.car_build_profile);
         assert!(
             (updated_team_b.budget - expected_budget).abs() < 0.0001,
             "expected budget {expected_budget}, got {}",
@@ -1694,6 +1696,40 @@ mod tests {
             updated_team_b.season_strategy.as_str(),
             "all_in" | "survival" | "austerity"
         ));
+    }
+
+    #[test]
+    fn test_initialize_preseason_applies_financial_crisis_drag_to_team_quality() {
+        let conn = setup_market_fixture();
+        for entry in [
+            sample_calendar_entry("R201", "S002", "gt4", 1, 93),
+            sample_calendar_entry("R202", "S002", "gt4", 2, 397),
+        ] {
+            calendar_queries::insert_calendar_entry(&conn, &entry).expect("insert calendar entry");
+        }
+
+        let mut team = team_queries::get_team_by_id(&conn, "T002")
+            .expect("load team")
+            .expect("team exists");
+        team.confiabilidade = 70.0;
+        team.engineering = 45.0;
+        team.facilities = 45.0;
+        team.cash_balance = -100_000.0;
+        team.debt_balance = 900_000.0;
+        team.financial_state = "collapse".to_string();
+        team.season_strategy = "survival".to_string();
+        team_queries::update_team(&conn, &team).expect("update crisis team");
+
+        let mut rng = StdRng::seed_from_u64(506);
+        let _plan = initialize_preseason(&conn, 2, &mut rng).expect("plan should be created");
+
+        let updated_team = team_queries::get_team_by_id(&conn, "T002")
+            .expect("reload team")
+            .expect("team exists after preseason");
+
+        assert!(updated_team.confiabilidade < 70.0);
+        assert!(updated_team.engineering < 45.0);
+        assert!(updated_team.facilities < 45.0);
     }
 
     #[test]
