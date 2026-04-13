@@ -4,7 +4,7 @@ use crate::db::connection::DbError;
 
 // ── Versão atual do schema ────────────────────────────────────────────────────
 
-const CURRENT_VERSION: u32 = 24;
+const CURRENT_VERSION: u32 = 25;
 
 // ── API pública ───────────────────────────────────────────────────────────────
 
@@ -34,6 +34,7 @@ pub fn run_all(conn: &Connection) -> Result<(), DbError> {
     migrate_v22(conn)?;
     migrate_v23(conn)?;
     migrate_v24(conn)?;
+    migrate_v25(conn)?;
     set_schema_version(conn, CURRENT_VERSION)?;
     Ok(())
 }
@@ -136,6 +137,10 @@ pub fn run_pending(conn: &Connection) -> Result<(), DbError> {
     if version < 24 {
         migrate_v24(conn)?;
         set_schema_version(conn, 24)?;
+    }
+    if version < 25 {
+        migrate_v25(conn)?;
+        set_schema_version(conn, 25)?;
     }
     Ok(())
 }
@@ -1435,6 +1440,95 @@ fn migrate_v24(conn: &Connection) -> Result<(), DbError> {
          SET pit_crew_quality = 50.0
          WHERE pit_crew_quality IS NULL",
         [],
+    )?;
+
+    Ok(())
+}
+
+fn migrate_v25(conn: &Connection) -> Result<(), DbError> {
+    ensure_column(
+        conn,
+        "teams",
+        "cash_balance",
+        "REAL NOT NULL DEFAULT 0.0",
+    )?;
+    ensure_column(
+        conn,
+        "teams",
+        "debt_balance",
+        "REAL NOT NULL DEFAULT 0.0",
+    )?;
+    ensure_column(
+        conn,
+        "teams",
+        "financial_state",
+        "TEXT NOT NULL DEFAULT 'stable'",
+    )?;
+    ensure_column(
+        conn,
+        "teams",
+        "season_strategy",
+        "TEXT NOT NULL DEFAULT 'balanced'",
+    )?;
+    ensure_column(
+        conn,
+        "teams",
+        "last_round_income",
+        "REAL NOT NULL DEFAULT 0.0",
+    )?;
+    ensure_column(
+        conn,
+        "teams",
+        "last_round_expenses",
+        "REAL NOT NULL DEFAULT 0.0",
+    )?;
+    ensure_column(
+        conn,
+        "teams",
+        "last_round_net",
+        "REAL NOT NULL DEFAULT 0.0",
+    )?;
+    ensure_column(
+        conn,
+        "teams",
+        "parachute_payment_remaining",
+        "REAL NOT NULL DEFAULT 0.0",
+    )?;
+
+    conn.execute_batch(
+        "
+        UPDATE teams
+        SET cash_balance = 0.0
+        WHERE cash_balance IS NULL;
+
+        UPDATE teams
+        SET debt_balance = 0.0
+        WHERE debt_balance IS NULL;
+
+        UPDATE teams
+        SET financial_state = 'stable'
+        WHERE financial_state IS NULL OR TRIM(financial_state) = '';
+
+        UPDATE teams
+        SET season_strategy = 'balanced'
+        WHERE season_strategy IS NULL OR TRIM(season_strategy) = '';
+
+        UPDATE teams
+        SET last_round_income = 0.0
+        WHERE last_round_income IS NULL;
+
+        UPDATE teams
+        SET last_round_expenses = 0.0
+        WHERE last_round_expenses IS NULL;
+
+        UPDATE teams
+        SET last_round_net = 0.0
+        WHERE last_round_net IS NULL;
+
+        UPDATE teams
+        SET parachute_payment_remaining = 0.0
+        WHERE parachute_payment_remaining IS NULL;
+        ",
     )?;
 
     Ok(())
@@ -2957,6 +3051,80 @@ mod tests {
             .map(|count| count > 0)
             .expect("index query");
         assert!(idx_ativa_exists);
+    }
+
+    #[test]
+    fn test_run_pending_v25_adds_team_finance_columns_with_safe_defaults() {
+        let conn = Connection::open_in_memory().expect("in-memory db");
+
+        conn.execute_batch(
+            "
+            CREATE TABLE meta (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+            INSERT INTO meta (key, value) VALUES ('schema_version', '24');
+
+            CREATE TABLE teams (
+                id TEXT PRIMARY KEY,
+                nome TEXT NOT NULL,
+                nome_curto TEXT NOT NULL DEFAULT '',
+                categoria TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL DEFAULT ''
+            );
+
+            INSERT INTO teams (id, nome, nome_curto, categoria, created_at, updated_at)
+            VALUES ('T001', 'Equipe Financeira', 'EF', 'gt3', '2026-01-01', '2026-01-01');
+            ",
+        )
+        .expect("legacy v24 schema");
+
+        run_pending(&conn).expect("migration to v25 should succeed");
+
+        assert_eq!(
+            get_schema_version(&conn).expect("schema version"),
+            CURRENT_VERSION
+        );
+        assert!(column_exists(&conn, "teams", "cash_balance"));
+        assert!(column_exists(&conn, "teams", "debt_balance"));
+        assert!(column_exists(&conn, "teams", "financial_state"));
+        assert!(column_exists(&conn, "teams", "season_strategy"));
+        assert!(column_exists(&conn, "teams", "last_round_income"));
+        assert!(column_exists(&conn, "teams", "last_round_expenses"));
+        assert!(column_exists(&conn, "teams", "last_round_net"));
+        assert!(column_exists(&conn, "teams", "parachute_payment_remaining"));
+
+        let row: (f64, f64, String, String, f64, f64, f64, f64) = conn
+            .query_row(
+                "SELECT cash_balance, debt_balance, financial_state, season_strategy,
+                        last_round_income, last_round_expenses, last_round_net,
+                        parachute_payment_remaining
+                 FROM teams WHERE id = 'T001'",
+                [],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                        row.get(6)?,
+                        row.get(7)?,
+                    ))
+                },
+            )
+            .expect("migrated finance row");
+
+        assert_eq!(row.0, 0.0);
+        assert_eq!(row.1, 0.0);
+        assert_eq!(row.2, "stable");
+        assert_eq!(row.3, "balanced");
+        assert_eq!(row.4, 0.0);
+        assert_eq!(row.5, 0.0);
+        assert_eq!(row.6, 0.0);
+        assert_eq!(row.7, 0.0);
     }
 
     #[test]

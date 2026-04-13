@@ -12,7 +12,9 @@ pub fn insert_team(conn: &Connection, team: &Team) -> Result<(), DbError> {
             id, nome, nome_curto, cor_primaria, cor_secundaria, pais_sede,
             ano_fundacao, categoria, ativa, marca, classe, piloto_1_id, piloto_2_id,
             is_player_team, car_performance, car_build_profile, reliability, pit_strategy_risk,
-            pit_crew_quality, budget, facilities,
+            pit_crew_quality, budget, cash_balance, debt_balance, financial_state,
+            season_strategy, last_round_income, last_round_expenses, last_round_net,
+            parachute_payment_remaining, facilities,
             engineering, prestige, morale, aerodinamica, motor, chassi,
             hierarquia_n1_id, hierarquia_n2_id, hierarquia_status, hierarquia_tensao,
             hierarquia_duelos_total, hierarquia_duelos_n2_vencidos, hierarquia_sequencia_n2,
@@ -27,7 +29,9 @@ pub fn insert_team(conn: &Connection, team: &Team) -> Result<(), DbError> {
             :id, :nome, :nome_curto, :cor_primaria, :cor_secundaria, :pais_sede,
             :ano_fundacao, :categoria, :ativa, :marca, :classe, :piloto_1_id, :piloto_2_id,
             :is_player_team, :car_performance, :car_build_profile, :reliability, :pit_strategy_risk,
-            :pit_crew_quality, :budget, :facilities,
+            :pit_crew_quality, :budget, :cash_balance, :debt_balance, :financial_state,
+            :season_strategy, :last_round_income, :last_round_expenses, :last_round_net,
+            :parachute_payment_remaining, :facilities,
             :engineering, :prestige, :morale, :aerodinamica, :motor, :chassi,
             :hierarquia_n1_id, :hierarquia_n2_id, :hierarquia_status, :hierarquia_tensao,
             :hierarquia_duelos_total, :hierarquia_duelos_n2_vencidos, :hierarquia_sequencia_n2,
@@ -60,6 +64,14 @@ pub fn insert_team(conn: &Connection, team: &Team) -> Result<(), DbError> {
             ":pit_strategy_risk": team.pit_strategy_risk,
             ":pit_crew_quality": team.pit_crew_quality,
             ":budget": team.budget,
+            ":cash_balance": team.cash_balance,
+            ":debt_balance": team.debt_balance,
+            ":financial_state": &team.financial_state,
+            ":season_strategy": &team.season_strategy,
+            ":last_round_income": team.last_round_income,
+            ":last_round_expenses": team.last_round_expenses,
+            ":last_round_net": team.last_round_net,
+            ":parachute_payment_remaining": team.parachute_payment_remaining,
             ":facilities": team.facilities,
             ":engineering": team.engineering,
             ":prestige": team.reputacao,
@@ -197,6 +209,14 @@ pub fn update_team(conn: &Connection, team: &Team) -> Result<(), DbError> {
             pit_strategy_risk = :pit_strategy_risk,
             pit_crew_quality = :pit_crew_quality,
             budget = :budget,
+            cash_balance = :cash_balance,
+            debt_balance = :debt_balance,
+            financial_state = :financial_state,
+            season_strategy = :season_strategy,
+            last_round_income = :last_round_income,
+            last_round_expenses = :last_round_expenses,
+            last_round_net = :last_round_net,
+            parachute_payment_remaining = :parachute_payment_remaining,
             facilities = :facilities,
             engineering = :engineering,
             prestige = :prestige,
@@ -256,6 +276,14 @@ pub fn update_team(conn: &Connection, team: &Team) -> Result<(), DbError> {
             ":pit_strategy_risk": team.pit_strategy_risk,
             ":pit_crew_quality": team.pit_crew_quality,
             ":budget": team.budget,
+            ":cash_balance": team.cash_balance,
+            ":debt_balance": team.debt_balance,
+            ":financial_state": &team.financial_state,
+            ":season_strategy": &team.season_strategy,
+            ":last_round_income": team.last_round_income,
+            ":last_round_expenses": team.last_round_expenses,
+            ":last_round_net": team.last_round_net,
+            ":parachute_payment_remaining": team.parachute_payment_remaining,
             ":facilities": team.facilities,
             ":engineering": team.engineering,
             ":prestige": team.reputacao,
@@ -549,6 +577,18 @@ fn team_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Team> {
     team.pit_strategy_risk = optional_column::<f64>(row, "pit_strategy_risk")?.unwrap_or(50.0);
     team.pit_crew_quality = optional_column::<f64>(row, "pit_crew_quality")?.unwrap_or(50.0);
     team.budget = optional_column::<f64>(row, "budget")?.unwrap_or(50.0);
+    team.cash_balance = optional_column::<f64>(row, "cash_balance")?.unwrap_or(0.0);
+    team.debt_balance = optional_column::<f64>(row, "debt_balance")?.unwrap_or(0.0);
+    team.financial_state =
+        optional_column::<String>(row, "financial_state")?.unwrap_or_else(|| "stable".to_string());
+    team.season_strategy =
+        optional_column::<String>(row, "season_strategy")?.unwrap_or_else(|| "balanced".to_string());
+    team.last_round_income = optional_column::<f64>(row, "last_round_income")?.unwrap_or(0.0);
+    team.last_round_expenses =
+        optional_column::<f64>(row, "last_round_expenses")?.unwrap_or(0.0);
+    team.last_round_net = optional_column::<f64>(row, "last_round_net")?.unwrap_or(0.0);
+    team.parachute_payment_remaining =
+        optional_column::<f64>(row, "parachute_payment_remaining")?.unwrap_or(0.0);
     team.facilities = optional_column::<f64>(row, "facilities")?.unwrap_or(50.0);
     team.engineering = optional_column::<f64>(row, "engineering")?.unwrap_or(50.0);
     team.reputacao = optional_column::<f64>(row, "prestige")?.unwrap_or(50.0);
@@ -731,6 +771,14 @@ mod tests {
         let mut team = sample_team("gt3", "T010");
         team.piloto_1_id = Some("P001".to_string());
         team.piloto_2_id = Some("P002".to_string());
+        team.cash_balance = 2_450_000.0;
+        team.debt_balance = 325_000.0;
+        team.financial_state = "healthy".to_string();
+        team.season_strategy = "balanced".to_string();
+        team.last_round_income = 180_000.0;
+        team.last_round_expenses = 152_500.0;
+        team.last_round_net = 27_500.0;
+        team.parachute_payment_remaining = 500_000.0;
         team.hierarquia_n1_id = Some("P001".to_string());
         team.hierarquia_n2_id = Some("P002".to_string());
         team.hierarquia_tensao = 33.0;
@@ -769,6 +817,17 @@ mod tests {
         assert_eq!(loaded.car_build_profile, team.car_build_profile);
         assert_eq!(loaded.pit_strategy_risk, team.pit_strategy_risk);
         assert_eq!(loaded.pit_crew_quality, team.pit_crew_quality);
+        assert_eq!(loaded.cash_balance, team.cash_balance);
+        assert_eq!(loaded.debt_balance, team.debt_balance);
+        assert_eq!(loaded.financial_state, team.financial_state);
+        assert_eq!(loaded.season_strategy, team.season_strategy);
+        assert_eq!(loaded.last_round_income, team.last_round_income);
+        assert_eq!(loaded.last_round_expenses, team.last_round_expenses);
+        assert_eq!(loaded.last_round_net, team.last_round_net);
+        assert_eq!(
+            loaded.parachute_payment_remaining,
+            team.parachute_payment_remaining
+        );
         assert_eq!(loaded.hierarquia_n1_id.as_deref(), Some("P001"));
         assert_eq!(loaded.hierarquia_n2_id.as_deref(), Some("P002"));
         assert_eq!(loaded.hierarquia_status, "competitivo");
@@ -1035,6 +1094,14 @@ mod tests {
                 pit_strategy_risk REAL NOT NULL DEFAULT 50.0,
                 pit_crew_quality REAL NOT NULL DEFAULT 50.0,
                 budget REAL NOT NULL DEFAULT 50.0,
+                cash_balance REAL NOT NULL DEFAULT 0.0,
+                debt_balance REAL NOT NULL DEFAULT 0.0,
+                financial_state TEXT NOT NULL DEFAULT 'stable',
+                season_strategy TEXT NOT NULL DEFAULT 'balanced',
+                last_round_income REAL NOT NULL DEFAULT 0.0,
+                last_round_expenses REAL NOT NULL DEFAULT 0.0,
+                last_round_net REAL NOT NULL DEFAULT 0.0,
+                parachute_payment_remaining REAL NOT NULL DEFAULT 0.0,
                 facilities REAL NOT NULL DEFAULT 50.0,
                 engineering REAL NOT NULL DEFAULT 50.0,
                 prestige REAL NOT NULL DEFAULT 50.0,
