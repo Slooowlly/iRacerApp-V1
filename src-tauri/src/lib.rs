@@ -154,6 +154,7 @@ mod db;
 mod event_interest;
 mod evolution;
 mod export;
+mod finance;
 mod generators;
 mod hierarchy;
 mod market;
