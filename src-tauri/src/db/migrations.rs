@@ -4,7 +4,7 @@ use crate::db::connection::DbError;
 
 // ── Versão atual do schema ────────────────────────────────────────────────────
 
-const CURRENT_VERSION: u32 = 23;
+const CURRENT_VERSION: u32 = 24;
 
 // ── API pública ───────────────────────────────────────────────────────────────
 
@@ -33,6 +33,7 @@ pub fn run_all(conn: &Connection) -> Result<(), DbError> {
     migrate_v21(conn)?;
     migrate_v22(conn)?;
     migrate_v23(conn)?;
+    migrate_v24(conn)?;
     set_schema_version(conn, CURRENT_VERSION)?;
     Ok(())
 }
@@ -131,6 +132,10 @@ pub fn run_pending(conn: &Connection) -> Result<(), DbError> {
     if version < 23 {
         migrate_v23(conn)?;
         set_schema_version(conn, 23)?;
+    }
+    if version < 24 {
+        migrate_v24(conn)?;
+        set_schema_version(conn, 24)?;
     }
     Ok(())
 }
@@ -1395,6 +1400,40 @@ fn migrate_v23(conn: &Connection) -> Result<(), DbError> {
         "UPDATE teams
          SET car_build_profile = 'balanced'
          WHERE car_build_profile IS NULL OR TRIM(car_build_profile) = ''",
+        [],
+    )?;
+
+    Ok(())
+}
+
+fn migrate_v24(conn: &Connection) -> Result<(), DbError> {
+    if !table_exists(conn, "teams")? {
+        return Ok(());
+    }
+
+    ensure_column(
+        conn,
+        "teams",
+        "pit_strategy_risk",
+        "REAL NOT NULL DEFAULT 50.0",
+    )?;
+    ensure_column(
+        conn,
+        "teams",
+        "pit_crew_quality",
+        "REAL NOT NULL DEFAULT 50.0",
+    )?;
+
+    conn.execute(
+        "UPDATE teams
+         SET pit_strategy_risk = 50.0
+         WHERE pit_strategy_risk IS NULL",
+        [],
+    )?;
+    conn.execute(
+        "UPDATE teams
+         SET pit_crew_quality = 50.0
+         WHERE pit_crew_quality IS NULL",
         [],
     )?;
 
@@ -2878,18 +2917,33 @@ mod tests {
         assert!(column_exists(&conn, "teams", "historico_vitorias"));
         assert!(column_exists(&conn, "teams", "updated_at"));
         assert!(column_exists(&conn, "teams", "car_build_profile"));
+        assert!(column_exists(&conn, "teams", "pit_strategy_risk"));
+        assert!(column_exists(&conn, "teams", "pit_crew_quality"));
 
-        let row: (String, i64, i64, i64, String) = conn
+        let row: (String, i64, i64, i64, String, f64, f64) = conn
             .query_row(
-                "SELECT nome_curto, stats_vitorias, stats_pontos, historico_vitorias, car_build_profile
+                "SELECT nome_curto, stats_vitorias, stats_pontos, historico_vitorias, car_build_profile,
+                        pit_strategy_risk, pit_crew_quality
                  FROM teams WHERE id = 'T001'",
                 [],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                        row.get(6)?,
+                    ))
+                },
             )
             .expect("migrated row");
 
         assert_eq!(row.0, "Equipe Legada");
         assert_eq!(row.4, "balanced");
+        assert_eq!(row.5, 50.0);
+        assert_eq!(row.6, 50.0);
         assert_eq!(row.1, 3);
         assert_eq!(row.2, 42);
         assert_eq!(row.3, 9);

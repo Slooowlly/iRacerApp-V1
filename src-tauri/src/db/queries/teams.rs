@@ -11,7 +11,8 @@ pub fn insert_team(conn: &Connection, team: &Team) -> Result<(), DbError> {
         "INSERT INTO teams (
             id, nome, nome_curto, cor_primaria, cor_secundaria, pais_sede,
             ano_fundacao, categoria, ativa, marca, classe, piloto_1_id, piloto_2_id,
-            is_player_team, car_performance, car_build_profile, reliability, budget, facilities,
+            is_player_team, car_performance, car_build_profile, reliability, pit_strategy_risk,
+            pit_crew_quality, budget, facilities,
             engineering, prestige, morale, aerodinamica, motor, chassi,
             hierarquia_n1_id, hierarquia_n2_id, hierarquia_status, hierarquia_tensao,
             hierarquia_duelos_total, hierarquia_duelos_n2_vencidos, hierarquia_sequencia_n2,
@@ -25,7 +26,8 @@ pub fn insert_team(conn: &Connection, team: &Team) -> Result<(), DbError> {
         ) VALUES (
             :id, :nome, :nome_curto, :cor_primaria, :cor_secundaria, :pais_sede,
             :ano_fundacao, :categoria, :ativa, :marca, :classe, :piloto_1_id, :piloto_2_id,
-            :is_player_team, :car_performance, :car_build_profile, :reliability, :budget, :facilities,
+            :is_player_team, :car_performance, :car_build_profile, :reliability, :pit_strategy_risk,
+            :pit_crew_quality, :budget, :facilities,
             :engineering, :prestige, :morale, :aerodinamica, :motor, :chassi,
             :hierarquia_n1_id, :hierarquia_n2_id, :hierarquia_status, :hierarquia_tensao,
             :hierarquia_duelos_total, :hierarquia_duelos_n2_vencidos, :hierarquia_sequencia_n2,
@@ -55,6 +57,8 @@ pub fn insert_team(conn: &Connection, team: &Team) -> Result<(), DbError> {
             ":car_performance": team.car_performance,
             ":car_build_profile": team.car_build_profile.as_str(),
             ":reliability": team.confiabilidade,
+            ":pit_strategy_risk": team.pit_strategy_risk,
+            ":pit_crew_quality": team.pit_crew_quality,
             ":budget": team.budget,
             ":facilities": team.facilities,
             ":engineering": team.engineering,
@@ -190,6 +194,8 @@ pub fn update_team(conn: &Connection, team: &Team) -> Result<(), DbError> {
             car_performance = :car_performance,
             car_build_profile = :car_build_profile,
             reliability = :reliability,
+            pit_strategy_risk = :pit_strategy_risk,
+            pit_crew_quality = :pit_crew_quality,
             budget = :budget,
             facilities = :facilities,
             engineering = :engineering,
@@ -247,6 +253,8 @@ pub fn update_team(conn: &Connection, team: &Team) -> Result<(), DbError> {
             ":car_performance": team.car_performance,
             ":car_build_profile": team.car_build_profile.as_str(),
             ":reliability": team.confiabilidade,
+            ":pit_strategy_risk": team.pit_strategy_risk,
+            ":pit_crew_quality": team.pit_crew_quality,
             ":budget": team.budget,
             ":facilities": team.facilities,
             ":engineering": team.engineering,
@@ -538,6 +546,8 @@ fn team_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Team> {
         .transpose()?
         .unwrap_or(CarBuildProfile::Balanced);
     team.confiabilidade = optional_column::<f64>(row, "reliability")?.unwrap_or(50.0);
+    team.pit_strategy_risk = optional_column::<f64>(row, "pit_strategy_risk")?.unwrap_or(50.0);
+    team.pit_crew_quality = optional_column::<f64>(row, "pit_crew_quality")?.unwrap_or(50.0);
     team.budget = optional_column::<f64>(row, "budget")?.unwrap_or(50.0);
     team.facilities = optional_column::<f64>(row, "facilities")?.unwrap_or(50.0);
     team.engineering = optional_column::<f64>(row, "engineering")?.unwrap_or(50.0);
@@ -757,6 +767,8 @@ mod tests {
         assert_eq!(loaded.piloto_1_id.as_deref(), Some("P001"));
         assert_eq!(loaded.piloto_2_id.as_deref(), Some("P002"));
         assert_eq!(loaded.car_build_profile, team.car_build_profile);
+        assert_eq!(loaded.pit_strategy_risk, team.pit_strategy_risk);
+        assert_eq!(loaded.pit_crew_quality, team.pit_crew_quality);
         assert_eq!(loaded.hierarquia_n1_id.as_deref(), Some("P001"));
         assert_eq!(loaded.hierarquia_n2_id.as_deref(), Some("P002"));
         assert_eq!(loaded.hierarquia_status, "competitivo");
@@ -989,6 +1001,8 @@ mod tests {
             .expect("team should exist");
 
         assert_eq!(loaded.car_build_profile, CarBuildProfile::Balanced);
+        assert_eq!(loaded.pit_strategy_risk, 50.0);
+        assert_eq!(loaded.pit_crew_quality, 50.0);
     }
 
     fn sample_team(category_id: &str, team_id: &str) -> Team {
@@ -1018,6 +1032,8 @@ mod tests {
                 car_performance REAL NOT NULL DEFAULT 0.0,
                 car_build_profile TEXT NOT NULL DEFAULT 'balanced',
                 reliability REAL NOT NULL DEFAULT 60.0,
+                pit_strategy_risk REAL NOT NULL DEFAULT 50.0,
+                pit_crew_quality REAL NOT NULL DEFAULT 50.0,
                 budget REAL NOT NULL DEFAULT 50.0,
                 facilities REAL NOT NULL DEFAULT 50.0,
                 engineering REAL NOT NULL DEFAULT 50.0,

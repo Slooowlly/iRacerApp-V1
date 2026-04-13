@@ -152,6 +152,16 @@ function MyTeamTab() {
             value={playerTeam?.budget ?? 0}
             rawValue={`${Math.round(playerTeam?.budget ?? 0)}`}
           />
+          <MetricBar
+            label="Risco de pit strategy"
+            value={playerTeam?.pit_strategy_risk ?? 0}
+            rawValue={`${Math.round(playerTeam?.pit_strategy_risk ?? 0)} · ${pitRiskLabel(playerTeam?.pit_strategy_risk ?? 0)}`}
+          />
+          <MetricBar
+            label="Qualidade do pit crew"
+            value={playerTeam?.pit_crew_quality ?? 0}
+            rawValue={`${Math.round(playerTeam?.pit_crew_quality ?? 0)} · ${pitCrewLabel(playerTeam?.pit_crew_quality ?? 0)}`}
+          />
         </div>
       </GlassCard>
     </div>
@@ -255,6 +265,22 @@ function getCarBuildProfileMeta(profile) {
 function normalizeCarPerformance(value) {
   const normalized = ((value + 5) / 21) * 100;
   return Math.max(0, Math.min(100, normalized));
+}
+
+function pitRiskLabel(value) {
+  if (value <= 20) return "Ultra conservador";
+  if (value <= 40) return "Conservador";
+  if (value <= 55) return "Equilibrado";
+  if (value <= 75) return "Agressivo";
+  return "Oportunista";
+}
+
+function pitCrewLabel(value) {
+  if (value <= 20) return "Muito fraco";
+  if (value <= 40) return "Fraco";
+  if (value <= 60) return "Ok";
+  if (value <= 80) return "Forte";
+  return "Elite";
 }
 
 export default MyTeamTab;

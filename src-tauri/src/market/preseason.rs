@@ -16,6 +16,9 @@ use crate::db::queries::teams as team_queries;
 use crate::generators::ids::{next_id, IdType};
 use crate::market::car_build_strategy::choose_car_build_profile;
 use crate::market::pipeline::run_market;
+use crate::market::pit_strategy::{
+    recalculate_pit_crew_quality, recalculate_pit_strategy_risk, PreviousTeamStanding,
+};
 use crate::market::proposals::{MarketProposal, ProposalStatus};
 use crate::market::sync::sync_team_slots_from_active_regular_contracts;
 use crate::models::contract::Contract;
@@ -224,7 +227,7 @@ pub fn initialize_preseason(
         .ok_or_else(|| format!("Temporada {season_number} nao encontrada"))?;
     reset_market_state(conn, &season_id, &PreSeasonPhase::ContractExpiry)?;
     repair_missing_licenses_for_current_categories(conn)?;
-    assign_seasonal_car_build_profiles(conn, &season_id)?;
+    assign_seasonal_team_attributes(conn, season_number, &season_id)?;
 
     let original_contracts = contract_queries::get_all_active_regular_contracts(conn)
         .map_err(|e| format!("Falha ao carregar contratos atuais: {e}"))?;
@@ -423,9 +426,14 @@ pub fn initialize_preseason(
     })
 }
 
-fn assign_seasonal_car_build_profiles(conn: &Connection, season_id: &str) -> Result<(), String> {
+fn assign_seasonal_team_attributes(
+    conn: &Connection,
+    season_number: i32,
+    season_id: &str,
+) -> Result<(), String> {
     let teams =
         team_queries::get_all_teams(conn).map_err(|e| format!("Falha ao carregar equipes: {e}"))?;
+    let previous_standings = load_previous_team_standings(conn, season_number)?;
     let mut categories = teams
         .iter()
         .map(|team| team.categoria.clone())
@@ -453,6 +461,11 @@ fn assign_seasonal_car_build_profiles(conn: &Connection, season_id: &str) -> Res
             let mut updated_team = team.clone();
             updated_team.car_build_profile =
                 choose_car_build_profile(team, &category_teams, &calendar);
+            updated_team.pit_strategy_risk = recalculate_pit_strategy_risk(team, &category_teams);
+            updated_team.pit_crew_quality = recalculate_pit_crew_quality(
+                team,
+                previous_standings.get(&team.id).copied(),
+            );
             updated_team.budget =
                 (updated_team.budget - profile_budget_cost(updated_team.car_build_profile))
                     .clamp(0.0, 100.0);
@@ -466,6 +479,64 @@ fn assign_seasonal_car_build_profiles(conn: &Connection, season_id: &str) -> Res
     }
 
     Ok(())
+}
+
+fn load_previous_team_standings(
+    conn: &Connection,
+    season_number: i32,
+) -> Result<std::collections::HashMap<String, PreviousTeamStanding>, String> {
+    if season_number <= 1 {
+        return Ok(std::collections::HashMap::new());
+    }
+
+    let Some(previous_season_id) = get_season_id_by_number(conn, season_number - 1)? else {
+        return Ok(std::collections::HashMap::new());
+    };
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT equipe_id, categoria, SUM(pontos) AS total_pontos
+             FROM standings
+             WHERE temporada_id = ?1 AND equipe_id IS NOT NULL AND TRIM(equipe_id) <> ''
+             GROUP BY equipe_id, categoria
+             ORDER BY categoria ASC, total_pontos DESC, equipe_id ASC",
+        )
+        .map_err(|e| format!("Falha ao preparar standings anteriores por equipe: {e}"))?;
+    let rows = stmt
+        .query_map(rusqlite::params![previous_season_id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, f64>(2)?,
+            ))
+        })
+        .map_err(|e| format!("Falha ao consultar standings anteriores por equipe: {e}"))?;
+
+    let mut grouped = std::collections::HashMap::<String, Vec<(String, f64)>>::new();
+    for row in rows {
+        let (team_id, category, total_points) =
+            row.map_err(|e| format!("Falha ao ler standings anteriores por equipe: {e}"))?;
+        grouped
+            .entry(category)
+            .or_default()
+            .push((team_id, total_points));
+    }
+
+    let mut result = std::collections::HashMap::new();
+    for teams_in_category in grouped.into_values() {
+        let total_teams = teams_in_category.len();
+        for (index, (team_id, _)) in teams_in_category.into_iter().enumerate() {
+            result.insert(
+                team_id,
+                PreviousTeamStanding {
+                    position: index as i32 + 1,
+                    total_teams,
+                },
+            );
+        }
+    }
+
+    Ok(result)
 }
 
 pub fn advance_week(conn: &Connection, plan: &mut PreSeasonPlan) -> Result<WeekResult, String> {
@@ -1570,6 +1641,8 @@ mod tests {
             .expect("team a exists");
         team_a.car_performance = 12.0;
         team_a.budget = 85.0;
+        team_a.engineering = 82.0;
+        team_a.facilities = 80.0;
         team_queries::update_team(&conn, &team_a).expect("update team a");
 
         let mut team_b = team_queries::get_team_by_id(&conn, "T002")
@@ -1577,6 +1650,8 @@ mod tests {
             .expect("team b exists");
         team_b.car_performance = 4.0;
         team_b.budget = 18.0;
+        team_b.engineering = 35.0;
+        team_b.facilities = 30.0;
         team_queries::update_team(&conn, &team_b).expect("update team b");
 
         let mut rng = StdRng::seed_from_u64(502);
@@ -1585,6 +1660,9 @@ mod tests {
         let updated_team_b = team_queries::get_team_by_id(&conn, "T002")
             .expect("reload team b")
             .expect("team b exists after preseason");
+        let updated_team_a = team_queries::get_team_by_id(&conn, "T001")
+            .expect("reload team a")
+            .expect("team a exists after preseason");
         assert!(matches!(
             updated_team_b.car_build_profile,
             CarBuildProfile::PowerIntermediate | CarBuildProfile::PowerExtreme
@@ -1595,6 +1673,18 @@ mod tests {
             (updated_team_b.budget - expected_budget).abs() < 0.0001,
             "expected budget {expected_budget}, got {}",
             updated_team_b.budget
+        );
+        assert!(
+            updated_team_b.pit_strategy_risk > updated_team_a.pit_strategy_risk,
+            "backmarker should carry more pit risk: weak={} strong={}",
+            updated_team_b.pit_strategy_risk,
+            updated_team_a.pit_strategy_risk
+        );
+        assert!(
+            updated_team_a.pit_crew_quality > updated_team_b.pit_crew_quality,
+            "richer team should keep stronger pit crew: strong={} weak={}",
+            updated_team_a.pit_crew_quality,
+            updated_team_b.pit_crew_quality
         );
     }
 

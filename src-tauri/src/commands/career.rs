@@ -2691,6 +2691,8 @@ fn build_team_summary(conn: &rusqlite::Connection, team: &Team) -> Result<TeamSu
         car_performance: team.car_performance,
         car_build_profile: team.car_build_profile.as_str().to_string(),
         confiabilidade: team.confiabilidade,
+        pit_strategy_risk: team.pit_strategy_risk,
+        pit_crew_quality: team.pit_crew_quality,
         budget: team.budget,
         piloto_1_id: team.piloto_1_id.clone(),
         piloto_1_nome,
@@ -3234,6 +3236,8 @@ mod tests {
         assert!(!player_team.id.is_empty());
         assert!(player_team.piloto_1_id.is_some());
         assert!(player_team.piloto_2_id.is_some());
+        assert!((0.0..=100.0).contains(&player_team.pit_strategy_risk));
+        assert!((0.0..=100.0).contains(&player_team.pit_crew_quality));
 
         let _ = fs::remove_dir_all(base_dir);
     }

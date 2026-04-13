@@ -3,6 +3,7 @@
 use rand::Rng;
 
 use crate::common::time::current_timestamp;
+use crate::market::pit_strategy::{seed_pit_crew_quality, seed_pit_strategy_risk};
 use serde::{Deserialize, Serialize};
 
 use crate::constants::categories::get_category_config;
@@ -92,6 +93,8 @@ pub struct Team {
     pub car_performance: f64,
     pub car_build_profile: CarBuildProfile,
     pub confiabilidade: f64,
+    pub pit_strategy_risk: f64,
+    pub pit_crew_quality: f64,
     pub budget: f64,
     pub facilities: f64,
     pub engineering: f64,
@@ -152,6 +155,15 @@ impl Team {
         rng: &mut impl Rng,
     ) -> Team {
         let timestamp = current_timestamp();
+        let team_risk_seed = team_id.clone();
+        let car_performance = clamp_f64(
+            template.car_performance_base + rng.gen_range(-2.0..=2.0),
+            -5.0,
+            16.0,
+        );
+        let budget = clamp_f64(template.budget_base + rng.gen_range(-5.0..=5.0), 0.0, 100.0);
+        let facilities = clamp_f64(50.0 + rng.gen_range(-10.0..=15.0), 0.0, 100.0);
+        let engineering = clamp_f64(50.0 + rng.gen_range(-10.0..=15.0), 0.0, 100.0);
         Team {
             id: team_id,
             nome: template.nome.to_string(),
@@ -166,16 +178,19 @@ impl Team {
             classe: template.classe.map(str::to_string),
             piloto_1_id: None,
             piloto_2_id: None,
-            car_performance: clamp_f64(
-                template.car_performance_base + rng.gen_range(-2.0..=2.0),
-                -5.0,
-                16.0,
-            ),
+            car_performance,
             car_build_profile: CarBuildProfile::Balanced,
             confiabilidade: clamp_f64(60.0 + rng.gen_range(-10.0..=10.0), 0.0, 100.0),
-            budget: clamp_f64(template.budget_base + rng.gen_range(-5.0..=5.0), 0.0, 100.0),
-            facilities: clamp_f64(50.0 + rng.gen_range(-10.0..=15.0), 0.0, 100.0),
-            engineering: clamp_f64(50.0 + rng.gen_range(-10.0..=15.0), 0.0, 100.0),
+            pit_strategy_risk: seed_pit_strategy_risk(
+                category_id,
+                budget,
+                car_performance,
+                &team_risk_seed,
+            ),
+            pit_crew_quality: seed_pit_crew_quality(category_id, budget, engineering, facilities),
+            budget,
+            facilities,
+            engineering,
             reputacao: clamp_f64(
                 template.reputacao_base + rng.gen_range(-3.0..=3.0),
                 0.0,
@@ -287,6 +302,8 @@ pub fn placeholder_team_from_db(
         car_performance: 50.0,
         car_build_profile: CarBuildProfile::Balanced,
         confiabilidade: 50.0,
+        pit_strategy_risk: 50.0,
+        pit_crew_quality: 50.0,
         budget: 0.0,
         facilities: 0.0,
         engineering: 0.0,
@@ -383,6 +400,8 @@ mod tests {
         assert_eq!(team.hierarquia_status, "estavel");
         assert_eq!(team.hierarquia_tensao, 0.0);
         assert_eq!(team.car_build_profile, CarBuildProfile::Balanced);
+        assert!((0.0..=100.0).contains(&team.pit_strategy_risk));
+        assert!((0.0..=100.0).contains(&team.pit_crew_quality));
         assert_eq!(team.stats_vitorias, 0);
         assert_eq!(team.stats_podios, 0);
         assert_eq!(team.stats_poles, 0);
