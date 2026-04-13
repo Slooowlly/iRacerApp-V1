@@ -1,3 +1,4 @@
+use crate::finance::events::technical_breakthrough_chance;
 use crate::models::team::Team;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -106,13 +107,15 @@ pub fn calculate_offseason_competitiveness_impact(team: &Team) -> OffseasonCompe
     let debt_pressure = (team.debt_balance / 900_000.0).clamp(0.0, 1.2);
     let state = financial_state_bias(&team.financial_state);
     let strategy = season_strategy_bias(&team.season_strategy);
+    let breakthrough_expected_value = technical_breakthrough_chance(team) * 4.0;
 
     let reliability_delta =
         (cash_strength * 1.8 - debt_pressure * 3.2 + state.reliability + strategy.reliability)
             * efficiency;
     let car_performance_delta = (cash_strength * 0.55 - debt_pressure * 0.65
         + state.car_performance
-        + strategy.car_performance)
+        + strategy.car_performance
+        + breakthrough_expected_value)
         * efficiency;
     let structure_delta =
         (cash_strength * 1.15 - debt_pressure * 2.25 + state.structure + strategy.structure)

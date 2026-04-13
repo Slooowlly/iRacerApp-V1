@@ -22,11 +22,11 @@ use crate::event_interest::{
     calculate_expected_event_interest, calculate_realized_event_interest, EventInterestContext,
     InterestTier, RealizedEventInterest,
 };
+use crate::finance::cashflow::{apply_round_cashflow, TeamRoundFinanceContext};
+use crate::finance::events::{apply_crisis_event_if_needed, debt_service};
+use crate::finance::state::refresh_team_financial_state;
 use crate::models::injury::Injury;
 use crate::models::season::Season;
-use crate::finance::cashflow::{apply_round_cashflow, TeamRoundFinanceContext};
-use crate::finance::events::debt_service;
-use crate::finance::state::refresh_team_financial_state;
 use crate::simulation::batch::{
     BriefRaceResult, CategorySimResult, SimHighlight, SimultaneousResults,
 };
@@ -823,8 +823,10 @@ fn apply_race_result_to_database(
         let partial_prize_income = added_points as f64 * 120.0;
         let aid_income = team.parachute_payment_remaining.min(25_000.0);
         let event_operations_cost = 11_000.0 + team.facilities * 140.0 + team.engineering * 95.0;
-        let structural_maintenance_cost =
-            4_500.0 + team.facilities * 65.0 + team.engineering * 60.0 + team.pit_crew_quality * 35.0;
+        let structural_maintenance_cost = 4_500.0
+            + team.facilities * 65.0
+            + team.engineering * 60.0
+            + team.pit_crew_quality * 35.0;
         let technical_investment_cost =
             6_000.0 + team.budget * 160.0 + team.car_performance.max(0.0) * 900.0;
         let debt_service_cost = debt_service(team.debt_balance, 0.015);
@@ -844,6 +846,7 @@ fn apply_race_result_to_database(
                 debt_service_cost,
             },
         );
+        apply_crisis_event_if_needed(&mut updated_team);
         refresh_team_financial_state(&mut updated_team);
         team_queries::update_team_finance_snapshot(tx, &updated_team)?;
     }
@@ -1350,9 +1353,10 @@ mod tests {
             .expect("season")
             .expect("active season");
         let player = driver_queries::get_player_driver(&db.conn).expect("player");
-        let contract = contract_queries::get_active_regular_contract_for_pilot(&db.conn, &player.id)
-            .expect("active contract")
-            .expect("player contract");
+        let contract =
+            contract_queries::get_active_regular_contract_for_pilot(&db.conn, &player.id)
+                .expect("active contract")
+                .expect("player contract");
         let team_before = team_queries::get_team_by_id(&db.conn, &contract.equipe_id)
             .expect("team before")
             .expect("existing team before");
@@ -1382,6 +1386,61 @@ mod tests {
             team_after.last_round_net,
             team_after.last_round_income - team_after.last_round_expenses
         );
+
+        let _ = fs::remove_dir_all(base_dir);
+    }
+
+    #[test]
+    fn test_simulate_race_weekend_applies_crisis_finance_event() {
+        let base_dir = unique_test_dir("simulate_crisis_finance");
+        fs::create_dir_all(&base_dir).expect("base dir");
+
+        create_career_in_base_dir(
+            &base_dir,
+            CreateCareerInput {
+                player_name: "Joao Silva".to_string(),
+                player_nationality: "br".to_string(),
+                player_age: Some(20),
+                category: "mazda_rookie".to_string(),
+                team_index: 0,
+                difficulty: "medio".to_string(),
+            },
+        )
+        .expect("career");
+
+        let config = AppConfig::load_or_default(&base_dir);
+        let db_path = config.saves_dir().join("career_001").join("career.db");
+        let db = Database::open_existing(&db_path).expect("db");
+        let season = season_queries::get_active_season(&db.conn)
+            .expect("season")
+            .expect("active season");
+        let player = driver_queries::get_player_driver(&db.conn).expect("player");
+        let contract =
+            contract_queries::get_active_regular_contract_for_pilot(&db.conn, &player.id)
+                .expect("active contract")
+                .expect("player contract");
+        let mut team = team_queries::get_team_by_id(&db.conn, &contract.equipe_id)
+            .expect("team before")
+            .expect("existing team before");
+        team.cash_balance = -100_000.0;
+        team.debt_balance = 850_000.0;
+        team.financial_state = "collapse".to_string();
+        team_queries::update_team(&db.conn, &team).expect("update crisis team");
+        let next_race = get_next_race(&db.conn, &season.id, "mazda_rookie")
+            .expect("next race")
+            .expect("pending race");
+        drop(db);
+
+        simulate_race_weekend_in_base_dir(&base_dir, "career_001", &next_race.id)
+            .expect("simulate");
+
+        let updated_db = Database::open_existing(&db_path).expect("updated db");
+        let team_after = team_queries::get_team_by_id(&updated_db.conn, &contract.equipe_id)
+            .expect("team after")
+            .expect("existing team after");
+
+        assert!(team_after.cash_balance > -100_000.0);
+        assert!(team_after.debt_balance > 850_000.0);
 
         let _ = fs::remove_dir_all(base_dir);
     }

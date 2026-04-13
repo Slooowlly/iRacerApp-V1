@@ -2,6 +2,7 @@ use rand::Rng;
 use rusqlite::Connection;
 
 use crate::db::queries::teams as team_queries;
+use crate::finance::events::parachute_payment_for_relegation;
 use crate::models::team::Team;
 use crate::promotion::{MovementType, TeamAttributeDelta};
 
@@ -48,6 +49,9 @@ pub fn apply_attribute_deltas(
     team.engineering = (team.engineering + delta.engineering_delta).clamp(0.0, 100.0);
     team.morale = (team.morale * delta.morale_multiplier).clamp(0.5, 1.5);
     team.reputacao = (team.reputacao + delta.reputacao_delta).clamp(0.0, 100.0);
+    if delta.movement_type == MovementType::Rebaixamento {
+        team.parachute_payment_remaining += parachute_payment_for_relegation(&team);
+    }
 
     team_queries::update_team(conn, &team)
         .map_err(|e| format!("Falha ao atualizar equipe '{}': {e}", team.nome))?;
@@ -134,6 +138,33 @@ mod tests {
         assert_eq!(updated.engineering, 100.0);
         assert_eq!(updated.morale, 1.5);
         assert_eq!(updated.reputacao, 100.0);
+    }
+
+    #[test]
+    fn test_relegation_delta_initializes_parachute_payment() {
+        let conn = Connection::open_in_memory().expect("in-memory db");
+        migrations::run_all(&conn).expect("schema");
+        let team = sample_team("gt4", "T001");
+        team_queries::insert_team(&conn, &team).expect("insert team");
+
+        let delta = TeamAttributeDelta {
+            team_id: team.id.clone(),
+            team_name: team.nome.clone(),
+            movement_type: MovementType::Rebaixamento,
+            car_performance_delta: -4.0,
+            budget_delta: -8.0,
+            facilities_delta: -1.0,
+            engineering_delta: -2.0,
+            morale_multiplier: 0.75,
+            reputacao_delta: -6.0,
+        };
+
+        apply_attribute_deltas(&conn, &team.id, &delta).expect("apply deltas");
+        let updated = team_queries::get_team_by_id(&conn, &team.id)
+            .expect("team query")
+            .expect("team exists");
+
+        assert!(updated.parachute_payment_remaining > 0.0);
     }
 
     fn sample_team(category: &str, id: &str) -> Team {
