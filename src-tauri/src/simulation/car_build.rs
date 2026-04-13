@@ -78,6 +78,18 @@ pub fn profile_cost_multiplier(profile: CarBuildProfile) -> f64 {
     }
 }
 
+pub fn profile_budget_cost(profile: CarBuildProfile) -> f64 {
+    match profile {
+        CarBuildProfile::Balanced => 12.0,
+        CarBuildProfile::AccelerationIntermediate
+        | CarBuildProfile::PowerIntermediate
+        | CarBuildProfile::HandlingIntermediate => 7.0,
+        CarBuildProfile::AccelerationExtreme
+        | CarBuildProfile::PowerExtreme
+        | CarBuildProfile::HandlingExtreme => 3.0,
+    }
+}
+
 pub fn dot_match_score(weights: CarAttributeWeights, track_weights: CarAttributeWeights) -> f64 {
     let (team_acc, team_power, team_handling) = weights;
     let (track_acc, track_power, track_handling) = track_weights;

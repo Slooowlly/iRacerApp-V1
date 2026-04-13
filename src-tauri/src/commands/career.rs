@@ -2689,6 +2689,7 @@ fn build_team_summary(conn: &rusqlite::Connection, team: &Team) -> Result<TeamSu
         categoria: team.categoria.clone(),
         classe: team.classe.clone(),
         car_performance: team.car_performance,
+        car_build_profile: team.car_build_profile.as_str().to_string(),
         confiabilidade: team.confiabilidade,
         budget: team.budget,
         piloto_1_id: team.piloto_1_id.clone(),

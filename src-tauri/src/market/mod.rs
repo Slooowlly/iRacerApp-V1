@@ -1,3 +1,4 @@
+pub mod car_build_strategy;
 pub mod driver_ai;
 pub mod evaluation;
 pub mod pipeline;

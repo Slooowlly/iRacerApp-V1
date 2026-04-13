@@ -108,6 +108,8 @@ pub struct TeamSummary {
     #[serde(default)]
     pub classe: Option<String>,
     pub car_performance: f64,
+    #[serde(default)]
+    pub car_build_profile: String,
     pub confiabilidade: f64,
     pub budget: f64,
     pub piloto_1_id: Option<String>,

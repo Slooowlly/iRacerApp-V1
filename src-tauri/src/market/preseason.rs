@@ -14,6 +14,7 @@ use crate::db::queries::contracts as contract_queries;
 use crate::db::queries::drivers as driver_queries;
 use crate::db::queries::teams as team_queries;
 use crate::generators::ids::{next_id, IdType};
+use crate::market::car_build_strategy::choose_car_build_profile;
 use crate::market::pipeline::run_market;
 use crate::market::proposals::{MarketProposal, ProposalStatus};
 use crate::market::sync::sync_team_slots_from_active_regular_contracts;
@@ -24,6 +25,7 @@ use crate::models::license::{
     ensure_driver_can_join_category, grant_driver_license_for_category_if_needed,
     repair_missing_licenses_for_current_categories,
 };
+use crate::simulation::car_build::profile_budget_cost;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum PreSeasonPhase {
@@ -222,6 +224,7 @@ pub fn initialize_preseason(
         .ok_or_else(|| format!("Temporada {season_number} nao encontrada"))?;
     reset_market_state(conn, &season_id, &PreSeasonPhase::ContractExpiry)?;
     repair_missing_licenses_for_current_categories(conn)?;
+    assign_seasonal_car_build_profiles(conn, &season_id)?;
 
     let original_contracts = contract_queries::get_all_active_regular_contracts(conn)
         .map_err(|e| format!("Falha ao carregar contratos atuais: {e}"))?;
@@ -418,6 +421,51 @@ pub fn initialize_preseason(
         planned_events,
         executed_weeks: Vec::new(),
     })
+}
+
+fn assign_seasonal_car_build_profiles(conn: &Connection, season_id: &str) -> Result<(), String> {
+    let teams =
+        team_queries::get_all_teams(conn).map_err(|e| format!("Falha ao carregar equipes: {e}"))?;
+    let mut categories = teams
+        .iter()
+        .map(|team| team.categoria.clone())
+        .collect::<Vec<_>>();
+    categories.sort();
+    categories.dedup();
+
+    for category in categories {
+        let category_teams = teams
+            .iter()
+            .filter(|team| team.categoria == category)
+            .cloned()
+            .collect::<Vec<_>>();
+        if category_teams.is_empty() {
+            continue;
+        }
+
+        let calendar = calendar_queries::get_calendar(conn, season_id, &category)
+            .map_err(|e| format!("Falha ao carregar calendario de {category}: {e}"))?;
+        if calendar.is_empty() {
+            continue;
+        }
+
+        for team in &category_teams {
+            let mut updated_team = team.clone();
+            updated_team.car_build_profile =
+                choose_car_build_profile(team, &category_teams, &calendar);
+            updated_team.budget =
+                (updated_team.budget - profile_budget_cost(updated_team.car_build_profile))
+                    .clamp(0.0, 100.0);
+            team_queries::update_team(conn, &updated_team).map_err(|e| {
+                format!(
+                    "Falha ao salvar perfil sazonal do carro para equipe {}: {e}",
+                    updated_team.nome
+                )
+            })?;
+        }
+    }
+
+    Ok(())
 }
 
 pub fn advance_week(conn: &Connection, plan: &mut PreSeasonPlan) -> Result<WeekResult, String> {
@@ -1418,17 +1466,52 @@ mod tests {
     use rusqlite::{params, Connection};
 
     use super::*;
+    use crate::calendar::CalendarEntry;
     use crate::constants::teams::get_team_templates;
     use crate::db::migrations;
+    use crate::db::queries::calendar as calendar_queries;
     use crate::db::queries::contracts as contract_queries;
     use crate::db::queries::drivers as driver_queries;
     use crate::db::queries::seasons as season_queries;
     use crate::db::queries::teams as team_queries;
     use crate::models::contract::Contract;
     use crate::models::driver::Driver;
-    use crate::models::enums::{DriverStatus, TeamRole};
+    use crate::models::enums::{
+        DriverStatus, RaceStatus, SeasonPhase, TeamRole, ThematicSlot, WeatherCondition,
+    };
     use crate::models::license::driver_has_required_license_for_category;
     use crate::models::season::Season;
+    use crate::simulation::car_build::{profile_budget_cost, CarBuildProfile};
+
+    fn sample_calendar_entry(
+        id: &str,
+        season_id: &str,
+        category: &str,
+        rodada: i32,
+        track_id: u32,
+    ) -> CalendarEntry {
+        CalendarEntry {
+            id: id.to_string(),
+            season_id: season_id.to_string(),
+            categoria: category.to_string(),
+            rodada,
+            nome: format!("Round {rodada}"),
+            track_id,
+            track_name: format!("Track {track_id}"),
+            track_config: "Full".to_string(),
+            clima: WeatherCondition::Dry,
+            temperatura: 22.0,
+            voltas: 20,
+            duracao_corrida_min: 30,
+            duracao_classificacao_min: 15,
+            status: RaceStatus::Pendente,
+            horario: "14:00".to_string(),
+            week_of_year: rodada,
+            season_phase: SeasonPhase::BlocoRegular,
+            display_date: "2025-02-01".to_string(),
+            thematic_slot: ThematicSlot::NaoClassificado,
+        }
+    }
 
     #[test]
     fn test_initialize_preseason_creates_plan() {
@@ -1468,6 +1551,51 @@ mod tests {
         let plan = initialize_preseason(&conn, 2, &mut rng).expect("plan should be created");
 
         assert!((3..=12).contains(&plan.state.total_weeks));
+    }
+
+    #[test]
+    fn test_initialize_preseason_assigns_power_profile_for_weak_team_on_power_calendar() {
+        let conn = setup_market_fixture();
+        for entry in [
+            sample_calendar_entry("R101", "S002", "gt4", 1, 93),
+            sample_calendar_entry("R102", "S002", "gt4", 2, 287),
+            sample_calendar_entry("R103", "S002", "gt4", 3, 188),
+            sample_calendar_entry("R104", "S002", "gt4", 4, 397),
+        ] {
+            calendar_queries::insert_calendar_entry(&conn, &entry).expect("insert calendar entry");
+        }
+
+        let mut team_a = team_queries::get_team_by_id(&conn, "T001")
+            .expect("load team a")
+            .expect("team a exists");
+        team_a.car_performance = 12.0;
+        team_a.budget = 85.0;
+        team_queries::update_team(&conn, &team_a).expect("update team a");
+
+        let mut team_b = team_queries::get_team_by_id(&conn, "T002")
+            .expect("load team b")
+            .expect("team b exists");
+        team_b.car_performance = 4.0;
+        team_b.budget = 18.0;
+        team_queries::update_team(&conn, &team_b).expect("update team b");
+
+        let mut rng = StdRng::seed_from_u64(502);
+        let _plan = initialize_preseason(&conn, 2, &mut rng).expect("plan should be created");
+
+        let updated_team_b = team_queries::get_team_by_id(&conn, "T002")
+            .expect("reload team b")
+            .expect("team b exists after preseason");
+        assert!(matches!(
+            updated_team_b.car_build_profile,
+            CarBuildProfile::PowerIntermediate | CarBuildProfile::PowerExtreme
+        ));
+        let expected_budget =
+            18.0 - profile_budget_cost(updated_team_b.car_build_profile);
+        assert!(
+            (updated_team_b.budget - expected_budget).abs() < 0.0001,
+            "expected budget {expected_budget}, got {}",
+            updated_team_b.budget
+        );
     }
 
     #[test]
