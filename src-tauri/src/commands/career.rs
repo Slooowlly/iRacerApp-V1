@@ -9,12 +9,11 @@ use tauri::{AppHandle, Manager};
 use crate::calendar::{generate_all_calendars_with_year, CalendarEntry};
 use crate::commands::career_detail::build_driver_detail_payload;
 use crate::commands::career_types::{
-    BriefingPhraseEntry, BriefingPhraseEntryInput, BriefingPhraseHistory, BriefingStorySummary,
-    AcceptedSpecialOfferSummary, CareerData, CareerResumeContext, CareerResumeView,
-    ContractWarningInfo, CreateCareerResult, DriverDetail, DriverSummary,
-    NextRaceBriefingSummary, PrimaryRivalSummary, RaceSummary, SaveInfo, SeasonSummary,
-    TeamStanding, TeamSummary, TrackHistorySummary,
-    VerifyDatabaseResponse,
+    AcceptedSpecialOfferSummary, BriefingPhraseEntry, BriefingPhraseEntryInput,
+    BriefingPhraseHistory, BriefingStorySummary, CareerData, CareerResumeContext, CareerResumeView,
+    ContractWarningInfo, CreateCareerResult, DriverDetail, DriverSummary, NextRaceBriefingSummary,
+    PrimaryRivalSummary, RaceSummary, SaveInfo, SeasonSummary, TeamStanding, TeamSummary,
+    TrackHistorySummary, VerifyDatabaseResponse,
 };
 use crate::commands::race_history::{
     build_driver_histories, empty_previous_champions, ConstructorChampion, DriverRaceHistory,
@@ -1487,11 +1486,12 @@ fn normalize_regular_contracts_for_team(
     let team = team_queries::get_team_by_id(conn, team_id)
         .map_err(|e| format!("Falha ao carregar equipe para normalizar contratos: {e}"))?
         .ok_or_else(|| "Equipe nao encontrada para normalizar contratos.".to_string())?;
-    let mut active_regular_contracts = contract_queries::get_active_contracts_for_team(conn, team_id)
-        .map_err(|e| format!("Falha ao carregar contratos ativos da equipe: {e}"))?
-        .into_iter()
-        .filter(|contract| contract.tipo == crate::models::enums::ContractType::Regular)
-        .collect::<Vec<_>>();
+    let mut active_regular_contracts =
+        contract_queries::get_active_contracts_for_team(conn, team_id)
+            .map_err(|e| format!("Falha ao carregar contratos ativos da equipe: {e}"))?
+            .into_iter()
+            .filter(|contract| contract.tipo == crate::models::enums::ContractType::Regular)
+            .collect::<Vec<_>>();
     active_regular_contracts.sort_by(|a, b| {
         b.temporada_inicio
             .cmp(&a.temporada_inicio)
@@ -1515,11 +1515,11 @@ fn normalize_regular_contracts_for_team(
 
         contract_queries::update_contract_status(conn, &contract.id, &ContractStatus::Rescindido)
             .map_err(|e| {
-                format!(
-                    "Falha ao rescindir contrato regular excedente '{}': {e}",
-                    contract.id
-                )
-            })?;
+            format!(
+                "Falha ao rescindir contrato regular excedente '{}': {e}",
+                contract.id
+            )
+        })?;
         displaced_driver_ids.insert(contract.piloto_id);
     }
 
@@ -1536,7 +1536,12 @@ fn normalize_regular_contracts_for_team(
 
     for driver_id in displaced_driver_ids {
         if contract_queries::get_active_contract_for_pilot(conn, &driver_id)
-            .map_err(|e| format!("Falha ao verificar contrato remanescente de '{}': {e}", driver_id))?
+            .map_err(|e| {
+                format!(
+                    "Falha ao verificar contrato remanescente de '{}': {e}",
+                    driver_id
+                )
+            })?
             .is_some()
         {
             continue;
@@ -4486,7 +4491,10 @@ mod tests {
             .expect("driver preview");
 
         assert_eq!(preview.categoria, "mazda_amador");
-        assert_eq!(preview.previous_team_name.as_deref(), Some(regular_team.nome.as_str()));
+        assert_eq!(
+            preview.previous_team_name.as_deref(),
+            Some(regular_team.nome.as_str())
+        );
         assert_eq!(
             preview.previous_team_color.as_deref(),
             Some(regular_team.cor_primaria.as_str())
@@ -4791,17 +4799,24 @@ mod tests {
             .expect("season query")
             .expect("active season");
         let current_contract = latest_regular_contract_for_driver(&db.conn, &player.id);
-        let target_team = team_queries::get_teams_by_category(&db.conn, &current_contract.categoria)
-            .expect("teams by category")
-            .into_iter()
-            .find(|team| team.id != current_contract.equipe_id)
-            .expect("target team");
+        let target_team =
+            team_queries::get_teams_by_category(&db.conn, &current_contract.categoria)
+                .expect("teams by category")
+                .into_iter()
+                .find(|team| team.id != current_contract.equipe_id)
+                .expect("target team");
         let displaced_driver_id = target_team
             .piloto_1_id
             .clone()
             .expect("full target team should have n1 incumbent");
 
-        seed_player_proposal(&db.conn, &season.id, &player.id, &target_team.id, "Pendente");
+        seed_player_proposal(
+            &db.conn,
+            &season.id,
+            &player.id,
+            &target_team.id,
+            "Pendente",
+        );
 
         respond_to_proposal_in_base_dir(
             &base_dir,
@@ -4813,17 +4828,16 @@ mod tests {
 
         let career = load_career_in_base_dir(&base_dir, "career_001").expect("load career");
         let refreshed_db = Database::open_existing(&db_path).expect("db reopen");
-        let refreshed_target_team = team_queries::get_team_by_id(&refreshed_db.conn, &target_team.id)
-            .expect("query target team")
-            .expect("target team");
-        let target_contracts = contract_queries::get_active_contracts_for_team(
-            &refreshed_db.conn,
-            &target_team.id,
-        )
-        .expect("target team contracts")
-        .into_iter()
-        .filter(|contract| contract.tipo == crate::models::enums::ContractType::Regular)
-        .collect::<Vec<_>>();
+        let refreshed_target_team =
+            team_queries::get_team_by_id(&refreshed_db.conn, &target_team.id)
+                .expect("query target team")
+                .expect("target team");
+        let target_contracts =
+            contract_queries::get_active_contracts_for_team(&refreshed_db.conn, &target_team.id)
+                .expect("target team contracts")
+                .into_iter()
+                .filter(|contract| contract.tipo == crate::models::enums::ContractType::Regular)
+                .collect::<Vec<_>>();
         let displaced_contract = contract_queries::get_active_regular_contract_for_pilot(
             &refreshed_db.conn,
             &displaced_driver_id,
@@ -5366,8 +5380,8 @@ mod tests {
 
         crate::convocation::advance_to_convocation_window(&db.conn)
             .expect("advance to convocation");
-        let convocation = crate::convocation::run_convocation_window(&db.conn)
-            .expect("run convocation");
+        let convocation =
+            crate::convocation::run_convocation_window(&db.conn).expect("run convocation");
         assert!(
             convocation.errors.is_empty(),
             "convocation should not report structural errors: {:?}",
@@ -5376,8 +5390,9 @@ mod tests {
         crate::convocation::iniciar_bloco_especial(&db.conn).expect("start special block");
 
         for category_id in ["production_challenger", "endurance"] {
-            let active_drivers = driver_queries::get_drivers_by_active_category(&db.conn, category_id)
-                .expect("active special drivers");
+            let active_drivers =
+                driver_queries::get_drivers_by_active_category(&db.conn, category_id)
+                    .expect("active special drivers");
             let teams =
                 team_queries::get_teams_by_category(&db.conn, category_id).expect("special teams");
             let assigned_ids: std::collections::HashSet<String> = teams

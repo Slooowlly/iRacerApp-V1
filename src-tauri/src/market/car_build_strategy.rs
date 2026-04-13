@@ -1,9 +1,7 @@
 use crate::calendar::CalendarEntry;
 use crate::constants::categories::get_category_config;
 use crate::models::team::Team;
-use crate::simulation::car_build::{
-    profile_budget_cost, track_advantage, CarBuildProfile,
-};
+use crate::simulation::car_build::{profile_budget_cost, track_advantage, CarBuildProfile};
 use crate::simulation::track_profile::get_track_simulation_data;
 
 const ALL_PROFILES: [CarBuildProfile; 7] = [
@@ -87,8 +85,7 @@ fn calendar_fit_score(calendar: &[CalendarEntry], profile: CarBuildProfile) -> f
 fn strategy_bias(context: CompetitiveContext, profile: CarBuildProfile) -> f64 {
     match profile {
         CarBuildProfile::Balanced => {
-            context.title_pressure * 8.0
-                + context.stability_pressure * 4.5
+            context.title_pressure * 8.0 + context.stability_pressure * 4.5
                 - context.promotion_pressure * 1.5
                 - context.relegation_pressure * 5.5
         }
@@ -103,8 +100,7 @@ fn strategy_bias(context: CompetitiveContext, profile: CarBuildProfile) -> f64 {
         CarBuildProfile::AccelerationExtreme
         | CarBuildProfile::PowerExtreme
         | CarBuildProfile::HandlingExtreme => {
-            -context.title_pressure * 6.0
-                + context.promotion_pressure * 1.5
+            -context.title_pressure * 6.0 + context.promotion_pressure * 1.5
                 - context.stability_pressure * 2.5
                 + context.relegation_pressure * 7.0
         }
@@ -198,7 +194,9 @@ fn movement_bias(team: &Team, profile: CarBuildProfile) -> f64 {
 
 fn build_competitive_context(team: &Team, category_peers: &[Team]) -> CompetitiveContext {
     let percentile = performance_percentile(team, category_peers);
-    let tier = get_category_config(&team.categoria).map(|config| config.tier).unwrap_or(0);
+    let tier = get_category_config(&team.categoria)
+        .map(|config| config.tier)
+        .unwrap_or(0);
     let title_pressure = ((0.35 - percentile) / 0.35).clamp(0.0, 1.0);
     let relegation_pressure = ((percentile - 0.55) / 0.30).clamp(0.0, 1.0);
     let promotion_pressure = if tier < 4 {
@@ -207,8 +205,11 @@ fn build_competitive_context(team: &Team, category_peers: &[Team]) -> Competitiv
     } else {
         0.0
     };
-    let stability_pressure =
-        (1.0 - title_pressure.max(relegation_pressure).max(promotion_pressure)).clamp(0.0, 1.0);
+    let stability_pressure = (1.0
+        - title_pressure
+            .max(relegation_pressure)
+            .max(promotion_pressure))
+    .clamp(0.0, 1.0);
 
     CompetitiveContext {
         title_pressure,
@@ -282,7 +283,13 @@ mod tests {
         team
     }
 
-    fn sample_calendar_entry(id: &str, season_id: &str, category: &str, rodada: i32, track_id: u32) -> CalendarEntry {
+    fn sample_calendar_entry(
+        id: &str,
+        season_id: &str,
+        category: &str,
+        rodada: i32,
+        track_id: u32,
+    ) -> CalendarEntry {
         CalendarEntry {
             id: id.to_string(),
             season_id: season_id.to_string(),
@@ -358,11 +365,13 @@ mod tests {
             sample_calendar_entry("R4", "S002", "gt4", 4, 397),
         ];
         let mut long_calendar = short_calendar.clone();
-        long_calendar.extend(short_calendar.iter().cloned().enumerate().map(|(index, mut entry)| {
-            entry.id = format!("R{}", index + 10);
-            entry.rodada += 4;
-            entry
-        }));
+        long_calendar.extend(short_calendar.iter().cloned().enumerate().map(
+            |(index, mut entry)| {
+                entry.id = format!("R{}", index + 10);
+                entry.rodada += 4;
+                entry
+            },
+        ));
 
         let short_score = calendar_fit_score(&short_calendar, CarBuildProfile::PowerExtreme);
         let long_score = calendar_fit_score(&long_calendar, CarBuildProfile::PowerExtreme);
@@ -403,12 +412,7 @@ mod tests {
         let contender = sample_team("T002", "gt4", 11.9, 78.0);
         let midfield = sample_team("T003", "gt4", 7.0, 55.0);
         let backmarker = sample_team("T004", "gt4", 4.0, 30.0);
-        let peers = vec![
-            leader.clone(),
-            contender.clone(),
-            midfield,
-            backmarker,
-        ];
+        let peers = vec![leader.clone(), contender.clone(), midfield, backmarker];
 
         let leader_percentile = performance_percentile(&leader, &peers);
         let contender_percentile = performance_percentile(&contender, &peers);

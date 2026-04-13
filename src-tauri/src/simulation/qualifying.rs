@@ -194,7 +194,10 @@ mod tests {
             ..SimulationContext::test_default()
         };
 
-        (SimDriver::from_driver_team_and_track(&driver, &team, track_id), ctx)
+        (
+            SimDriver::from_driver_team_and_track(&driver, &team, track_id),
+            ctx,
+        )
     }
 
     #[test]
@@ -390,8 +393,12 @@ mod tests {
 
     #[test]
     fn test_qualifying_power_profile_beats_wrong_profile_at_monza() {
-        let (power_driver, ctx) =
-            build_driver_for_track("PWR", CarBuildProfile::PowerExtreme, 93, TrackCharacter::Flowing);
+        let (power_driver, ctx) = build_driver_for_track(
+            "PWR",
+            CarBuildProfile::PowerExtreme,
+            93,
+            TrackCharacter::Flowing,
+        );
         let (accel_driver, _) = build_driver_for_track(
             "ACC",
             CarBuildProfile::AccelerationExtreme,
@@ -400,7 +407,11 @@ mod tests {
         );
 
         let mut rng = StdRng::seed_from_u64(123);
-        let results = simulate_qualifying(&[power_driver.clone(), accel_driver.clone()], &ctx, &mut rng);
+        let results = simulate_qualifying(
+            &[power_driver.clone(), accel_driver.clone()],
+            &ctx,
+            &mut rng,
+        );
 
         let power_pos = results
             .iter()
@@ -413,6 +424,9 @@ mod tests {
             .expect("accel result")
             .position;
 
-        assert!(power_pos < accel_pos, "expected power profile to qualify ahead at Monza");
+        assert!(
+            power_pos < accel_pos,
+            "expected power profile to qualify ahead at Monza"
+        );
     }
 }

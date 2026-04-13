@@ -102,9 +102,9 @@ pub fn get_track_simulation_data(track_id: u32) -> TrackSimulationData {
         520 => TrackSimulationData::new(Technical, 0.85, 0.85, 35.0, 30.0, 35.0), // Modena
 
         // Technical with neutral stress but explicit car weights
-        47 => TrackSimulationData::new(Technical, 1.00, 1.00, 35.0, 25.0, 40.0),  // Laguna Seca
-        51 => TrackSimulationData::new(Technical, 1.00, 1.00, 35.0, 25.0, 40.0),  // Mid-Ohio
-        68 => TrackSimulationData::new(Technical, 1.00, 1.00, 35.0, 30.0, 35.0),  // Watkins Short
+        47 => TrackSimulationData::new(Technical, 1.00, 1.00, 35.0, 25.0, 40.0), // Laguna Seca
+        51 => TrackSimulationData::new(Technical, 1.00, 1.00, 35.0, 25.0, 40.0), // Mid-Ohio
+        68 => TrackSimulationData::new(Technical, 1.00, 1.00, 35.0, 30.0, 35.0), // Watkins Short
         125 => TrackSimulationData::new(Technical, 1.00, 1.00, 25.0, 40.0, 35.0), // Mosport
         166 => TrackSimulationData::new(Technical, 1.00, 1.00, 30.0, 35.0, 35.0), // Okayama
         192 => TrackSimulationData::new(Technical, 1.00, 1.00, 30.0, 35.0, 35.0), // Nurburgring GP

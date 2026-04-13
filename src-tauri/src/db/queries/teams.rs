@@ -433,10 +433,7 @@ pub fn update_team_duel_counters(
     Ok(())
 }
 
-pub fn update_team_finance_snapshot(
-    conn: &Connection,
-    team: &Team,
-) -> Result<(), DbError> {
+pub fn update_team_finance_snapshot(conn: &Connection, team: &Team) -> Result<(), DbError> {
     let affected = conn.execute(
         "UPDATE teams
          SET cash_balance = ?1,
@@ -460,7 +457,11 @@ pub fn update_team_finance_snapshot(
             &team.id,
         ],
     )?;
-    ensure_team_rows_affected(affected, &team.id, "atualizar snapshot financeiro da equipe")?;
+    ensure_team_rows_affected(
+        affected,
+        &team.id,
+        "atualizar snapshot financeiro da equipe",
+    )?;
     Ok(())
 }
 
@@ -612,11 +613,10 @@ fn team_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Team> {
     team.debt_balance = optional_column::<f64>(row, "debt_balance")?.unwrap_or(0.0);
     team.financial_state =
         optional_column::<String>(row, "financial_state")?.unwrap_or_else(|| "stable".to_string());
-    team.season_strategy =
-        optional_column::<String>(row, "season_strategy")?.unwrap_or_else(|| "balanced".to_string());
+    team.season_strategy = optional_column::<String>(row, "season_strategy")?
+        .unwrap_or_else(|| "balanced".to_string());
     team.last_round_income = optional_column::<f64>(row, "last_round_income")?.unwrap_or(0.0);
-    team.last_round_expenses =
-        optional_column::<f64>(row, "last_round_expenses")?.unwrap_or(0.0);
+    team.last_round_expenses = optional_column::<f64>(row, "last_round_expenses")?.unwrap_or(0.0);
     team.last_round_net = optional_column::<f64>(row, "last_round_net")?.unwrap_or(0.0);
     team.parachute_payment_remaining =
         optional_column::<f64>(row, "parachute_payment_remaining")?.unwrap_or(0.0);

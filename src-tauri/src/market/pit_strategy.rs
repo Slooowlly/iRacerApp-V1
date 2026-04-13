@@ -33,19 +33,34 @@ pub fn category_risk_modifier(category: &str) -> f64 {
     }
 }
 
-pub fn seed_pit_crew_quality(category: &str, budget: f64, engineering: f64, facilities: f64) -> f64 {
+pub fn seed_pit_crew_quality(
+    category: &str,
+    budget: f64,
+    engineering: f64,
+    facilities: f64,
+) -> f64 {
     pit_crew_target_quality(category, budget, engineering, facilities, 0.0)
 }
 
-pub fn seed_pit_strategy_risk(category: &str, budget: f64, car_performance: f64, team_id: &str) -> f64 {
+pub fn seed_pit_strategy_risk(
+    category: &str,
+    budget: f64,
+    car_performance: f64,
+    team_id: &str,
+) -> f64 {
     let budget_strength = (budget / 100.0).clamp(0.0, 1.0);
     let car_strength = ((car_performance + 5.0) / 21.0).clamp(0.0, 1.0);
     let identity = team_risk_identity(team_id);
-    (45.0 - budget_strength * 10.0 - car_strength * 8.0 + category_risk_modifier(category) + identity * 6.0)
+    (45.0 - budget_strength * 10.0 - car_strength * 8.0
+        + category_risk_modifier(category)
+        + identity * 6.0)
         .clamp(0.0, 100.0)
 }
 
-pub fn recalculate_pit_crew_quality(team: &Team, previous_standing: Option<PreviousTeamStanding>) -> f64 {
+pub fn recalculate_pit_crew_quality(
+    team: &Team,
+    previous_standing: Option<PreviousTeamStanding>,
+) -> f64 {
     let momentum = season_momentum(team, previous_standing);
     let target = pit_crew_target_quality(
         &team.categoria,
@@ -54,12 +69,15 @@ pub fn recalculate_pit_crew_quality(team: &Team, previous_standing: Option<Previ
         team.facilities,
         momentum,
     );
-    (team.pit_crew_quality * 0.65 + target * 0.35).clamp(0.0, category_pit_crew_cap(&team.categoria))
+    (team.pit_crew_quality * 0.65 + target * 0.35)
+        .clamp(0.0, category_pit_crew_cap(&team.categoria))
 }
 
 pub fn recalculate_pit_strategy_risk(team: &Team, category_peers: &[Team]) -> f64 {
     let percentile = performance_percentile(team, category_peers);
-    let tier = get_category_config(&team.categoria).map(|config| config.tier).unwrap_or(0);
+    let tier = get_category_config(&team.categoria)
+        .map(|config| config.tier)
+        .unwrap_or(0);
     let title_pressure = ((0.30 - percentile) / 0.30).clamp(0.0, 1.0);
     let relegation_pressure = ((percentile - 0.60) / 0.40).clamp(0.0, 1.0);
     let promotion_pressure = if tier < 4 {
@@ -74,20 +92,18 @@ pub fn recalculate_pit_strategy_risk(team: &Team, category_peers: &[Team]) -> f6
     let backmarker_bonus = if percentile > 0.66 { 5.0 } else { 0.0 };
     let identity = team_risk_identity(&team.id);
 
-    let target = (
-        45.0
-            + relegation_pressure * 28.0
-            + promotion_pressure * 18.0
-            + backmarker_pressure * 14.0
-            - title_pressure * 26.0
-            - budget_strength * 8.0
-            + weak_budget_bonus
-            + backmarker_bonus
-            - front_runner_penalty
-            + category_risk_modifier(&team.categoria)
-            + identity * 6.0
-    )
-    .clamp(0.0, 100.0);
+    let target = (45.0
+        + relegation_pressure * 28.0
+        + promotion_pressure * 18.0
+        + backmarker_pressure * 14.0
+        - title_pressure * 26.0
+        - budget_strength * 8.0
+        + weak_budget_bonus
+        + backmarker_bonus
+        - front_runner_penalty
+        + category_risk_modifier(&team.categoria)
+        + identity * 6.0)
+        .clamp(0.0, 100.0);
 
     (team.pit_strategy_risk * 0.40 + target * 0.60).clamp(0.0, 100.0)
 }
@@ -112,7 +128,9 @@ fn season_momentum(team: &Team, previous_standing: Option<PreviousTeamStanding>)
             momentum += 4.0;
         } else if previous_standing.position <= 3 {
             momentum += 2.0;
-        } else if previous_standing.position as f64 >= previous_standing.total_teams as f64 * (2.0 / 3.0) {
+        } else if previous_standing.position as f64
+            >= previous_standing.total_teams as f64 * (2.0 / 3.0)
+        {
             momentum -= 2.0;
         }
 
@@ -124,9 +142,10 @@ fn season_momentum(team: &Team, previous_standing: Option<PreviousTeamStanding>)
     }
 
     if let Some(previous_category) = team.categoria_anterior.as_deref() {
-        if let (Some(previous), Some(current)) =
-            (get_category_config(previous_category), get_category_config(&team.categoria))
-        {
+        if let (Some(previous), Some(current)) = (
+            get_category_config(previous_category),
+            get_category_config(&team.categoria),
+        ) {
             if current.tier > previous.tier {
                 momentum += 2.0;
             } else if current.tier < previous.tier {
@@ -173,7 +192,14 @@ mod tests {
 
     use super::*;
 
-    fn sample_team(id: &str, category: &str, car: f64, budget: f64, engineering: f64, facilities: f64) -> Team {
+    fn sample_team(
+        id: &str,
+        category: &str,
+        car: f64,
+        budget: f64,
+        engineering: f64,
+        facilities: f64,
+    ) -> Team {
         let mut team = placeholder_team_from_db(
             id.to_string(),
             format!("Team {id}"),

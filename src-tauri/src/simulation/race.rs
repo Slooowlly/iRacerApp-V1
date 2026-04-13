@@ -848,7 +848,10 @@ mod tests {
             .expect("power classification")
             .finish_position;
 
-        assert!(accel_pos < power_pos, "expected acceleration profile to race ahead at Tsukuba");
+        assert!(
+            accel_pos < power_pos,
+            "expected acceleration profile to race ahead at Tsukuba"
+        );
     }
 
     #[test]

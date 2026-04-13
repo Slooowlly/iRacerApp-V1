@@ -16,12 +16,10 @@ pub fn financial_health_score(team: &Team) -> f64 {
     let debt_penalty = (team.debt_balance / 200_000.0).clamp(0.0, 60.0);
     let structure_score = ((team.engineering + team.facilities) / 2.0).clamp(0.0, 100.0);
     let support_score = ((team.budget + team.reputacao) / 2.0).clamp(0.0, 100.0);
-    let momentum_score = (team.last_round_net / 50_000.0).clamp(-15.0, 15.0) + team.stats_pontos as f64 * 0.05;
+    let momentum_score =
+        (team.last_round_net / 50_000.0).clamp(-15.0, 15.0) + team.stats_pontos as f64 * 0.05;
 
-    (cash_score * 0.4
-        + structure_score * 0.25
-        + support_score * 0.2
-        + momentum_score * 0.15
+    (cash_score * 0.4 + structure_score * 0.25 + support_score * 0.2 + momentum_score * 0.15
         - debt_penalty)
         .clamp(0.0, 100.0)
 }
@@ -91,7 +89,10 @@ mod tests {
         team.engineering = 88.0;
         team.facilities = 84.0;
 
-        assert_eq!(derive_financial_state(financial_health_score(&team)), "elite");
+        assert_eq!(
+            derive_financial_state(financial_health_score(&team)),
+            "elite"
+        );
         assert_eq!(choose_season_strategy(&team), "balanced");
     }
 
@@ -110,7 +111,10 @@ mod tests {
         team.facilities = 24.0;
         team.last_round_net = -90_000.0;
 
-        assert_eq!(derive_financial_state(financial_health_score(&team)), "collapse");
+        assert_eq!(
+            derive_financial_state(financial_health_score(&team)),
+            "collapse"
+        );
         assert_eq!(choose_season_strategy(&team), "survival");
     }
 }

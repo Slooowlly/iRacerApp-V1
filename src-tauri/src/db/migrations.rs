@@ -1446,18 +1446,8 @@ fn migrate_v24(conn: &Connection) -> Result<(), DbError> {
 }
 
 fn migrate_v25(conn: &Connection) -> Result<(), DbError> {
-    ensure_column(
-        conn,
-        "teams",
-        "cash_balance",
-        "REAL NOT NULL DEFAULT 0.0",
-    )?;
-    ensure_column(
-        conn,
-        "teams",
-        "debt_balance",
-        "REAL NOT NULL DEFAULT 0.0",
-    )?;
+    ensure_column(conn, "teams", "cash_balance", "REAL NOT NULL DEFAULT 0.0")?;
+    ensure_column(conn, "teams", "debt_balance", "REAL NOT NULL DEFAULT 0.0")?;
     ensure_column(
         conn,
         "teams",
@@ -1482,12 +1472,7 @@ fn migrate_v25(conn: &Connection) -> Result<(), DbError> {
         "last_round_expenses",
         "REAL NOT NULL DEFAULT 0.0",
     )?;
-    ensure_column(
-        conn,
-        "teams",
-        "last_round_net",
-        "REAL NOT NULL DEFAULT 0.0",
-    )?;
+    ensure_column(conn, "teams", "last_round_net", "REAL NOT NULL DEFAULT 0.0")?;
     ensure_column(
         conn,
         "teams",
