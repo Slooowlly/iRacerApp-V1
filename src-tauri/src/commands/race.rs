@@ -23,6 +23,10 @@ use crate::event_interest::{
     InterestTier, RealizedEventInterest,
 };
 use crate::finance::cashflow::{apply_round_cashflow, TeamRoundFinanceContext};
+use crate::finance::economy::{
+    economy_cost_modifier, economy_income_modifier, global_economic_health_for_season,
+    GlobalEconomicHealth,
+};
 use crate::finance::events::{apply_crisis_event_if_needed, debt_service};
 use crate::finance::state::refresh_team_financial_state;
 use crate::models::injury::Injury;
@@ -543,7 +547,8 @@ pub(crate) fn simulate_category_race(
         crate::evolution::injury::process_injury_recovery(tx, &race_entry.categoria)?;
 
         // 2. Aplica pontuações normais
-        apply_race_result_to_database(tx, &result, &teams)?;
+        let economic_health = global_economic_health_for_season(active_season.numero as i32);
+        apply_race_result_to_database(tx, &result, &teams, economic_health)?;
 
         // 3. Verifica os incidentes recém-gerados e processa possíveis lesões
         let flat_incidents: Vec<_> = result
@@ -716,6 +721,7 @@ fn apply_race_result_to_database(
     tx: &rusqlite::Transaction<'_>,
     result: &RaceResult,
     teams: &[Team],
+    economic_health: GlobalEconomicHealth,
 ) -> Result<(), DbError> {
     let active_contracts = contract_queries::get_all_active_regular_contracts(tx)?;
     for race_driver in &result.race_results {
@@ -815,20 +821,26 @@ fn apply_race_result_to_database(
             .map(|contract| contract.salario_anual)
             .sum();
         let salary_expense = team_salary_total / rounds_in_season;
-        let sponsorship_income = 18_000.0 + team.reputacao * 420.0 + team.budget * 215.0;
+        let income_modifier = economy_income_modifier(economic_health);
+        let cost_modifier = economy_cost_modifier(economic_health);
+        let sponsorship_income =
+            (18_000.0 + team.reputacao * 420.0 + team.budget * 215.0) * income_modifier;
         let result_bonus = added_points as f64 * 650.0
             + added_victories as f64 * 4_000.0
             + added_podiums as f64 * 1_250.0
             + if best_result <= 5 { 1_000.0 } else { 0.0 };
-        let partial_prize_income = added_points as f64 * 120.0;
+        let result_bonus = result_bonus * income_modifier;
+        let partial_prize_income = added_points as f64 * 120.0 * income_modifier;
         let aid_income = team.parachute_payment_remaining.min(25_000.0);
-        let event_operations_cost = 11_000.0 + team.facilities * 140.0 + team.engineering * 95.0;
-        let structural_maintenance_cost = 4_500.0
+        let event_operations_cost =
+            (11_000.0 + team.facilities * 140.0 + team.engineering * 95.0) * cost_modifier;
+        let structural_maintenance_cost = (4_500.0
             + team.facilities * 65.0
             + team.engineering * 60.0
-            + team.pit_crew_quality * 35.0;
+            + team.pit_crew_quality * 35.0)
+            * cost_modifier;
         let technical_investment_cost =
-            6_000.0 + team.budget * 160.0 + team.car_performance.max(0.0) * 900.0;
+            (6_000.0 + team.budget * 160.0 + team.car_performance.max(0.0) * 900.0) * cost_modifier;
         let debt_service_cost = debt_service(team.debt_balance, 0.015);
 
         let mut updated_team = team.clone();
