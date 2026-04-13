@@ -135,6 +135,7 @@ function MyTeamTab() {
         <h3 className="mt-2 text-2xl font-semibold text-text-primary">Base tecnica da equipe</h3>
 
         <BuildProfileCard profile={playerTeam?.car_build_profile} />
+        <FinanceOverview team={playerTeam} />
 
         <div className="mt-6 space-y-5">
           <MetricBar
@@ -164,6 +165,58 @@ function MyTeamTab() {
           />
         </div>
       </GlassCard>
+    </div>
+  );
+}
+
+function FinanceOverview({ team }) {
+  const stateMeta = getFinancialStateMeta(team?.financial_state);
+  const strategyMeta = getSeasonStrategyMeta(team?.season_strategy);
+  const net = team?.last_round_net ?? 0;
+
+  return (
+    <div className="mt-6 rounded-[24px] border border-white/8 bg-white/[0.03] p-5">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <p className="text-[11px] uppercase tracking-[0.2em] text-text-muted">Financas</p>
+          <h4 className="mt-2 text-lg font-semibold text-text-primary">{stateMeta.label}</h4>
+          <p className="mt-2 text-sm text-text-secondary">{stateMeta.description}</p>
+        </div>
+        <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-[11px] uppercase tracking-[0.18em] text-text-secondary">
+          {strategyMeta.label}
+        </span>
+      </div>
+
+      <div className="mt-5 grid gap-3 sm:grid-cols-3">
+        <FinanceStat label="Caixa" value={formatMoney(team?.cash_balance ?? 0)} />
+        <FinanceStat label="Divida" value={formatMoney(team?.debt_balance ?? 0)} muted />
+        <FinanceStat
+          label="Ultima rodada"
+          value={formatSignedMoney(net)}
+          positive={net >= 0}
+        />
+      </div>
+
+      {team?.parachute_payment_remaining > 0 ? (
+        <p className="mt-4 rounded-2xl border border-accent-primary/20 bg-accent-primary/10 px-4 py-3 text-sm text-accent-primary">
+          Auxilio de rebaixamento restante: {formatMoney(team.parachute_payment_remaining)}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+function FinanceStat({ label, value, muted = false, positive = true }) {
+  const tone = muted
+    ? "text-text-secondary"
+    : positive
+      ? "text-status-green"
+      : "text-status-red";
+
+  return (
+    <div className="rounded-2xl border border-white/8 bg-black/10 p-4">
+      <p className="text-[10px] uppercase tracking-[0.18em] text-text-muted">{label}</p>
+      <p className={`mt-2 font-mono text-sm ${tone}`}>{value}</p>
     </div>
   );
 }
@@ -281,6 +334,63 @@ function pitCrewLabel(value) {
   if (value <= 60) return "Ok";
   if (value <= 80) return "Forte";
   return "Elite";
+}
+
+function getFinancialStateMeta(state) {
+  const meta = {
+    elite: {
+      label: "Elite financeira",
+      description: "A equipe tem folga para investir sem comprometer a estabilidade.",
+    },
+    healthy: {
+      label: "Saudavel",
+      description: "O caixa permite crescer com disciplina e absorver alguns erros.",
+    },
+    stable: {
+      label: "Estavel",
+      description: "A operacao esta controlada, mas cada investimento precisa ser bem escolhido.",
+    },
+    pressured: {
+      label: "Pressionada",
+      description: "A equipe precisa de resultado em breve para evitar cortes mais fortes.",
+    },
+    crisis: {
+      label: "Em crise",
+      description: "A prioridade virou sobreviver no curto prazo e buscar uma virada.",
+    },
+    collapse: {
+      label: "Colapso",
+      description: "A operacao esta comprometida e a equipe deve cortar gastos para continuar viva.",
+    },
+  };
+
+  return meta[state] ?? meta.stable;
+}
+
+function getSeasonStrategyMeta(strategy) {
+  const meta = {
+    expansion: { label: "Expansao" },
+    balanced: { label: "Equilibrio" },
+    austerity: { label: "Austeridade" },
+    all_in: { label: "All-in" },
+    survival: { label: "Sobrevivencia" },
+  };
+
+  return meta[strategy] ?? meta.balanced;
+}
+
+function formatMoney(value) {
+  const rounded = Math.round(value ?? 0);
+  return new Intl.NumberFormat("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+    maximumFractionDigits: 0,
+  }).format(rounded);
+}
+
+function formatSignedMoney(value) {
+  const prefix = value >= 0 ? "+" : "";
+  return `${prefix}${formatMoney(value)}`;
 }
 
 export default MyTeamTab;

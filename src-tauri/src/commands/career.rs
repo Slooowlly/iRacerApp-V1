@@ -2694,6 +2694,14 @@ fn build_team_summary(conn: &rusqlite::Connection, team: &Team) -> Result<TeamSu
         pit_strategy_risk: team.pit_strategy_risk,
         pit_crew_quality: team.pit_crew_quality,
         budget: team.budget,
+        cash_balance: team.cash_balance,
+        debt_balance: team.debt_balance,
+        financial_state: team.financial_state.clone(),
+        season_strategy: team.season_strategy.clone(),
+        last_round_income: team.last_round_income,
+        last_round_expenses: team.last_round_expenses,
+        last_round_net: team.last_round_net,
+        parachute_payment_remaining: team.parachute_payment_remaining,
         piloto_1_id: team.piloto_1_id.clone(),
         piloto_1_nome,
         piloto_2_id: team.piloto_2_id.clone(),
@@ -3238,6 +3246,10 @@ mod tests {
         assert!(player_team.piloto_2_id.is_some());
         assert!((0.0..=100.0).contains(&player_team.pit_strategy_risk));
         assert!((0.0..=100.0).contains(&player_team.pit_crew_quality));
+        assert!(player_team.cash_balance >= 0.0);
+        assert!(player_team.debt_balance >= 0.0);
+        assert!(!player_team.financial_state.is_empty());
+        assert!(!player_team.season_strategy.is_empty());
 
         let _ = fs::remove_dir_all(base_dir);
     }

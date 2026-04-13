@@ -116,6 +116,22 @@ pub struct TeamSummary {
     #[serde(default)]
     pub pit_crew_quality: f64,
     pub budget: f64,
+    #[serde(default)]
+    pub cash_balance: f64,
+    #[serde(default)]
+    pub debt_balance: f64,
+    #[serde(default)]
+    pub financial_state: String,
+    #[serde(default)]
+    pub season_strategy: String,
+    #[serde(default)]
+    pub last_round_income: f64,
+    #[serde(default)]
+    pub last_round_expenses: f64,
+    #[serde(default)]
+    pub last_round_net: f64,
+    #[serde(default)]
+    pub parachute_payment_remaining: f64,
     pub piloto_1_id: Option<String>,
     pub piloto_1_nome: Option<String>,
     pub piloto_2_id: Option<String>,
