@@ -1,4 +1,5 @@
 pub mod batch;
+pub mod car_build;
 pub mod catalog;
 pub mod context;
 pub mod engine;
