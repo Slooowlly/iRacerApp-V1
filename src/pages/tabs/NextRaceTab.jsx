@@ -43,6 +43,7 @@ function NextRaceTab() {
   const playerTeam = useCareerStore((state) => state.playerTeam);
   const nextRace = useCareerStore((state) => state.nextRace);
   const nextRaceBriefing = useCareerStore((state) => state.nextRaceBriefing);
+  const temporalSummary = useCareerStore((state) => state.temporalSummary);
   const season = useCareerStore((state) => state.season);
   const isSimulating = useCareerStore((state) => state.isSimulating);
   const isAdvancing = useCareerStore((state) => state.isAdvancing);
@@ -51,8 +52,13 @@ function NextRaceTab() {
   const advanceSeason = useCareerStore((state) => state.advanceSeason);
   const skipAllPendingRaces = useCareerStore((state) => state.skipAllPendingRaces);
   const enterPreseason = useCareerStore((state) => state.enterPreseason);
+  const runConvocationWindow = useCareerStore((state) => state.runConvocationWindow);
   const finishSpecialBlock = useCareerStore((state) => state.finishSpecialBlock);
+  const startCalendarAdvance = useCareerStore((state) => state.startCalendarAdvance);
   const isConvocating = useCareerStore((state) => state.isConvocating);
+  const isEnteringPreseason = useCareerStore((state) => state.isEnteringPreseason);
+  const hasPendingRegularRaces =
+    season?.fase === "BlocoRegular" && (temporalSummary?.pending_in_phase ?? 0) > 0;
 
   useEffect(() => {
     let active = true;
@@ -253,6 +259,21 @@ function NextRaceTab() {
         return;
       }
 
+      if (!nextRace && hasPendingRegularRaces) {
+        await startCalendarAdvance();
+        return;
+      }
+
+      if (!nextRace && season?.fase === "BlocoRegular") {
+        await runConvocationWindow();
+        return;
+      }
+
+      if (!nextRace && season?.fase === "PosEspecial") {
+        await advanceSeason();
+        return;
+      }
+
       if (hasExistingPreseason) {
         await enterPreseason();
         return;
@@ -273,13 +294,27 @@ function NextRaceTab() {
     return (
       <div className="relative">
         <LoadingOverlay
-          open={isAdvancing || isConvocating}
-          title={isFreeAgent ? "Pulando temporada" : season?.fase === "BlocoEspecial" ? "Simulando bloco especial" : "Virando a temporada"}
+          open={isAdvancing || isConvocating || isEnteringPreseason}
+          title={
+            isEnteringPreseason
+              ? "Abrindo mercado de transferencias"
+              : isFreeAgent
+              ? "Pulando temporada"
+              : season?.fase === "BlocoEspecial"
+              ? "Simulando bloco especial"
+              : season?.fase === "BlocoRegular"
+              ? "Abrindo convocacao"
+              : "Virando a temporada"
+          }
           message={
-            isFreeAgent
+            isEnteringPreseason
+              ? "Carregando equipes, propostas e pilotos disponiveis."
+              : isFreeAgent
               ? "Simulando todas as corridas da temporada sem sua participacao."
               : season?.fase === "BlocoEspecial"
               ? "As corridas especiais restantes estao sendo resolvidas em lote para avancar o calendario."
+              : season?.fase === "BlocoRegular"
+              ? "A janela especial esta sendo aberta sem passar pelo mercado normal."
               : "Evolucao, aposentadorias, promocoes e preparacao da pre-temporada em andamento."
           }
         />
@@ -295,6 +330,8 @@ function NextRaceTab() {
                 ? "Sem equipe nesta temporada"
                 : season?.fase === "BlocoEspecial"
                 ? "Bloco especial em andamento"
+                : season?.fase === "PosEspecial"
+                ? "Especial finalizado"
                 : "Temporada finalizada"}
             </h2>
             <p className="mt-3 text-sm text-text-secondary">
@@ -302,6 +339,12 @@ function NextRaceTab() {
                 ? "Voce nao tem equipe nesta temporada. Pule para a proxima pre-temporada e tente o mercado novamente."
                 : season?.fase === "BlocoEspecial"
                 ? "Voce ficou fora das categorias especiais. Use este atalho para simular o restante do bloco e avancar o calendario."
+                : season?.fase === "BlocoRegular"
+                ? hasPendingRegularRaces
+                  ? "Sua categoria ja fechou o campeonato, mas ainda ha corridas regulares acontecendo no calendario."
+                  : "Sua temporada regular terminou. Agora voce pode analisar noticias e resultados com calma, e so abrir a janela de convocacao quando quiser."
+                : season?.fase === "PosEspecial"
+                ? "A temporada especial terminou. Voce pode conferir noticias e standings finais antes de abrir o fechamento da temporada."
                 : hasExistingPreseason
                 ? "A pre-temporada ja foi iniciada. Voce pode voltar direto para o mercado semanal."
                 : "Todas as corridas da temporada atual ja foram disputadas."}
@@ -309,7 +352,7 @@ function NextRaceTab() {
             <div className="mt-6">
               <GlassButton
                 variant="primary"
-                disabled={isAdvancing || isConvocating}
+                disabled={isAdvancing || isConvocating || isEnteringPreseason}
                 onClick={() => {
                 if (isFreeAgent) {
                   setError("");
@@ -321,12 +364,18 @@ function NextRaceTab() {
                 }
               }}
               >
-                {isAdvancing || isConvocating
+                {isAdvancing || isConvocating || isEnteringPreseason
                   ? "Processando..."
                   : isFreeAgent
                   ? "Pular temporada"
                   : season?.fase === "BlocoEspecial"
                   ? "Pular bloco especial"
+                  : hasPendingRegularRaces
+                  ? "Avancar calendario"
+                  : season?.fase === "BlocoRegular"
+                  ? "Avancar para convocacao"
+                  : season?.fase === "PosEspecial"
+                  ? "Encerrar temporada"
                   : hasExistingPreseason
                   ? "Continuar pre-temporada"
                   : "Avancar para pre-temporada"}

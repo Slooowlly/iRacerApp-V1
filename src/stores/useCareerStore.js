@@ -8,6 +8,7 @@ const initialState = {
   isAdvancing: false,
   isCalendarAdvancing: false,
   isAdvancingWeek: false,
+  isEnteringPreseason: false,
   isRespondingProposal: false,
   isConvocating: false,
   isDirty: false,
@@ -31,6 +32,7 @@ const initialState = {
   showRaceBriefing: false,
   preseasonState: null,
   preseasonWeeks: [],
+  lastMarketWeekResult: null,
   playerProposals: [],
   preseasonFreeAgents: [],
   endOfSeasonResult: null,
@@ -38,6 +40,7 @@ const initialState = {
   showPreseason: false,
   convocationResult: null,
   showConvocation: false,
+  specialWindowState: null,
   playerSpecialOffers: [],
   acceptedSpecialOffer: null,
 };
@@ -186,6 +189,25 @@ function deriveAcceptedSpecialOffer(data) {
   return null;
 }
 
+function deriveAcceptedSpecialOfferFromWindow(windowState) {
+  const selectedOffer = windowState?.player_offers?.find(
+    (offer) => offer.status === "Selecionado" || offer.id === windowState?.active_offer_id,
+  );
+
+  if (!selectedOffer) {
+    return null;
+  }
+
+  return {
+    id: selectedOffer.id,
+    team_id: selectedOffer.team_id,
+    team_name: selectedOffer.team_name,
+    special_category: selectedOffer.special_category,
+    class_name: selectedOffer.class_name,
+    papel: selectedOffer.papel,
+  };
+}
+
 async function buildResumeUiState(careerId, resumeContext) {
   if (!careerId || !resumeContext?.active_view) {
     return {
@@ -291,6 +313,7 @@ const useCareerStore = create((set, get) => ({
       preseasonFreeAgents: [],
       showConvocation: false,
       convocationResult: null,
+      specialWindowState: null,
       playerSpecialOffers: [],
       acceptedSpecialOffer: null,
     });
@@ -323,15 +346,17 @@ const useCareerStore = create((set, get) => ({
       // Se a carreira foi salva no meio da janela de convocação, restaura a tela.
       let convocationResumeState = {};
       if (data.season?.fase === "JanelaConvocacao") {
-        const pendingOffers = await invoke("get_player_special_offers", {
+        const windowState = await invoke("get_special_window_state", {
           careerId: data.career_id,
-        }).catch(() => []);
+        }).catch(() => null);
 
         convocationResumeState = {
           showConvocation: true,
           convocationResult: null,
-          playerSpecialOffers: pendingOffers,
-          acceptedSpecialOffer: deriveAcceptedSpecialOffer(data),
+          specialWindowState: windowState,
+          playerSpecialOffers: windowState?.player_offers ?? [],
+          acceptedSpecialOffer:
+            deriveAcceptedSpecialOfferFromWindow(windowState) ?? deriveAcceptedSpecialOffer(data),
         };
       }
 
@@ -389,17 +414,14 @@ const useCareerStore = create((set, get) => ({
   },
 
   dismissResult: async () => {
-    const { careerId, loadCareer, runConvocationWindow } = get();
+    const { careerId, loadCareer } = get();
     set({ showResult: false });
 
     if (!careerId) return;
 
     try {
-      const data = await loadCareer(careerId);
+      await loadCareer(careerId);
       // Ao fechar o resultado da última corrida regular, aciona a janela de convocação.
-      if (data?.season?.fase === "BlocoRegular" && !data?.next_race) {
-        await runConvocationWindow();
-      }
     } catch (error) {
       console.error("Erro ao recarregar carreira:", error);
     }
@@ -487,13 +509,16 @@ const useCareerStore = create((set, get) => ({
     try {
       await invoke("advance_to_convocation_window", { careerId });
       const result = await invoke("run_convocation_window", { careerId });
-      const offers = await invoke("get_player_special_offers", { careerId }).catch(() => []);
+      const windowState = await invoke("get_special_window_state", { careerId }).catch(
+        () => null,
+      );
       set({
         isConvocating: false,
         convocationResult: result,
         showConvocation: true,
-        playerSpecialOffers: offers,
-        acceptedSpecialOffer: null,
+        specialWindowState: windowState,
+        playerSpecialOffers: windowState?.player_offers ?? [],
+        acceptedSpecialOffer: deriveAcceptedSpecialOfferFromWindow(windowState),
         isDirty: true,
       });
       return result;
@@ -531,6 +556,80 @@ const useCareerStore = create((set, get) => ({
       set({
         isConvocating: false,
         error: getErrorMessage(error, "Erro ao iniciar bloco especial."),
+      });
+      throw error;
+    }
+  },
+
+  loadSpecialWindowState: async () => {
+    const { careerId } = get();
+    if (!careerId) throw new Error("Carreira nao carregada.");
+
+    const windowState = await invoke("get_special_window_state", { careerId });
+    set({
+      specialWindowState: windowState,
+      playerSpecialOffers: windowState?.player_offers ?? [],
+      acceptedSpecialOffer: deriveAcceptedSpecialOfferFromWindow(windowState),
+      showConvocation: true,
+      error: null,
+    });
+    return windowState;
+  },
+
+  acceptSpecialOfferForDay: async (offerId) => {
+    const { careerId } = get();
+    if (!careerId) throw new Error("Carreira nao carregada.");
+
+    set({ isConvocating: true, error: null });
+
+    try {
+      const windowState = await invoke("accept_special_offer_for_day", {
+        careerId,
+        offerId,
+      });
+
+      set({
+        isConvocating: false,
+        specialWindowState: windowState,
+        playerSpecialOffers: windowState?.player_offers ?? [],
+        acceptedSpecialOffer: deriveAcceptedSpecialOfferFromWindow(windowState),
+        isDirty: true,
+      });
+
+      return windowState;
+    } catch (error) {
+      set({
+        isConvocating: false,
+        error: getErrorMessage(error, "Erro ao definir oferta ativa do dia."),
+      });
+      throw error;
+    }
+  },
+
+  advanceSpecialWindowDay: async () => {
+    const { careerId } = get();
+    if (!careerId) throw new Error("Carreira nao carregada.");
+
+    set({ isConvocating: true, error: null });
+
+    try {
+      const windowState = await invoke("advance_special_window_day", {
+        careerId,
+      });
+
+      set({
+        isConvocating: false,
+        specialWindowState: windowState,
+        playerSpecialOffers: windowState?.player_offers ?? [],
+        acceptedSpecialOffer: deriveAcceptedSpecialOfferFromWindow(windowState),
+        isDirty: true,
+      });
+
+      return windowState;
+    } catch (error) {
+      set({
+        isConvocating: false,
+        error: getErrorMessage(error, "Erro ao avancar dia da janela especial."),
       });
       throw error;
     }
@@ -615,6 +714,8 @@ const useCareerStore = create((set, get) => ({
       throw new Error("Carreira nao carregada.");
     }
 
+    set({ isEnteringPreseason: true, error: null });
+
     try {
       const [state, proposals, freeAgents] = await Promise.all([
         invoke("get_preseason_state", { careerId }),
@@ -634,13 +735,16 @@ const useCareerStore = create((set, get) => ({
       });
 
       set({
+        isEnteringPreseason: false,
         showEndOfSeason: false,
         showRaceBriefing: false,
         showPreseason: true,
         showConvocation: false,
         convocationResult: null,
+        specialWindowState: null,
         preseasonState: state,
         preseasonWeeks: buildWeeksFromNews(news),
+        lastMarketWeekResult: null,
         playerProposals: proposals,
         preseasonFreeAgents: freeAgents,
         playerSpecialOffers: [],
@@ -651,7 +755,7 @@ const useCareerStore = create((set, get) => ({
       return state;
     } catch (error) {
       const message = getErrorMessage(error, "Erro ao entrar na pre-temporada.");
-      set({ error: message });
+      set({ isEnteringPreseason: false, error: message });
       throw error;
     }
   },
@@ -689,6 +793,7 @@ const useCareerStore = create((set, get) => ({
       set({
         preseasonWeeks: buildWeeksFromNews(news),
         preseasonState: state,
+        lastMarketWeekResult: weekResult,
         playerProposals: proposals,
         preseasonFreeAgents: freeAgents,
         isAdvancingWeek: false,

@@ -21,6 +21,7 @@ describe("EndOfSeasonView", () => {
     mockState = {
       careerId: "career-1",
       enterPreseason: mockEnterPreseason,
+      isEnteringPreseason: false,
       endOfSeasonResult: {
         growth_reports: [
           {
@@ -139,5 +140,18 @@ describe("EndOfSeasonView", () => {
     fireEvent.click(eliteButton);
 
     expect(screen.queryByText("Bruno Estavel")).not.toBeInTheDocument();
+  });
+
+  it("shows feedback while the preseason market is opening", () => {
+    mockState = {
+      ...mockState,
+      isEnteringPreseason: true,
+    };
+
+    render(<EndOfSeasonView />);
+
+    expect(screen.getByText(/abrindo mercado de transferencias/i)).toBeInTheDocument();
+    expect(screen.getByText(/carregando equipes, propostas e pilotos disponiveis/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /aguarde/i })).toBeDisabled();
   });
 });

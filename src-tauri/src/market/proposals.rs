@@ -4,6 +4,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::models::enums::TeamRole;
 
+pub fn is_real_career_debut_category(category_id: &str) -> bool {
+    matches!(category_id, "mazda_rookie" | "toyota_rookie")
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MarketProposal {
     pub id: String,

@@ -389,6 +389,8 @@ pub struct FreeAgentRaw {
     pub seasons_at_last_team: i32,
     pub total_career_seasons: i32,
     pub max_license_level: Option<u8>,
+    pub last_championship_position: Option<i32>,
+    pub last_championship_total_drivers: Option<i32>,
 }
 
 /// Retorna pilotos ativos sem contrato Regular ativo, com dados do último time e contagem de temporadas.
@@ -483,12 +485,55 @@ pub fn get_free_agents_for_preseason(conn: &Connection) -> Result<Vec<FreeAgentR
             seasons_at_last_team: row.get("seasons_at_team")?,
             total_career_seasons: row.get("career_seasons")?,
             max_license_level: max_license_raw.map(|v| v as u8),
+            last_championship_position: None,
+            last_championship_total_drivers: None,
         })
     })?;
     for row in mapped {
         result.push(row?);
     }
+    for agent in &mut result {
+        if agent.categoria.is_empty() {
+            continue;
+        }
+        if let Some((position, total_drivers)) =
+            get_latest_driver_archive_summary(conn, &agent.driver_id, &agent.categoria)?
+        {
+            agent.last_championship_position = Some(position);
+            agent.last_championship_total_drivers = Some(total_drivers);
+        }
+    }
     Ok(result)
+}
+
+fn get_latest_driver_archive_summary(
+    conn: &Connection,
+    pilot_id: &str,
+    categoria: &str,
+) -> Result<Option<(i32, i32)>, DbError> {
+    let result: Result<(Option<i32>, String), _> = conn.query_row(
+        "SELECT posicao_campeonato, snapshot_json
+         FROM driver_season_archive
+         WHERE piloto_id = ?1
+           AND categoria = ?2
+         ORDER BY season_number DESC
+         LIMIT 1",
+        params![pilot_id, categoria],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    );
+
+    match result {
+        Ok((Some(position), snapshot_json)) => {
+            let total_drivers = serde_json::from_str::<serde_json::Value>(&snapshot_json)
+                .ok()
+                .and_then(|json| json.get("total_pilotos").and_then(|value| value.as_i64()))
+                .map(|value| value as i32);
+            Ok(total_drivers.map(|total| (position, total)))
+        }
+        Ok((None, _)) => Ok(None),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(DbError::Sqlite(e)),
+    }
 }
 
 fn collect_contracts(
@@ -827,6 +872,22 @@ mod tests {
         special.created_at = "2026-06-01T08:00:00".to_string();
 
         insert_contracts(&conn, &[regular, special]).expect("insert contracts");
+        conn.execute(
+            "INSERT INTO driver_season_archive (
+                piloto_id, season_number, ano, nome, categoria, posicao_campeonato, pontos, snapshot_json
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                "P003",
+                4,
+                2026,
+                "Piloto 3",
+                "mazda_amador",
+                12,
+                95.0,
+                r#"{"total_pilotos":20}"#
+            ],
+        )
+        .expect("insert archive");
 
         let free_agents = get_free_agents_for_preseason(&conn).expect("free agents query");
         let driver = free_agents
@@ -838,6 +899,8 @@ mod tests {
         assert_eq!(driver.previous_team_name.as_deref(), Some("Equipe Regular"));
         assert_eq!(driver.previous_team_color.as_deref(), Some("#112233"));
         assert_eq!(driver.seasons_at_last_team, 3);
+        assert_eq!(driver.last_championship_position, Some(12));
+        assert_eq!(driver.last_championship_total_drivers, Some(20));
     }
 
     fn sample_contract(
@@ -1001,6 +1064,18 @@ mod tests {
                 id TEXT PRIMARY KEY,
                 piloto_id TEXT NOT NULL,
                 nivel INTEGER NOT NULL
+            );
+            CREATE TABLE driver_season_archive (
+                piloto_id TEXT NOT NULL,
+                season_number INTEGER NOT NULL,
+                ano INTEGER NOT NULL,
+                nome TEXT NOT NULL,
+                categoria TEXT NOT NULL,
+                posicao_campeonato INTEGER,
+                pontos REAL NOT NULL DEFAULT 0.0,
+                snapshot_json TEXT NOT NULL,
+                archived_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(piloto_id, season_number)
             );
             INSERT INTO drivers (id, nome) VALUES
                 ('P001', 'Piloto 1'),

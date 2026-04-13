@@ -4,17 +4,19 @@ use serde::{Deserialize, Serialize};
 use crate::calendar::generate_and_insert_special_calendars;
 use crate::db::connection::DbError;
 use crate::db::queries::{
-    contracts as contract_queries, drivers as driver_queries, seasons as season_queries,
-    teams as team_queries,
+    calendar as calendar_queries, contracts as contract_queries, drivers as driver_queries,
+    seasons as season_queries, teams as team_queries,
 };
 use crate::generators::ids::IdType;
 use crate::models::driver::Driver;
 use crate::models::enums::{SeasonPhase, TeamRole};
+use crate::models::license::driver_has_required_license_for_category;
 
 use super::eligibility::{coletar_candidatos, FonteConvocacao};
 use super::player_offers::{self, PlayerSpecialOffer};
 use super::quotas::calcular_cotas;
 use super::scoring::calcular_score;
+use super::special_window;
 
 // ── Estruturas públicas ───────────────────────────────────────────────────────
 
@@ -97,6 +99,17 @@ pub fn advance_to_convocation_window(conn: &Connection) -> Result<(), DbError> {
         return Err(DbError::Migration(format!(
             "Fase atual é '{}'; esperado BlocoRegular",
             season.fase
+        )));
+    }
+
+    let pending_regular = calendar_queries::count_pending_races_in_phase(
+        conn,
+        &season.id,
+        &SeasonPhase::BlocoRegular,
+    )?;
+    if pending_regular > 0 {
+        return Err(DbError::Migration(format!(
+            "A janela de convocacao so pode abrir depois do fim do bloco regular. Ainda existem {pending_regular} corridas regulares pendentes."
         )));
     }
 
@@ -203,6 +216,7 @@ pub fn run_convocation_window(conn: &Connection) -> Result<ConvocationResult, Db
         season_number,
         player_offers_payload.as_ref(),
     )?;
+    special_window::initialize_special_window(conn, &season.id, player.as_ref(), &all_grids)?;
 
     Ok(ConvocationResult {
         grids: all_grids,
@@ -352,50 +366,186 @@ fn fonte_label(fonte: &FonteConvocacao) -> String {
     }
 }
 
+fn is_primary_current_category_for_class(cfg: &ClasseConfig, category: &str) -> bool {
+    cfg.feeder_category == category
+}
+
+fn is_exceptional_rookie_for_class(player: &Driver, cfg: &ClasseConfig) -> bool {
+    let Some(current_category) = player.categoria_atual.as_deref() else {
+        return false;
+    };
+
+    let rookie_matches = matches!(
+        (cfg.class_name, current_category),
+        ("mazda", "mazda_rookie") | ("toyota", "toyota_rookie")
+    );
+    let exceptional = player.atributos.skill >= 84.0
+        || (player.melhor_resultado_temp == Some(1) && player.stats_temporada.vitorias >= 2);
+
+    rookie_matches && exceptional
+}
+
+fn contract_matches_class_lane(
+    contract: &crate::models::contract::Contract,
+    cfg: &ClasseConfig,
+) -> bool {
+    if contract.categoria == cfg.special_category
+        && contract.classe.as_deref() == Some(cfg.class_name)
+    {
+        return true;
+    }
+
+    match cfg.class_name {
+        "mazda" => matches!(contract.categoria.as_str(), "mazda_amador" | "mazda_rookie"),
+        "toyota" => matches!(
+            contract.categoria.as_str(),
+            "toyota_amador" | "toyota_rookie"
+        ),
+        "bmw" => contract.categoria == "bmw_m2",
+        "gt4" => contract.categoria == "gt4",
+        "gt3" => contract.categoria == "gt3",
+        _ => false,
+    }
+}
+
+fn player_has_same_car_history(
+    contracts: &[crate::models::contract::Contract],
+    cfg: &ClasseConfig,
+) -> bool {
+    contracts
+        .iter()
+        .any(|contract| contract_matches_class_lane(contract, cfg))
+}
+
+fn player_has_team_history(contracts: &[crate::models::contract::Contract], team_id: &str) -> bool {
+    contracts
+        .iter()
+        .any(|contract| contract.equipe_id == team_id)
+}
+
+fn player_offer_quality_score(player: &Driver) -> f64 {
+    let champion_bonus = if player.melhor_resultado_temp == Some(1) {
+        8.0
+    } else {
+        0.0
+    };
+    let wins_bonus = (player.stats_temporada.vitorias.min(5) as f64) * 2.0;
+    player.atributos.skill + champion_bonus + wins_bonus
+}
+
+fn fallback_quality_threshold(cfg: &ClasseConfig) -> f64 {
+    match cfg.special_category {
+        "endurance" => 90.0,
+        _ => 82.0,
+    }
+}
+
 fn build_player_special_offers(
     conn: &Connection,
     season_id: &str,
     player: &Driver,
 ) -> Result<Vec<PlayerSpecialOffer>, DbError> {
-    let Some(player_category) = player.categoria_atual.as_deref() else {
-        return Ok(Vec::new());
-    };
-
-    let Some(cfg) = CLASSES_CONVOCADAS
-        .iter()
-        .find(|cfg| cfg.feeder_category == player_category)
-    else {
-        return Ok(Vec::new());
-    };
-
     let papel = if player.atributos.skill >= 85.0 {
         TeamRole::Numero1
     } else {
         TeamRole::Numero2
     };
+    let current_category = player.categoria_atual.as_deref();
+    let has_active_regular_contract =
+        contract_queries::has_active_regular_contract(conn, &player.id)?;
+    let contract_history = contract_queries::get_contracts_for_pilot(conn, &player.id)?;
+    let quality_score = player_offer_quality_score(player);
 
-    let offers =
-        team_queries::get_teams_by_category_and_class(conn, cfg.special_category, cfg.class_name)?
-            .into_iter()
-            .take(3)
-            .map(|team| PlayerSpecialOffer {
+    let mut preferred: Vec<(i32, String, String, String, String)> = Vec::new();
+    let mut fallback: Vec<(i32, String, String, String, String)> = Vec::new();
+
+    for cfg in CLASSES_CONVOCADAS {
+        let teams = team_queries::get_teams_by_category_and_class(
+            conn,
+            cfg.special_category,
+            cfg.class_name,
+        )?;
+
+        for team in teams {
+            let team_history = player_has_team_history(&contract_history, &team.id);
+            let primary_current_fit = current_category
+                .is_some_and(|category| is_primary_current_category_for_class(cfg, category));
+            let rookie_exception = is_exceptional_rookie_for_class(player, cfg);
+            let same_car_history = player_has_same_car_history(&contract_history, cfg);
+            let license_ok =
+                driver_has_required_license_for_category(conn, &player.id, cfg.special_category)
+                    .map_err(DbError::InvalidData)?;
+
+            let preferred_priority = if primary_current_fit {
+                Some(500)
+            } else if rookie_exception {
+                Some(460)
+            } else if !has_active_regular_contract && same_car_history {
+                Some(400)
+            } else if team_history {
+                Some(320)
+            } else {
+                None
+            };
+
+            if let Some(priority) = preferred_priority {
+                preferred.push((
+                    priority + team.car_performance.round() as i32,
+                    team.id,
+                    team.nome,
+                    cfg.special_category.to_string(),
+                    cfg.class_name.to_string(),
+                ));
+                continue;
+            }
+
+            if license_ok && quality_score >= fallback_quality_threshold(cfg) {
+                fallback.push((
+                    100 + team.car_performance.round() as i32,
+                    team.id,
+                    team.nome,
+                    cfg.special_category.to_string(),
+                    cfg.class_name.to_string(),
+                ));
+            }
+        }
+    }
+
+    preferred.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| left.2.cmp(&right.2)));
+    fallback.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| left.2.cmp(&right.2)));
+
+    let mut selected = Vec::new();
+    let mut seen_team_ids = std::collections::HashSet::new();
+
+    for entry in preferred.into_iter().chain(fallback.into_iter()) {
+        if seen_team_ids.insert(entry.1.clone()) {
+            selected.push(entry);
+        }
+        if selected.len() == 3 {
+            break;
+        }
+    }
+
+    Ok(selected
+        .into_iter()
+        .map(
+            |(_, team_id, team_name, special_category, class_name)| PlayerSpecialOffer {
                 id: format!(
                     "PSO-{season_id}-{}-{}-{}",
                     player.id,
-                    team.id,
+                    team_id,
                     papel.as_str()
                 ),
                 player_driver_id: player.id.clone(),
-                team_id: team.id,
-                team_name: team.nome,
-                special_category: cfg.special_category.to_string(),
-                class_name: cfg.class_name.to_string(),
+                team_id,
+                team_name,
+                special_category,
+                class_name,
                 papel: papel.clone(),
                 status: "Pendente".to_string(),
-            })
-            .collect();
-
-    Ok(offers)
+            },
+        )
+        .collect())
 }
 
 #[cfg(test)]
@@ -560,6 +710,149 @@ mod player_convocation_offer_tests {
 }
 
 // ── Validação em memória ──────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod player_convocation_offer_additional_tests {
+    use super::*;
+    use crate::db::queries::{
+        contracts as contract_queries, drivers as driver_queries, teams as team_queries,
+    };
+
+    fn insert_historical_contract_for_offer_tests(
+        conn: &rusqlite::Connection,
+        player_id: &str,
+        player_name: &str,
+        team_id: &str,
+        team_name: &str,
+        category: &str,
+        class_name: Option<&str>,
+    ) {
+        let mut contract = crate::models::contract::Contract::new(
+            format!("HC-{player_id}-{team_id}-{category}"),
+            player_id.to_string(),
+            player_name.to_string(),
+            team_id.to_string(),
+            team_name.to_string(),
+            crate::db::queries::seasons::get_active_season(conn)
+                .expect("active season query")
+                .expect("active season")
+                .numero
+                .saturating_sub(1),
+            1,
+            50_000.0,
+            TeamRole::Numero1,
+            category.to_string(),
+        );
+        contract.status = crate::models::enums::ContractStatus::Expirado;
+        if let Some(class_name) = class_name {
+            contract.tipo = crate::models::enums::ContractType::Especial;
+            contract.classe = Some(class_name.to_string());
+        }
+        contract_queries::insert_contract(conn, &contract).expect("insert historical contract");
+    }
+
+    #[test]
+    fn test_player_special_offers_prioritize_current_car_over_old_other_car_history() {
+        let (conn, season_id) = setup_world_db();
+        let player_id = make_player_eligible_for_specials(&conn, "bmw_m2");
+        let player = driver_queries::get_driver(&conn, &player_id).expect("player");
+        let toyota_team =
+            team_queries::get_teams_by_category_and_class(&conn, "production_challenger", "toyota")
+                .expect("toyota teams")
+                .into_iter()
+                .next()
+                .expect("toyota team");
+
+        insert_historical_contract_for_offer_tests(
+            &conn,
+            &player_id,
+            &player.nome,
+            &toyota_team.id,
+            &toyota_team.nome,
+            "production_challenger",
+            Some("toyota"),
+        );
+
+        let offers =
+            build_player_special_offers(&conn, &season_id, &player).expect("build player offers");
+
+        assert!(!offers.is_empty());
+        assert!(offers.iter().all(|offer| offer.class_name == "bmw"));
+    }
+
+    #[test]
+    fn test_unemployed_player_with_same_car_history_still_receives_matching_offers() {
+        let (conn, season_id) = setup_world_db();
+        let player_id = make_player_eligible_for_specials(&conn, "gt4");
+        let mut player = driver_queries::get_driver(&conn, &player_id).expect("player");
+        let gt4_team = team_queries::get_teams_by_category_and_class(&conn, "endurance", "gt4")
+            .expect("gt4 teams")
+            .into_iter()
+            .next()
+            .expect("gt4 team");
+
+        for contract in
+            contract_queries::get_contracts_for_pilot(&conn, &player_id).expect("player contracts")
+        {
+            if contract.status == crate::models::enums::ContractStatus::Ativo {
+                contract_queries::update_contract_status(
+                    &conn,
+                    &contract.id,
+                    &crate::models::enums::ContractStatus::Expirado,
+                )
+                .expect("expire player contract");
+            }
+        }
+
+        player.categoria_atual = None;
+        driver_queries::update_driver(&conn, &player).expect("update unemployed player");
+
+        insert_historical_contract_for_offer_tests(
+            &conn,
+            &player_id,
+            &player.nome,
+            &gt4_team.id,
+            &gt4_team.nome,
+            "endurance",
+            Some("gt4"),
+        );
+
+        let refreshed = driver_queries::get_driver(&conn, &player_id).expect("refreshed player");
+        let offers =
+            build_player_special_offers(&conn, &season_id, &refreshed).expect("build offers");
+
+        assert!(!offers.is_empty());
+        assert!(offers.iter().all(|offer| offer.class_name == "gt4"));
+    }
+
+    #[test]
+    fn test_team_history_can_unlock_offer_outside_current_car_lane() {
+        let (conn, season_id) = setup_world_db();
+        let player_id = make_player_eligible_for_specials(&conn, "lmp2");
+        let player = driver_queries::get_driver(&conn, &player_id).expect("player");
+        let toyota_team =
+            team_queries::get_teams_by_category_and_class(&conn, "production_challenger", "toyota")
+                .expect("toyota teams")
+                .into_iter()
+                .next()
+                .expect("toyota team");
+
+        insert_historical_contract_for_offer_tests(
+            &conn,
+            &player_id,
+            &player.nome,
+            &toyota_team.id,
+            &toyota_team.nome,
+            "production_challenger",
+            Some("toyota"),
+        );
+
+        let offers =
+            build_player_special_offers(&conn, &season_id, &player).expect("build player offers");
+
+        assert!(offers.iter().any(|offer| offer.team_id == toyota_team.id));
+    }
+}
 
 fn validar_grids(grids: &[GridClasse]) -> Vec<String> {
     let mut errors = Vec::new();
@@ -986,10 +1279,11 @@ mod tests {
     use rusqlite::Connection;
 
     use super::*;
+    use crate::calendar::CalendarEntry;
     use crate::db::migrations;
-    use crate::db::queries::{contracts as cq, drivers as dq, seasons as sq};
+    use crate::db::queries::{calendar as calq, contracts as cq, drivers as dq, seasons as sq};
     use crate::generators::world::generate_world_with_rng;
-    use crate::models::enums::SeasonPhase;
+    use crate::models::enums::{RaceStatus, SeasonPhase, ThematicSlot, WeatherCondition};
 
     fn setup_world_db() -> (Connection, String) {
         let conn = Connection::open_in_memory().expect("in-memory db");
@@ -1037,6 +1331,34 @@ mod tests {
         player.id
     }
 
+    fn insert_pending_regular_race(conn: &Connection, season_id: &str, category: &str) {
+        calq::insert_calendar_entry(
+            conn,
+            &CalendarEntry {
+                id: "R-PENDING-REGULAR".to_string(),
+                season_id: season_id.to_string(),
+                categoria: category.to_string(),
+                rodada: 1,
+                nome: "Corrida regular pendente".to_string(),
+                track_id: 1,
+                track_name: "Interlagos".to_string(),
+                track_config: "GP".to_string(),
+                clima: WeatherCondition::Dry,
+                temperatura: 24.0,
+                voltas: 20,
+                duracao_corrida_min: 30,
+                duracao_classificacao_min: 10,
+                status: RaceStatus::Pendente,
+                horario: "14:00".to_string(),
+                week_of_year: 30,
+                season_phase: SeasonPhase::BlocoRegular,
+                display_date: "2024-09-15".to_string(),
+                thematic_slot: ThematicSlot::RodadaRegular,
+            },
+        )
+        .expect("insert pending regular race");
+    }
+
     #[test]
     fn test_season_phase_transitions() {
         let (conn, season_id) = setup_world_db();
@@ -1065,6 +1387,19 @@ mod tests {
         assert!(
             result.is_err(),
             "deveria falhar se não estiver em BlocoRegular"
+        );
+    }
+
+    #[test]
+    fn test_advance_to_convocation_rejects_pending_regular_races() {
+        let (conn, season_id) = setup_world_db();
+        insert_pending_regular_race(&conn, &season_id, "gt3");
+
+        let result = advance_to_convocation_window(&conn);
+
+        assert!(
+            result.is_err(),
+            "nao deveria abrir convocacao antes do fim real do bloco regular"
         );
     }
 

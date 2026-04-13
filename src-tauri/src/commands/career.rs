@@ -228,9 +228,20 @@ pub(crate) fn load_career_in_base_dir(
     let mut config = AppConfig::load_or_default(base_dir);
     let (db, career_dir, mut meta) = open_career_resources(base_dir, career_id)?;
     let meta_path = career_dir.join("meta.json");
-    let active_season = season_queries::get_active_season(&db.conn)
+    let mut active_season = season_queries::get_active_season(&db.conn)
         .map_err(|e| format!("Falha ao buscar temporada ativa: {e}"))?
         .ok_or_else(|| "Temporada ativa nao encontrada.".to_string())?;
+    let pending_regular_races = calendar_queries::count_pending_races_in_phase(
+        &db.conn,
+        &active_season.id,
+        &SeasonPhase::BlocoRegular,
+    )
+    .map_err(|e| format!("Falha ao verificar corridas regulares pendentes: {e}"))?;
+    if active_season.fase == SeasonPhase::JanelaConvocacao && pending_regular_races > 0 {
+        season_queries::update_season_fase(&db.conn, &active_season.id, &SeasonPhase::BlocoRegular)
+            .map_err(|e| format!("Falha ao corrigir fase da temporada: {e}"))?;
+        active_season.fase = SeasonPhase::BlocoRegular;
+    }
     let player = driver_queries::get_player_driver(&db.conn)
         .map_err(|e| format!("Falha ao carregar piloto do jogador: {e}"))?;
     let player_team = find_player_team(&db.conn, &player.id, active_season.fase)?;
@@ -344,6 +355,7 @@ pub(crate) fn load_career_in_base_dir(
                 .as_ref()
                 .map(|t| t.cor_primaria.clone())
                 .unwrap_or_default(),
+            classe: player_team.as_ref().and_then(|t| t.classe.clone()),
             is_jogador: player.is_jogador,
             pontos: player.stats_temporada.pontos.round() as i32,
             vitorias: player.stats_temporada.vitorias as i32,
@@ -628,19 +640,6 @@ pub(crate) fn advance_season_in_base_dir(
         .map_err(|e| format!("Falha ao buscar temporada ativa: {e}"))?
         .ok_or_else(|| "Temporada ativa nao encontrada.".to_string())?;
 
-    // Bloqueia avanço se o bloco especial ainda não foi encerrado formalmente.
-    // O ciclo correto é: BlocoEspecial → encerrar_bloco_especial → PosEspecial
-    //                    → run_pos_especial → advance_season.
-    match season.fase {
-        SeasonPhase::JanelaConvocacao | SeasonPhase::BlocoEspecial => {
-            return Err(format!(
-                "Nao e possivel avançar a temporada na fase '{}'. Encerre o bloco especial primeiro.",
-                season.fase
-            ));
-        }
-        SeasonPhase::BlocoRegular | SeasonPhase::PosEspecial => {} // permitido
-    }
-
     let pending_races = calendar_queries::get_pending_races(&db.conn, &season.id)
         .map_err(|e| format!("Falha ao verificar corridas pendentes: {e}"))?;
     if !pending_races.is_empty() {
@@ -657,6 +656,24 @@ pub(crate) fn advance_season_in_base_dir(
             season.numero,
             pending_categories.join(", ")
         ));
+    }
+
+    // O fechamento anual so acontece depois das corridas especiais e do PosEspecial.
+    // Assim o mercado normal nunca atropela a convocacao nem o bloco especial.
+    match season.fase {
+        SeasonPhase::PosEspecial => {}
+        SeasonPhase::BlocoRegular => {
+            return Err(
+                "A temporada regular terminou, mas a janela de convocacao especial ainda precisa ser aberta."
+                    .to_string(),
+            );
+        }
+        SeasonPhase::JanelaConvocacao | SeasonPhase::BlocoEspecial => {
+            return Err(format!(
+                "Nao e possivel avancar a temporada na fase '{}'. Encerre o bloco especial primeiro.",
+                season.fase
+            ));
+        }
     }
 
     // Backup canônico de fim de temporada — antes de qualquer mutação da próxima.
@@ -1114,6 +1131,8 @@ pub(crate) fn get_preseason_free_agents_in_base_dir(
                 total_career_seasons: r.total_career_seasons,
                 license_nivel: license_nivel.to_string(),
                 license_sigla: license_sigla.to_string(),
+                last_championship_position: r.last_championship_position,
+                last_championship_total_drivers: r.last_championship_total_drivers,
             }
         })
         .collect();
@@ -2214,14 +2233,28 @@ pub(crate) fn get_drivers_by_category_in_base_dir(
 ) -> Result<Vec<DriverSummary>, String> {
     let category = category.trim().to_lowercase();
     let (db, career_dir, _) = open_career_resources(base_dir, career_id)?;
-    let drivers = driver_queries::get_drivers_by_category(&db.conn, &category)
-        .map_err(|e| format!("Falha ao buscar pilotos da categoria: {e}"))?;
     let season = season_queries::get_active_season(&db.conn)
         .map_err(|e| format!("Falha ao buscar temporada ativa: {e}"))?
         .ok_or_else(|| "Temporada ativa nao encontrada.".to_string())?;
     let total_rounds = count_calendar_entries(&db.conn, &season.id, &category)
         .map_err(|e| format!("Falha ao contar corridas da categoria: {e}"))?
         as usize;
+
+    if categories::is_especial(&category) {
+        let special_standings = get_special_driver_standings_from_results(
+            &db,
+            &career_dir,
+            &season,
+            &category,
+            total_rounds,
+        )?;
+        if !special_standings.is_empty() {
+            return Ok(special_standings);
+        }
+    }
+
+    let drivers = driver_queries::get_drivers_by_category(&db.conn, &category)
+        .map_err(|e| format!("Falha ao buscar pilotos da categoria: {e}"))?;
     let driver_ids: Vec<String> = drivers.iter().map(|driver| driver.id.clone()).collect();
     let history_map: HashMap<String, Vec<Option<RoundResult>>> =
         build_driver_histories(&career_dir, &category, total_rounds, &driver_ids)?
@@ -2250,6 +2283,7 @@ pub(crate) fn get_drivers_by_category_in_base_dir(
                     .as_ref()
                     .map(|value| value.cor_primaria.clone())
                     .unwrap_or_else(|| "#7d8590".to_string()),
+                classe: team.as_ref().and_then(|value| value.classe.clone()),
                 is_jogador: driver.is_jogador,
                 pontos: driver.stats_temporada.pontos.round() as i32,
                 vitorias: driver.stats_temporada.vitorias as i32,
@@ -2278,6 +2312,133 @@ pub(crate) fn get_drivers_by_category_in_base_dir(
     }
 
     Ok(standings)
+}
+
+struct HistoricalSpecialStanding {
+    driver_id: String,
+    points: f64,
+    wins: i32,
+    podiums: i32,
+    latest_team_id: Option<String>,
+}
+
+struct HistoricalSpecialTeamStanding {
+    team_id: String,
+    points: f64,
+    wins: i32,
+}
+
+fn get_special_driver_standings_from_results(
+    db: &Database,
+    career_dir: &Path,
+    season: &Season,
+    category: &str,
+    total_rounds: usize,
+) -> Result<Vec<DriverSummary>, String> {
+    let rows = query_special_driver_standing_rows(&db.conn, &season.id, category)?;
+    if rows.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let driver_ids: Vec<String> = rows.iter().map(|row| row.driver_id.clone()).collect();
+    let history_map: HashMap<String, Vec<Option<RoundResult>>> =
+        build_driver_histories(career_dir, category, total_rounds, &driver_ids)?
+            .into_iter()
+            .map(|history| (history.driver_id, history.results))
+            .collect();
+
+    rows.into_iter()
+        .enumerate()
+        .map(|(index, row)| {
+            let driver = driver_queries::get_driver(&db.conn, &row.driver_id).map_err(|e| {
+                format!("Falha ao carregar piloto especial '{}': {e}", row.driver_id)
+            })?;
+            let team = row
+                .latest_team_id
+                .as_deref()
+                .map(|team_id| {
+                    team_queries::get_team_by_id(&db.conn, team_id).map_err(|e| {
+                        format!("Falha ao carregar equipe especial '{}': {e}", team_id)
+                    })
+                })
+                .transpose()?
+                .flatten();
+
+            Ok(DriverSummary {
+                id: driver.id.clone(),
+                nome: driver.nome,
+                nacionalidade: driver.nacionalidade,
+                idade: driver.idade as i32,
+                skill: driver.atributos.skill.round().clamp(0.0, 100.0) as u8,
+                categoria_especial_ativa: driver.categoria_especial_ativa.clone(),
+                equipe_id: team.as_ref().map(|value| value.id.clone()),
+                equipe_nome: team.as_ref().map(|value| value.nome.clone()),
+                equipe_nome_curto: team.as_ref().map(|value| value.nome_curto.clone()),
+                equipe_cor: team
+                    .as_ref()
+                    .map(|value| value.cor_primaria.clone())
+                    .unwrap_or_else(|| "#7d8590".to_string()),
+                classe: team.as_ref().and_then(|value| value.classe.clone()),
+                is_jogador: driver.is_jogador,
+                pontos: row.points.round() as i32,
+                vitorias: row.wins,
+                podios: row.podiums,
+                posicao_campeonato: index as i32 + 1,
+                results: history_map.get(&driver.id).cloned().unwrap_or_default(),
+            })
+        })
+        .collect()
+}
+
+fn query_special_driver_standing_rows(
+    conn: &rusqlite::Connection,
+    season_id: &str,
+    category: &str,
+) -> Result<Vec<HistoricalSpecialStanding>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT
+                r.piloto_id,
+                COALESCE(SUM(r.pontos), 0.0) AS total_points,
+                SUM(CASE WHEN r.posicao_final = 1 AND r.dnf = 0 THEN 1 ELSE 0 END) AS total_wins,
+                SUM(CASE WHEN r.posicao_final <= 3 AND r.dnf = 0 THEN 1 ELSE 0 END) AS total_podiums,
+                (
+                    SELECT rr.equipe_id
+                    FROM race_results rr
+                    INNER JOIN calendar cc ON cc.id = rr.race_id
+                    WHERE rr.piloto_id = r.piloto_id
+                      AND COALESCE(cc.season_id, cc.temporada_id) = ?1
+                      AND cc.categoria = ?2
+                    ORDER BY cc.rodada DESC, rr.id DESC
+                    LIMIT 1
+                ) AS latest_team_id
+             FROM race_results r
+             INNER JOIN calendar c ON c.id = r.race_id
+             INNER JOIN drivers d ON d.id = r.piloto_id
+             WHERE COALESCE(c.season_id, c.temporada_id) = ?1
+               AND c.categoria = ?2
+             GROUP BY r.piloto_id
+             ORDER BY total_points DESC, total_wins DESC, total_podiums DESC, d.nome ASC",
+        )
+        .map_err(|e| format!("Falha ao preparar standings especiais: {e}"))?;
+
+    let mapped = stmt
+        .query_map(rusqlite::params![season_id, category], |row| {
+            Ok(HistoricalSpecialStanding {
+                driver_id: row.get(0)?,
+                points: row.get(1)?,
+                wins: row.get(2)?,
+                podiums: row.get(3)?,
+                latest_team_id: row.get(4)?,
+            })
+        })
+        .map_err(|e| format!("Falha ao consultar standings especiais: {e}"))?;
+
+    let mut rows = Vec::new();
+    for row in mapped {
+        rows.push(row.map_err(|e| format!("Falha ao ler standings especiais: {e}"))?);
+    }
+    Ok(rows)
 }
 
 fn merge_recent_results_fallback(
@@ -2429,10 +2590,22 @@ pub(crate) fn get_teams_standings_in_base_dir(
     let teams = team_queries::get_teams_by_category(&db.conn, &category)
         .map_err(|e| format!("Falha ao buscar equipes da categoria: {e}"))?;
     let previous_champions = get_previous_champions_in_base_dir(base_dir, career_id, &category)?;
-    let active_season_number = season_queries::get_active_season(&db.conn)
+    let season = season_queries::get_active_season(&db.conn)
         .map_err(|e| format!("Falha ao buscar temporada ativa: {e}"))?
-        .map(|season| season.numero)
-        .unwrap_or(1);
+        .ok_or_else(|| "Temporada ativa nao encontrada.".to_string())?;
+    let active_season_number = season.numero;
+
+    if categories::is_especial(&category) {
+        let special_standings = get_special_team_standings_from_results(
+            &db.conn,
+            &season,
+            &category,
+            &previous_champions,
+        )?;
+        if !special_standings.is_empty() {
+            return Ok(special_standings);
+        }
+    }
 
     let mut standings: Vec<TeamStanding> = teams
         .into_iter()
@@ -2494,6 +2667,132 @@ pub(crate) fn get_teams_standings_in_base_dir(
     }
 
     Ok(standings)
+}
+
+fn get_special_team_standings_from_results(
+    conn: &rusqlite::Connection,
+    season: &Season,
+    category: &str,
+    previous_champions: &PreviousChampions,
+) -> Result<Vec<TeamStanding>, String> {
+    let rows = query_special_team_standing_rows(conn, &season.id, category)?;
+    if rows.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    rows.into_iter()
+        .enumerate()
+        .map(|(index, row)| {
+            let team = team_queries::get_team_by_id(conn, &row.team_id)
+                .map_err(|e| format!("Falha ao carregar equipe especial '{}': {e}", row.team_id))?
+                .ok_or_else(|| format!("Equipe especial '{}' nao encontrada", row.team_id))?;
+            let driver_names =
+                query_special_team_driver_names(conn, &season.id, category, &row.team_id)?;
+            let team_id = team.id.clone();
+
+            Ok(TeamStanding {
+                posicao: index as i32 + 1,
+                id: team_id.clone(),
+                nome: team.nome,
+                nome_curto: team.nome_curto,
+                cor_primaria: team.cor_primaria,
+                pontos: row.points.round() as i32,
+                vitorias: row.wins,
+                piloto_1_nome: driver_names.get(0).cloned(),
+                piloto_1_tenure_seasons: None,
+                piloto_2_nome: driver_names.get(1).cloned(),
+                piloto_2_tenure_seasons: None,
+                trofeus: previous_champions
+                    .constructor_champions
+                    .iter()
+                    .find(|champion| champion.team_id == team_id)
+                    .map(|champion| {
+                        vec![TrophyInfo {
+                            tipo: "ouro".to_string(),
+                            temporada: 0,
+                            is_defending: champion.is_defending,
+                        }]
+                    })
+                    .unwrap_or_default(),
+                classe: team.classe.clone(),
+                temp_posicao: team.temp_posicao,
+                categoria_anterior: team.categoria_anterior.clone(),
+            })
+        })
+        .collect()
+}
+
+fn query_special_team_standing_rows(
+    conn: &rusqlite::Connection,
+    season_id: &str,
+    category: &str,
+) -> Result<Vec<HistoricalSpecialTeamStanding>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT
+                r.equipe_id,
+                COALESCE(SUM(r.pontos), 0.0) AS total_points,
+                SUM(CASE WHEN r.posicao_final = 1 AND r.dnf = 0 THEN 1 ELSE 0 END) AS total_wins
+             FROM race_results r
+             INNER JOIN calendar c ON c.id = r.race_id
+             INNER JOIN teams t ON t.id = r.equipe_id
+             WHERE COALESCE(c.season_id, c.temporada_id) = ?1
+               AND c.categoria = ?2
+               AND r.equipe_id <> ''
+             GROUP BY r.equipe_id
+             ORDER BY total_points DESC, total_wins DESC, t.nome ASC",
+        )
+        .map_err(|e| format!("Falha ao preparar standings especiais de equipes: {e}"))?;
+
+    let mapped = stmt
+        .query_map(rusqlite::params![season_id, category], |row| {
+            Ok(HistoricalSpecialTeamStanding {
+                team_id: row.get(0)?,
+                points: row.get(1)?,
+                wins: row.get(2)?,
+            })
+        })
+        .map_err(|e| format!("Falha ao consultar standings especiais de equipes: {e}"))?;
+
+    let mut rows = Vec::new();
+    for row in mapped {
+        rows.push(row.map_err(|e| format!("Falha ao ler standings especiais de equipes: {e}"))?);
+    }
+    Ok(rows)
+}
+
+fn query_special_team_driver_names(
+    conn: &rusqlite::Connection,
+    season_id: &str,
+    category: &str,
+    team_id: &str,
+) -> Result<Vec<String>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT d.nome
+             FROM race_results r
+             INNER JOIN calendar c ON c.id = r.race_id
+             INNER JOIN drivers d ON d.id = r.piloto_id
+             WHERE COALESCE(c.season_id, c.temporada_id) = ?1
+               AND c.categoria = ?2
+               AND r.equipe_id = ?3
+             GROUP BY r.piloto_id
+             ORDER BY COUNT(*) DESC, MIN(c.rodada) ASC, MIN(r.posicao_final) ASC, d.nome ASC
+             LIMIT 2",
+        )
+        .map_err(|e| format!("Falha ao preparar pilotos da equipe especial: {e}"))?;
+
+    let mapped = stmt
+        .query_map(rusqlite::params![season_id, category, team_id], |row| {
+            row.get::<_, String>(0)
+        })
+        .map_err(|e| format!("Falha ao consultar pilotos da equipe especial: {e}"))?;
+
+    let mut names = Vec::new();
+    for row in mapped {
+        names.push(row.map_err(|e| format!("Falha ao ler piloto da equipe especial: {e}"))?);
+    }
+    Ok(names)
 }
 
 pub(crate) fn get_race_results_by_category_in_base_dir(
@@ -3308,6 +3607,29 @@ mod tests {
     }
 
     #[test]
+    fn test_load_career_repairs_early_convocation_with_regular_races_pending() {
+        let base_dir = create_test_career_dir("load_repair_early_convocation");
+        let config = AppConfig::load_or_default(&base_dir);
+        let db_path = config.saves_dir().join("career_001").join("career.db");
+        let db = Database::open_existing(&db_path).expect("db");
+        let season = season_queries::get_active_season(&db.conn)
+            .expect("season query")
+            .expect("active season");
+        season_queries::update_season_fase(&db.conn, &season.id, &SeasonPhase::JanelaConvocacao)
+            .expect("force early convocation");
+
+        let career = load_career_in_base_dir(&base_dir, "career_001").expect("load career");
+
+        assert_eq!(career.season.fase, "BlocoRegular");
+        let refreshed_season = season_queries::get_active_season(&db.conn)
+            .expect("season query")
+            .expect("active season");
+        assert_eq!(refreshed_season.fase, SeasonPhase::BlocoRegular);
+
+        let _ = fs::remove_dir_all(base_dir);
+    }
+
+    #[test]
     fn test_load_career_prefers_active_special_contract_team() {
         let base_dir = create_test_career_dir("load_active_special_team");
         let config = AppConfig::load_or_default(&base_dir);
@@ -3318,6 +3640,7 @@ mod tests {
         player.atributos.skill = 98.0;
         driver_queries::update_driver(&db.conn, &player).expect("update player");
 
+        mark_regular_races_completed(&db);
         crate::convocation::advance_to_convocation_window(&db.conn).expect("advance convocation");
         crate::convocation::run_convocation_window(&db.conn).expect("run convocation");
         let offers = crate::commands::convocation::get_player_special_offers_in_base_dir(
@@ -3360,6 +3683,7 @@ mod tests {
         player.atributos.skill = 98.0;
         driver_queries::update_driver(&db.conn, &player).expect("update player");
 
+        mark_regular_races_completed(&db);
         crate::convocation::advance_to_convocation_window(&db.conn).expect("advance convocation");
         crate::convocation::run_convocation_window(&db.conn).expect("run convocation");
         let offers = crate::commands::convocation::get_player_special_offers_in_base_dir(
@@ -3849,6 +4173,106 @@ mod tests {
     }
 
     #[test]
+    fn test_get_drivers_by_category_keeps_special_standings_after_skip_cleanup() {
+        let base_dir = create_test_career_dir("special_standings_after_skip");
+
+        let config = AppConfig::load_or_default(&base_dir);
+        let db_path = config.saves_dir().join("career_001").join("career.db");
+        let db = Database::open_existing(&db_path).expect("db");
+        db.conn
+            .execute(
+                "UPDATE calendar SET status = 'Concluida' WHERE season_phase = 'BlocoRegular'",
+                [],
+            )
+            .expect("complete regular block");
+        crate::convocation::advance_to_convocation_window(&db.conn).expect("advance convocation");
+        crate::convocation::run_convocation_window(&db.conn).expect("run convocation");
+        crate::convocation::iniciar_bloco_especial(&db.conn).expect("start special block");
+        drop(db);
+
+        crate::commands::race::simulate_special_block_in_base_dir(&base_dir, "career_001")
+            .expect("simulate special block");
+        let db = Database::open_existing(&db_path).expect("db after special sim");
+        crate::convocation::encerrar_bloco_especial(&db.conn).expect("end special block");
+        crate::convocation::run_pos_especial(&db.conn).expect("run pos especial");
+        drop(db);
+
+        let standings =
+            get_drivers_by_category_in_base_dir(&base_dir, "career_001", "production_challenger")
+                .expect("production special standings");
+
+        assert!(
+            !standings.is_empty(),
+            "standings especiais devem continuar visiveis apos o cleanup"
+        );
+        assert!(
+            standings.iter().any(|driver| driver.pontos > 0),
+            "standings especiais devem refletir pontos simulados"
+        );
+        assert!(
+            standings
+                .iter()
+                .any(|driver| driver.results.iter().any(Option::is_some)),
+            "standings especiais devem manter resultados por rodada"
+        );
+        assert!(
+            standings
+                .iter()
+                .any(|driver| driver.classe.as_deref() == Some("bmw")),
+            "standings especiais devem carregar a classe/carro do piloto"
+        );
+
+        let _ = fs::remove_dir_all(base_dir);
+    }
+
+    #[test]
+    fn test_get_teams_standings_keeps_special_lineup_after_skip_cleanup() {
+        let base_dir = create_test_career_dir("special_team_standings_after_skip");
+
+        let config = AppConfig::load_or_default(&base_dir);
+        let db_path = config.saves_dir().join("career_001").join("career.db");
+        let db = Database::open_existing(&db_path).expect("db");
+        db.conn
+            .execute(
+                "UPDATE calendar SET status = 'Concluida' WHERE season_phase = 'BlocoRegular'",
+                [],
+            )
+            .expect("complete regular block");
+        crate::convocation::advance_to_convocation_window(&db.conn).expect("advance convocation");
+        crate::convocation::run_convocation_window(&db.conn).expect("run convocation");
+        crate::convocation::iniciar_bloco_especial(&db.conn).expect("start special block");
+        drop(db);
+
+        crate::commands::race::simulate_special_block_in_base_dir(&base_dir, "career_001")
+            .expect("simulate special block");
+        let db = Database::open_existing(&db_path).expect("db after special sim");
+        crate::convocation::encerrar_bloco_especial(&db.conn).expect("end special block");
+        crate::convocation::run_pos_especial(&db.conn).expect("run pos especial");
+        drop(db);
+
+        let standings =
+            get_teams_standings_in_base_dir(&base_dir, "career_001", "production_challenger")
+                .expect("production team standings");
+
+        assert!(
+            !standings.is_empty(),
+            "standings de equipes especiais devem continuar visiveis apos o cleanup"
+        );
+        assert!(
+            standings.iter().any(|team| team.pontos > 0),
+            "standings de equipes especiais devem refletir pontos simulados"
+        );
+        assert!(
+            standings
+                .iter()
+                .any(|team| { team.piloto_1_nome.is_some() || team.piloto_2_nome.is_some() }),
+            "standings de equipes especiais devem preservar os pilotos pelo historico de corrida"
+        );
+
+        let _ = fs::remove_dir_all(base_dir);
+    }
+
+    #[test]
     fn test_get_teams_standings_returns_category_grid() {
         let base_dir = create_test_career_dir("teams_standings");
         let standings = get_teams_standings_in_base_dir(&base_dir, "career_001", "mazda_rookie")
@@ -4244,6 +4668,24 @@ mod tests {
     }
 
     #[test]
+    fn test_advance_season_rejects_completed_regular_before_special_flow() {
+        let base_dir = create_test_career_dir("advance_regular_before_special");
+        let config = AppConfig::load_or_default(&base_dir);
+        let db_path = config.saves_dir().join("career_001").join("career.db");
+        let db = Database::open_existing(&db_path).expect("db");
+        db.conn
+            .execute("UPDATE calendar SET status = 'Concluida'", [])
+            .expect("mark calendar completed");
+
+        let error =
+            advance_season_in_base_dir(&base_dir, "career_001").expect_err("should reject advance");
+
+        assert!(error.contains("convocacao"));
+
+        let _ = fs::remove_dir_all(base_dir);
+    }
+
+    #[test]
     fn test_advance_season_updates_meta_and_creates_next_season() {
         let base_dir = create_test_career_dir("advance_success");
         mark_all_races_completed(&base_dir, "career_001");
@@ -4375,6 +4817,22 @@ mod tests {
             .expect("valid advanced preseason date");
 
         assert_eq!(week.week_number, 1);
+        if week.events.iter().any(|event| {
+            event.driver_name.is_some()
+                && matches!(
+                    event.event_type,
+                    crate::market::preseason::MarketEventType::TransferCompleted
+                        | crate::market::preseason::MarketEventType::ContractRenewed
+                        | crate::market::preseason::MarketEventType::RookieSigned
+                )
+        }) {
+            assert!(
+                week.events
+                    .iter()
+                    .any(|event| event.championship_position.is_some()),
+                "ao menos uma movimentacao semanal ranqueavel deve carregar posicao para o fechamento visual"
+            );
+        }
         assert!(state.current_week >= 2 || state.is_complete);
         assert_eq!(
             advanced_date.signed_duration_since(initial_date).num_days(),
@@ -4482,6 +4940,26 @@ mod tests {
         special_contract.status = ContractStatus::Expirado;
         special_contract.created_at = "2026-06-01T08:00:00".to_string();
         contract_queries::insert_contract(&db.conn, &special_contract).expect("insert special");
+        db.conn
+            .execute(
+                "INSERT OR REPLACE INTO driver_season_archive
+                 (piloto_id, season_number, ano, nome, categoria, posicao_campeonato, pontos, snapshot_json)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                rusqlite::params![
+                    &driver.id,
+                    1,
+                    2025,
+                    &driver.nome,
+                    "mazda_amador",
+                    12,
+                    95.0,
+                    serde_json::json!({
+                        "total_pilotos": 20
+                    })
+                    .to_string()
+                ],
+            )
+            .expect("insert archive");
 
         let free_agents =
             get_preseason_free_agents_in_base_dir(&base_dir, "career_001").expect("free agents");
@@ -4501,6 +4979,8 @@ mod tests {
         );
         assert_eq!(preview.seasons_at_last_team, 3);
         assert_eq!(preview.total_career_seasons, 3);
+        assert_eq!(preview.last_championship_position, Some(12));
+        assert_eq!(preview.last_championship_total_drivers, Some(20));
 
         let _ = fs::remove_dir_all(base_dir);
     }
@@ -4803,8 +5283,27 @@ mod tests {
             team_queries::get_teams_by_category(&db.conn, &current_contract.categoria)
                 .expect("teams by category")
                 .into_iter()
-                .find(|team| team.id != current_contract.equipe_id)
-                .expect("target team");
+                .find(|team| {
+                    if team.id == current_contract.equipe_id
+                        || team.piloto_1_id.is_none()
+                        || team.piloto_2_id.is_none()
+                    {
+                        return false;
+                    }
+
+                    contract_queries::get_active_contracts_for_team(&db.conn, &team.id)
+                        .map(|contracts| {
+                            contracts
+                                .into_iter()
+                                .filter(|contract| {
+                                    contract.tipo == crate::models::enums::ContractType::Regular
+                                })
+                                .count()
+                                == 2
+                        })
+                        .unwrap_or(false)
+                })
+                .expect("full target team");
         let displaced_driver_id = target_team
             .piloto_1_id
             .clone()
@@ -4970,6 +5469,7 @@ mod tests {
                 driver_name: player.nome.clone(),
                 from_team_id: Some(current_contract.equipe_id.clone()),
                 from_team_name: Some(current_contract.equipe_nome.clone()),
+                from_categoria: Some(current_contract.categoria.clone()),
                 to_team_id: gt4_team.id.clone(),
                 to_team_name: gt4_team.nome.clone(),
                 salary: 120_000.0,
@@ -5580,6 +6080,21 @@ mod tests {
         db.conn
             .execute("UPDATE calendar SET status = 'Concluida'", [])
             .expect("mark all races completed");
+        db.conn
+            .execute(
+                "UPDATE seasons SET fase = 'PosEspecial' WHERE status = 'EmAndamento'",
+                [],
+            )
+            .expect("mark season as post-special");
+    }
+
+    fn mark_regular_races_completed(db: &Database) {
+        db.conn
+            .execute(
+                "UPDATE calendar SET status = 'Concluida' WHERE season_phase = 'BlocoRegular'",
+                [],
+            )
+            .expect("complete regular block");
     }
 
     fn unique_test_dir(label: &str) -> std::path::PathBuf {

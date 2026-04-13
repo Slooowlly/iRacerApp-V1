@@ -11,6 +11,7 @@ import {
   getCategoryTier,
 } from "../../utils/formatters";
 import GlassButton from "../ui/GlassButton";
+import LoadingOverlay from "../ui/LoadingOverlay";
 
 const PILOT_STATUS_META = {
   promoted: {
@@ -530,6 +531,7 @@ function SectionRetirements({ retirements }) {
 function EndOfSeasonView() {
   const result = useCareerStore((state) => state.endOfSeasonResult);
   const enterPreseason = useCareerStore((state) => state.enterPreseason);
+  const isEnteringPreseason = useCareerStore((state) => state.isEnteringPreseason);
   const careerId = useCareerStore((state) => state.careerId);
 
   const [activeTab, setActiveTab] = useState("licenses");
@@ -554,6 +556,11 @@ function EndOfSeasonView() {
   return (
     <div className="app-shell flex h-screen flex-col overflow-hidden bg-[#0A0F1C] text-text-primary relative pt-12 items-center justify-center">
       <div className="app-backdrop" />
+      <LoadingOverlay
+        open={isEnteringPreseason}
+        title="Abrindo mercado de transferencias"
+        message="Carregando equipes, propostas e pilotos disponiveis."
+      />
 
       <div className="flex flex-col w-full h-full max-w-[1600px] mx-auto z-10 px-8 pb-8">
         <nav className="border border-white/10 px-6 py-4 flex justify-between items-center bg-[#0E0E10]/80 backdrop-blur-md shrink-0 mb-6 rounded-2xl shadow-lg mt-4 h-24">
@@ -567,10 +574,15 @@ function EndOfSeasonView() {
             </span>
             <GlassButton
               variant="primary"
+              disabled={isEnteringPreseason}
               className="rounded-full shadow-[0_0_20px_rgba(88,166,255,0.4)] !px-8 !py-3 font-semibold text-sm transition-transform hover:scale-105"
-              onClick={() => void enterPreseason()}
+              onClick={() => {
+                if (!isEnteringPreseason) {
+                  void enterPreseason();
+                }
+              }}
             >
-              Iniciar Pre-Temporada
+              {isEnteringPreseason ? "Aguarde..." : "Iniciar Pre-Temporada"}
             </GlassButton>
           </div>
         </nav>

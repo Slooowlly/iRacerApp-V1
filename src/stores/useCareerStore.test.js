@@ -370,16 +370,30 @@ describe("useCareerStore loadCareer", () => {
         return Promise.resolve(null);
       }
 
-      if (command === "get_player_special_offers") {
-        return Promise.resolve([
-          {
-            id: "offer-1",
-            team_id: "team-special",
-            team_name: "Solar GT4",
-            special_category: "endurance",
-            class_name: "gt4",
-          },
-        ]);
+      if (command === "get_special_window_state") {
+        return Promise.resolve({
+          current_day: 3,
+          total_days: 7,
+          status: "Aberta",
+          active_offer_id: "offer-1",
+          is_finished: false,
+          player_offers: [
+            {
+              id: "offer-1",
+              team_id: "team-special",
+              team_name: "Solar GT4",
+              special_category: "endurance",
+              class_name: "gt4",
+              papel: "Numero2",
+              status: "AceitaAtiva",
+              available_from_day: 2,
+              is_available_today: true,
+            },
+          ],
+          eligible_candidates: [],
+          team_sections: [],
+          last_day_log: [],
+        });
       }
 
       return Promise.resolve(null);
@@ -388,6 +402,10 @@ describe("useCareerStore loadCareer", () => {
     await useCareerStore.getState().loadCareer("career-77");
 
     expect(useCareerStore.getState().showConvocation).toBe(true);
+    expect(useCareerStore.getState().specialWindowState).toMatchObject({
+      current_day: 3,
+      total_days: 7,
+    });
     expect(useCareerStore.getState().playerSpecialOffers).toHaveLength(1);
     expect(useCareerStore.getState().acceptedSpecialOffer).toMatchObject({
       team_id: "team-special",
@@ -465,6 +483,46 @@ describe("useCareerStore enterPreseason", () => {
     expect(useCareerStore.getState().showEndOfSeason).toBe(false);
   });
 
+  it("keeps a visible loading state while entering the preseason market", async () => {
+    let resolvePreseasonState;
+
+    invoke.mockImplementation((command) => {
+      if (command === "get_preseason_state") {
+        return new Promise((resolve) => {
+          resolvePreseasonState = resolve;
+        });
+      }
+
+      if (command === "get_player_proposals") {
+        return Promise.resolve([]);
+      }
+
+      if (command === "get_news") {
+        return Promise.resolve([]);
+      }
+
+      if (command === "set_career_resume_context") {
+        return Promise.resolve(null);
+      }
+
+      return Promise.resolve([]);
+    });
+
+    const enterPromise = useCareerStore.getState().enterPreseason();
+
+    expect(useCareerStore.getState().isEnteringPreseason).toBe(true);
+
+    resolvePreseasonState({
+      season_number: 2,
+      current_week: 1,
+      total_weeks: 6,
+      is_complete: false,
+    });
+    await enterPromise;
+
+    expect(useCareerStore.getState().isEnteringPreseason).toBe(false);
+  });
+
   it("clears special convocation state when returning to the normal preseason market", async () => {
     invoke.mockImplementation((command) => {
       if (command === "get_preseason_state") {
@@ -495,8 +553,179 @@ describe("useCareerStore enterPreseason", () => {
 
     expect(useCareerStore.getState().showPreseason).toBe(true);
     expect(useCareerStore.getState().showConvocation).toBe(false);
+    expect(useCareerStore.getState().specialWindowState).toBe(null);
     expect(useCareerStore.getState().playerSpecialOffers).toEqual([]);
     expect(useCareerStore.getState().acceptedSpecialOffer).toBe(null);
+  });
+});
+
+describe("useCareerStore advanceMarketWeek", () => {
+  beforeEach(() => {
+    invoke.mockReset();
+    useCareerStore.setState({
+      careerId: "career-1",
+      preseasonState: { season_number: 2, current_week: 1, total_weeks: 4 },
+      lastMarketWeekResult: null,
+      playerProposals: [],
+      preseasonFreeAgents: [],
+      isAdvancingWeek: false,
+      error: null,
+    });
+  });
+
+  it("stores the latest week result for the weekly closing panel", async () => {
+    const weekResult = {
+      week_number: 1,
+      events: [
+        {
+          event_type: "TransferCompleted",
+          driver_name: "Marta Bianco",
+          categoria: "gt3",
+          championship_position: 1,
+        },
+      ],
+      player_proposals: [],
+    };
+
+    invoke.mockImplementation((command) => {
+      if (command === "advance_market_week") return Promise.resolve(weekResult);
+      if (command === "get_preseason_state") {
+        return Promise.resolve({ season_number: 2, current_week: 2, total_weeks: 4 });
+      }
+      if (command === "get_preseason_free_agents") return Promise.resolve([]);
+      if (command === "get_news") return Promise.resolve([]);
+      return Promise.resolve(null);
+    });
+
+    await useCareerStore.getState().advanceMarketWeek();
+
+    expect(useCareerStore.getState().lastMarketWeekResult).toEqual(weekResult);
+  });
+});
+
+describe("useCareerStore specialWindow", () => {
+  beforeEach(() => {
+    invoke.mockReset();
+    useCareerStore.setState({
+      careerId: "career-1",
+      specialWindowState: null,
+      playerSpecialOffers: [],
+      acceptedSpecialOffer: null,
+      isConvocating: false,
+      error: null,
+    });
+  });
+
+  it("loads the special window payload and stores the visible offers", async () => {
+    invoke.mockImplementation((command) => {
+      if (command === "get_special_window_state") {
+        return Promise.resolve({
+          current_day: 2,
+          total_days: 7,
+          status: "Aberta",
+          active_offer_id: "offer-1",
+          is_finished: false,
+          player_offers: [
+            {
+              id: "offer-1",
+              team_id: "team-special",
+              team_name: "Solar GT4",
+              special_category: "endurance",
+              class_name: "gt4",
+              papel: "Numero2",
+              status: "AceitaAtiva",
+              available_from_day: 2,
+              is_available_today: true,
+            },
+          ],
+          eligible_candidates: [],
+          team_sections: [],
+          last_day_log: [],
+        });
+      }
+
+      return Promise.resolve(null);
+    });
+
+    await useCareerStore.getState().loadSpecialWindowState();
+
+    expect(useCareerStore.getState().specialWindowState).toMatchObject({
+      current_day: 2,
+      total_days: 7,
+    });
+    expect(useCareerStore.getState().playerSpecialOffers).toHaveLength(1);
+    expect(useCareerStore.getState().acceptedSpecialOffer).toMatchObject({
+      id: "offer-1",
+      team_name: "Solar GT4",
+    });
+  });
+
+  it("accepts an offer as the active choice of the day", async () => {
+    invoke.mockImplementation((command) => {
+      if (command === "accept_special_offer_for_day") {
+        return Promise.resolve({
+          current_day: 3,
+          total_days: 7,
+          status: "Aberta",
+          active_offer_id: "offer-1",
+          is_finished: false,
+          player_offers: [
+            {
+              id: "offer-1",
+              team_id: "team-special",
+              team_name: "Solar GT4",
+              special_category: "endurance",
+              class_name: "gt4",
+              papel: "Numero2",
+              status: "AceitaAtiva",
+              available_from_day: 2,
+              is_available_today: true,
+            },
+          ],
+          eligible_candidates: [],
+          team_sections: [],
+          last_day_log: [],
+        });
+      }
+
+      return Promise.resolve(null);
+    });
+
+    await useCareerStore.getState().acceptSpecialOfferForDay("offer-1");
+
+    expect(useCareerStore.getState().specialWindowState).toMatchObject({
+      active_offer_id: "offer-1",
+    });
+    expect(useCareerStore.getState().playerSpecialOffers[0]).toMatchObject({
+      status: "AceitaAtiva",
+    });
+  });
+});
+
+describe("useCareerStore dismissResult", () => {
+  beforeEach(() => {
+    invoke.mockReset();
+  });
+
+  it("does not auto-open the convocation window after the last regular race result is dismissed", async () => {
+    const mockLoadCareer = vi.fn().mockResolvedValue({
+      season: { fase: "BlocoRegular" },
+      next_race: null,
+    });
+    const mockRunConvocationWindow = vi.fn();
+
+    useCareerStore.setState({
+      careerId: "career-1",
+      showResult: true,
+      loadCareer: mockLoadCareer,
+      runConvocationWindow: mockRunConvocationWindow,
+    });
+
+    await useCareerStore.getState().dismissResult();
+
+    expect(mockLoadCareer).toHaveBeenCalledWith("career-1");
+    expect(mockRunConvocationWindow).not.toHaveBeenCalled();
+    expect(useCareerStore.getState().showResult).toBe(false);
   });
 });
 

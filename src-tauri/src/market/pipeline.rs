@@ -11,7 +11,9 @@ use crate::db::queries::teams as team_queries;
 use crate::generators::ids::{next_id, IdType};
 use crate::market::driver_ai::evaluate_proposal;
 use crate::market::evaluation::{estimate_expected_position, evaluate_driver_performance};
-use crate::market::proposals::{MarketProposal, MarketReport, SigningInfo, Vacancy};
+use crate::market::proposals::{
+    is_real_career_debut_category, MarketProposal, MarketReport, SigningInfo, Vacancy,
+};
 use crate::market::renewal::should_renew_contract;
 use crate::market::sync::sync_team_slots_from_active_regular_contracts;
 use crate::market::team_ai::{generate_team_proposals, AvailableDriver};
@@ -247,7 +249,11 @@ pub fn run_market(
                     proposal.duracao_anos,
                     proposal.papel.clone(),
                 )?;
-                let tipo = if is_rookie_signing_candidate(&candidate, &expiring_by_driver) {
+                let tipo = if is_rookie_signing_candidate(
+                    &candidate,
+                    &expiring_by_driver,
+                    &vacancy.categoria,
+                ) {
                     report.rookies_placed += 1;
                     "rookie"
                 } else {
@@ -308,7 +314,11 @@ pub fn run_market(
 fn is_rookie_signing_candidate(
     candidate: &AvailableDriver,
     expiring_by_driver: &HashMap<String, Contract>,
+    target_category: &str,
 ) -> bool {
+    if !is_real_career_debut_category(target_category) {
+        return false;
+    }
     if expiring_by_driver.contains_key(&candidate.driver.id) {
         return false;
     }
@@ -1193,6 +1203,32 @@ mod tests {
             signing.tipo, "transferencia",
             "piloto veterano ja existente no save nao deve ser classificado como rookie"
         );
+    }
+
+    #[test]
+    fn test_rookie_signing_candidate_only_counts_real_rookie_categories() {
+        let driver = sample_driver("P999", "Piloto Novo", None, 60.0, DriverStatus::Ativo);
+        let candidate = AvailableDriver {
+            driver,
+            visibility: 6.0,
+            posicao_campeonato: 99,
+            categoria_atual: String::new(),
+            category_tier: 0,
+            max_license_level: Some(4),
+        };
+        let expiring = HashMap::new();
+
+        assert!(is_rookie_signing_candidate(
+            &candidate,
+            &expiring,
+            "mazda_rookie"
+        ));
+        assert!(is_rookie_signing_candidate(
+            &candidate,
+            &expiring,
+            "toyota_rookie"
+        ));
+        assert!(!is_rookie_signing_candidate(&candidate, &expiring, "gt3"));
     }
 
     #[test]

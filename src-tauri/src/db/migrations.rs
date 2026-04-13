@@ -4,7 +4,7 @@ use crate::db::connection::DbError;
 
 // ── Versão atual do schema ────────────────────────────────────────────────────
 
-const CURRENT_VERSION: u32 = 25;
+const CURRENT_VERSION: u32 = 26;
 
 // ── API pública ───────────────────────────────────────────────────────────────
 
@@ -35,6 +35,7 @@ pub fn run_all(conn: &Connection) -> Result<(), DbError> {
     migrate_v23(conn)?;
     migrate_v24(conn)?;
     migrate_v25(conn)?;
+    migrate_v26(conn)?;
     set_schema_version(conn, CURRENT_VERSION)?;
     Ok(())
 }
@@ -141,6 +142,10 @@ pub fn run_pending(conn: &Connection) -> Result<(), DbError> {
     if version < 25 {
         migrate_v25(conn)?;
         set_schema_version(conn, 25)?;
+    }
+    if version < 26 {
+        migrate_v26(conn)?;
+        set_schema_version(conn, 26)?;
     }
     Ok(())
 }
@@ -1446,6 +1451,10 @@ fn migrate_v24(conn: &Connection) -> Result<(), DbError> {
 }
 
 fn migrate_v25(conn: &Connection) -> Result<(), DbError> {
+    if !table_exists(conn, "teams")? {
+        return Ok(());
+    }
+
     ensure_column(conn, "teams", "cash_balance", "REAL NOT NULL DEFAULT 0.0")?;
     ensure_column(conn, "teams", "debt_balance", "REAL NOT NULL DEFAULT 0.0")?;
     ensure_column(
@@ -1515,6 +1524,97 @@ fn migrate_v25(conn: &Connection) -> Result<(), DbError> {
         WHERE parachute_payment_remaining IS NULL;
         ",
     )?;
+
+    Ok(())
+}
+
+fn migrate_v26(conn: &Connection) -> Result<(), DbError> {
+    if table_exists(conn, "player_special_offers")? {
+        ensure_column(
+            conn,
+            "player_special_offers",
+            "available_from_day",
+            "INTEGER NOT NULL DEFAULT 1",
+        )?;
+        ensure_column(
+            conn,
+            "player_special_offers",
+            "selected_for_day",
+            "INTEGER NOT NULL DEFAULT 0",
+        )?;
+        ensure_column(conn, "player_special_offers", "resolved_day", "INTEGER")?;
+    }
+
+    conn.execute_batch(
+        "
+        CREATE TABLE IF NOT EXISTS special_window_state (
+            season_id        TEXT PRIMARY KEY,
+            current_day      INTEGER NOT NULL DEFAULT 1,
+            total_days       INTEGER NOT NULL DEFAULT 7,
+            status           TEXT NOT NULL DEFAULT 'Aberta',
+            active_offer_id  TEXT,
+            player_result    TEXT,
+            created_at       TEXT NOT NULL DEFAULT '',
+            updated_at       TEXT NOT NULL DEFAULT ''
+        );
+
+        CREATE TABLE IF NOT EXISTS special_window_assignments (
+            id               TEXT PRIMARY KEY,
+            season_id        TEXT NOT NULL,
+            special_category TEXT NOT NULL,
+            class_name       TEXT NOT NULL,
+            team_id          TEXT NOT NULL,
+            driver_id        TEXT NOT NULL,
+            papel            TEXT NOT NULL,
+            reveal_day       INTEGER NOT NULL DEFAULT 1,
+            revealed         INTEGER NOT NULL DEFAULT 0,
+            new_badge_day    INTEGER,
+            is_player        INTEGER NOT NULL DEFAULT 0
+        );
+
+        CREATE TABLE IF NOT EXISTS special_window_candidate_pool (
+            season_id           TEXT NOT NULL,
+            driver_id           TEXT NOT NULL,
+            driver_name         TEXT NOT NULL,
+            origin_category     TEXT NOT NULL,
+            license_level       INTEGER,
+            desirability        INTEGER NOT NULL DEFAULT 0,
+            production_eligible INTEGER NOT NULL DEFAULT 0,
+            endurance_eligible  INTEGER NOT NULL DEFAULT 0,
+            status              TEXT NOT NULL DEFAULT 'Livre',
+            PRIMARY KEY (season_id, driver_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS special_window_daily_log (
+            id               TEXT PRIMARY KEY,
+            season_id        TEXT NOT NULL,
+            day_number       INTEGER NOT NULL,
+            event_type       TEXT NOT NULL,
+            message          TEXT NOT NULL,
+            special_category TEXT,
+            class_name       TEXT,
+            team_id          TEXT,
+            driver_id        TEXT,
+            created_at       TEXT NOT NULL DEFAULT ''
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_special_window_assignments_season
+            ON special_window_assignments(season_id, reveal_day, revealed);
+        CREATE INDEX IF NOT EXISTS idx_special_window_candidate_pool_season
+            ON special_window_candidate_pool(season_id, status);
+        CREATE INDEX IF NOT EXISTS idx_special_window_daily_log_season
+            ON special_window_daily_log(season_id, day_number);
+        ",
+    )?;
+
+    if table_exists(conn, "special_window_assignments")? {
+        ensure_column(
+            conn,
+            "special_window_assignments",
+            "new_badge_day",
+            "INTEGER",
+        )?;
+    }
 
     Ok(())
 }

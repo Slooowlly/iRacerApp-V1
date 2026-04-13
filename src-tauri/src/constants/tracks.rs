@@ -84,7 +84,7 @@ static TRACKS: &[TrackInfo] = &[
         pais: "🇬🇧 Reino Unido",
         comprimento_km: 3.9,
         rain_group: RainGroup::Rainy,
-        gratuita: true,
+        gratuita: false,
         tipo: TrackType::Road,
     },
     TrackInfo {
@@ -94,7 +94,7 @@ static TRACKS: &[TrackInfo] = &[
         pais: "🇬🇧 Reino Unido",
         comprimento_km: 1.9,
         rain_group: RainGroup::Rainy,
-        gratuita: true,
+        gratuita: false,
         tipo: TrackType::Road,
     },
     TrackInfo {
@@ -126,6 +126,66 @@ static TRACKS: &[TrackInfo] = &[
         rain_group: RainGroup::Normal,
         gratuita: true,
         tipo: TrackType::Roval,
+    },
+    TrackInfo {
+        track_id: 489,
+        nome: "Circuit de Lédenon",
+        nome_curto: "Lédenon",
+        pais: "🇫🇷 França",
+        comprimento_km: 3.2,
+        rain_group: RainGroup::Normal,
+        gratuita: true,
+        tipo: TrackType::Road,
+    },
+    TrackInfo {
+        track_id: 449,
+        nome: "Motorsport Arena Oschersleben - Grand Prix",
+        nome_curto: "Oschersleben",
+        pais: "🇩🇪 Alemanha",
+        comprimento_km: 3.7,
+        rain_group: RainGroup::Normal,
+        gratuita: true,
+        tipo: TrackType::Road,
+    },
+    TrackInfo {
+        track_id: 515,
+        nome: "Circuito de Navarra - Speed Circuit",
+        nome_curto: "Navarra",
+        pais: "🇪🇸 Espanha",
+        comprimento_km: 3.9,
+        rain_group: RainGroup::Normal,
+        gratuita: true,
+        tipo: TrackType::Road,
+    },
+    TrackInfo {
+        track_id: 451,
+        nome: "Rudskogen Motorsenter",
+        nome_curto: "Rudskogen",
+        pais: "🇳🇴 Noruega",
+        comprimento_km: 3.3,
+        rain_group: RainGroup::Normal,
+        gratuita: true,
+        tipo: TrackType::Road,
+    },
+    TrackInfo {
+        track_id: 202,
+        nome: "Oran Park Raceway - Grand Prix",
+        nome_curto: "Oran Park",
+        pais: "🇦🇺 Austrália",
+        comprimento_km: 2.6,
+        rain_group: RainGroup::Dry,
+        gratuita: true,
+        tipo: TrackType::Road,
+    },
+    TrackInfo {
+        track_id: 440,
+        nome: "Winton Motor Raceway - Club Circuit",
+        nome_curto: "Winton",
+        pais: "🇦🇺 Austrália",
+        comprimento_km: 2.0,
+        rain_group: RainGroup::Normal,
+        gratuita: true,
+        tipo: TrackType::Road,
     },
     TrackInfo {
         track_id: 45,
@@ -819,6 +879,20 @@ mod tests {
         let tracks = get_tracks_for_tier(0);
         assert!(!tracks.is_empty());
         assert!(tracks.iter().all(|track| track.gratuita));
+    }
+
+    #[test]
+    fn brands_hatch_is_paid_content() {
+        assert!(!get_track(300).expect("Brands GP").gratuita);
+        assert!(!get_track(301).expect("Brands Indy").gratuita);
+    }
+
+    #[test]
+    fn current_free_road_tracks_are_in_catalog() {
+        for track_id in [202, 440, 449, 451, 489, 515] {
+            let track = get_track(track_id).unwrap_or_else(|| panic!("missing track {track_id}"));
+            assert!(track.gratuita, "track {track_id} should be free");
+        }
     }
 
     #[test]

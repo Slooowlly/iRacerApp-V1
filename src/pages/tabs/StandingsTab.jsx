@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
 import DriverDetailModal from "../../components/driver/DriverDetailModal";
@@ -34,11 +34,71 @@ const STANDARD_POINTS = {
   10: 1,
 };
 
+const SPECIAL_STANDING_GROUPS = {
+  production_challenger: [
+    { id: "bmw", label: "BMW M2", color: "#bc8cff" },
+    { id: "toyota", label: "Toyota GR86", color: "#f2cc60" },
+    { id: "mazda", label: "Mazda MX-5", color: "#c8102e" },
+  ],
+  endurance: [
+    { id: "lmp2", label: "LMP2", color: "#f2cc60" },
+    { id: "gt3", label: "GT3", color: "#e73f47" },
+    { id: "gt4", label: "GT4", color: "#58a6ff" },
+  ],
+};
+
+const SPECIAL_TEAM_RELEGATION_COUNT = 3;
+const PRODUCTION_SPECIAL_FEEDERS = new Set([
+  "mazda_rookie",
+  "toyota_rookie",
+  "mazda_amador",
+  "toyota_amador",
+  "bmw_m2",
+]);
+const ENDURANCE_SPECIAL_FEEDERS = new Set(["gt4", "gt3"]);
+
+function getForcedSpecialStandingCategory(phase, playerTeamCategory, acceptedSpecialOffer) {
+  if (phase !== "BlocoEspecial") {
+    return null;
+  }
+
+  const offeredSpecialCategory =
+    typeof acceptedSpecialOffer?.special_category === "string"
+      ? acceptedSpecialOffer.special_category.trim().toLowerCase()
+      : null;
+
+  if (offeredSpecialCategory === "production_challenger" || offeredSpecialCategory === "endurance") {
+    return offeredSpecialCategory;
+  }
+
+  if (playerTeamCategory === "production_challenger" || playerTeamCategory === "endurance") {
+    return playerTeamCategory;
+  }
+
+  if (PRODUCTION_SPECIAL_FEEDERS.has(playerTeamCategory)) {
+    return "production_challenger";
+  }
+
+  if (ENDURANCE_SPECIAL_FEEDERS.has(playerTeamCategory)) {
+    return "endurance";
+  }
+
+  return null;
+}
+
 function StandingsTab() {
   const careerId = useCareerStore((state) => state.careerId);
   const playerTeam = useCareerStore((state) => state.playerTeam);
   const season = useCareerStore((state) => state.season);
-  const [viewCategory, setViewCategory] = useState(() => playerTeam?.categoria ?? ALL_CATEGORIES[0]);
+  const acceptedSpecialOffer = useCareerStore((state) => state.acceptedSpecialOffer);
+  const forcedSpecialCategory = getForcedSpecialStandingCategory(
+    season?.fase,
+    playerTeam?.categoria,
+    acceptedSpecialOffer,
+  );
+  const [viewCategory, setViewCategory] = useState(
+    () => forcedSpecialCategory ?? playerTeam?.categoria ?? ALL_CATEGORIES[0],
+  );
   const [driverStandings, setDriverStandings] = useState([]);
   const [teamStandings, setTeamStandings] = useState([]);
   const [previousChampionId, setPreviousChampionId] = useState(null);
@@ -47,11 +107,17 @@ function StandingsTab() {
 
   const categoryIndex = ALL_CATEGORIES.indexOf(viewCategory);
   function goUpCategory() {
+    if (forcedSpecialCategory) {
+      return;
+    }
     if (categoryIndex < ALL_CATEGORIES.length - 1) {
       setViewCategory(ALL_CATEGORIES[categoryIndex + 1]);
     }
   }
   function goDownCategory() {
+    if (forcedSpecialCategory) {
+      return;
+    }
     if (categoryIndex > 0) {
       setViewCategory(ALL_CATEGORIES[categoryIndex - 1]);
     }
@@ -62,6 +128,12 @@ function StandingsTab() {
   const selectedTeamColor = activeDriver?.equipe_cor ?? null;
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (forcedSpecialCategory && viewCategory !== forcedSpecialCategory) {
+      setViewCategory(forcedSpecialCategory);
+    }
+  }, [forcedSpecialCategory, viewCategory]);
 
   useEffect(() => {
     let mounted = true;
@@ -116,7 +188,7 @@ function StandingsTab() {
     return () => {
       mounted = false;
     };
-  }, [careerId, viewCategory, season?.ano, season?.rodada_atual]);
+  }, [careerId, viewCategory, season?.ano, season?.rodada_atual, season?.fase]);
 
   const totalRodadas = driverStandings.length > 0
     ? Math.max(...driverStandings.map((d) => (d.results ?? []).length))
@@ -128,6 +200,17 @@ function StandingsTab() {
     () => buildPositionDeltaMap(driverStandings, completedRounds),
     [driverStandings, completedRounds],
   );
+  const specialClassGroups = SPECIAL_STANDING_GROUPS[viewCategory] ?? null;
+  const driverStandingSections = useMemo(
+    () => buildSpecialStandingSections(driverStandings, specialClassGroups),
+    [driverStandings, specialClassGroups],
+  );
+  const teamStandingSections = useMemo(
+    () => buildSpecialStandingSections(teamStandings, specialClassGroups),
+    [teamStandings, specialClassGroups],
+  );
+  const showSpecialPendingNotice =
+    specialClassGroups != null && !hasSpecialStandingResults(driverStandings, teamStandings);
 
 
   if (loading) {
@@ -188,6 +271,9 @@ function StandingsTab() {
             <p className="text-sm text-text-secondary">{driverStandings.length} pilotos</p>
           </div>
 
+          {showSpecialPendingNotice ? (
+            <SpecialPendingNotice category={viewCategory} phase={season?.fase} />
+          ) : (
           <div className="mt-6 overflow-x-auto">
             <table className="w-full table-fixed" style={{ minWidth: 506 + totalRodadas * 68 }}>
               <colgroup>
@@ -227,10 +313,22 @@ function StandingsTab() {
                 </tr>
               </thead>
               <tbody>
-                {driverStandings.map((driver, index) => {
+                {driverStandingSections.map((section) => (
+                  <Fragment key={`drivers-${section.id}`}>
+                    {specialClassGroups ? (
+                      <tr>
+                        <td colSpan={totalRodadas + 6} className="px-0 pt-4 pb-2">
+                          <SpecialClassHeader section={section} sticky />
+                        </td>
+                      </tr>
+                    ) : null}
+                    {section.items.map((driver, index) => {
                   const isInSelectedTeam =
                     selectedTeamId != null && driver.equipe_id === selectedTeamId;
                   const teamColor = selectedTeamColor;
+                  const displayPosition = specialClassGroups
+                    ? index + 1
+                    : driver.posicao_campeonato;
 
                   return (
                     <tr
@@ -267,7 +365,7 @@ function StandingsTab() {
                     >
                       <td className="py-3 pr-0.5 text-sm font-semibold">
                         <div className="flex items-center gap-1">
-                          <span className={podiumClass(index)}>{driver.posicao_campeonato}</span>
+                          <span className={podiumClass(index)}>{displayPosition}</span>
                           <PositionDelta delta={positionDeltaMap.get(driver.id)} />
                         </div>
                       </td>
@@ -324,10 +422,13 @@ function StandingsTab() {
                       </td>
                     </tr>
                   );
-                })}
+                    })}
+                  </Fragment>
+                ))}
               </tbody>
             </table>
           </div>
+          )}
         </GlassCard>
 
         <GlassCard hover={false} className="rounded-[28px]">
@@ -344,7 +445,29 @@ function StandingsTab() {
           </div>
 
           <div className="mt-6 space-y-2">
-            {(() => {
+            {showSpecialPendingNotice ? (
+              <SpecialPendingTeamsNotice />
+            ) : specialClassGroups ? (
+              teamStandingSections.map((section) => (
+                <div key={`teams-${section.id}`} className="space-y-2">
+                  <SpecialClassHeader section={section} />
+                  {section.items.map((team, index) => {
+                    const isRelegationZone =
+                      section.items.length > SPECIAL_TEAM_RELEGATION_COUNT
+                      && index >= section.items.length - SPECIAL_TEAM_RELEGATION_COUNT;
+                    return (
+                      <TeamStandingCard
+                        key={team.id}
+                        team={team}
+                        position={index + 1}
+                        index={index}
+                        isRelegationZone={isRelegationZone}
+                      />
+                    );
+                  })}
+                </div>
+              ))
+            ) : (() => {
               const { promotionCount, relegationCount } = getZoneCutoffs(viewCategory);
               const total = teamStandings.length;
               const items = [];
@@ -360,7 +483,7 @@ function StandingsTab() {
                     key={team.id}
                     className="flex items-center justify-between rounded-2xl border border-white/6 bg-white/[0.03] px-4 py-3 transition-glass hover:bg-white/[0.05]"
                   >
-                    <div className="flex min-w-0 items-center gap-3">
+                    <div className="flex min-w-0 flex-1 items-center gap-3">
                       <span className={["w-7 text-center text-sm font-semibold", podiumClass(index)].join(" ")}>
                         {team.posicao}
                       </span>
@@ -368,7 +491,7 @@ function StandingsTab() {
                         className="h-8 w-2 rounded-full border border-white/10"
                         style={{ backgroundColor: team.cor_primaria }}
                       />
-                      <div className="min-w-0">
+                      <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-1.5">
                           <p
                             className="truncate text-sm font-semibold"
@@ -380,12 +503,10 @@ function StandingsTab() {
                             <TrophyBadge key={`${team.id}-t${trophyIndex}`} trofeu={trofeu} />
                           ))}
                         </div>
-                        <p className="truncate text-xs text-text-secondary">
-                          {team.piloto_1_nome ?? "—"} / {team.piloto_2_nome ?? "—"}
-                        </p>
+                        <TeamDriverLine team={team} />
                       </div>
                     </div>
-                    <div className="pl-4 text-right">
+                    <div className="shrink-0 pl-4 text-right">
                       <p className="font-mono text-base font-semibold text-text-primary">{team.pontos}</p>
                       <p className="text-xs text-text-secondary">{team.vitorias} vit.</p>
                     </div>
@@ -435,6 +556,183 @@ function getReadableTeamColor(color) {
   }
 
   return color;
+}
+
+function formatTeamDriverName(name) {
+  return typeof name === "string" && name.trim().length > 0 ? name.trim() : "-";
+}
+
+function formatTeamDriverPair(team) {
+  return `${formatTeamDriverName(team.piloto_1_nome)} / ${formatTeamDriverName(team.piloto_2_nome)}`;
+}
+
+function TeamDriverLine({ team }) {
+  const driverNames = formatTeamDriverPair(team);
+
+  return (
+    <p
+      className="block truncate whitespace-nowrap text-xs text-text-secondary"
+      title={driverNames}
+    >
+      {driverNames}
+    </p>
+  );
+}
+
+function hasSpecialStandingResults(driverStandings, teamStandings) {
+  return (
+    driverStandings.some((driver) => {
+      const hasRoundResult = (driver.results ?? []).some(Boolean);
+      return hasRoundResult || driver.pontos > 0 || driver.vitorias > 0 || driver.podios > 0;
+    })
+    || teamStandings.some((team) => team.pontos > 0 || team.vitorias > 0)
+  );
+}
+
+function specialPendingMessage(phase) {
+  if (phase === "JanelaConvocacao") {
+    return "A competicao comeca quando a janela de convocacao for finalizada. Os resultados aparecem aqui quando a primeira corrida for simulada.";
+  }
+  if (phase === "BlocoEspecial") {
+    return "O bloco especial ja foi aberto, mas ainda nao existe resultado registrado. A classificacao aparece quando a primeira corrida for simulada.";
+  }
+  return "Esta competicao acontece depois da temporada regular e da janela de convocacao. Os resultados aparecem aqui quando o bloco especial for simulado.";
+}
+
+function SpecialPendingNotice({ category, phase }) {
+  return (
+    <div className="mt-6 rounded-3xl border border-white/10 bg-white/[0.035] p-6 text-center shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]">
+      <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-accent-primary">
+        {categoryLabel(category)}
+      </p>
+      <h3 className="mt-3 text-xl font-semibold text-text-primary">
+        Competicao especial ainda nao aconteceu
+      </h3>
+      <p className="mx-auto mt-3 max-w-xl text-sm leading-6 text-text-secondary">
+        {specialPendingMessage(phase)}
+      </p>
+    </div>
+  );
+}
+
+function SpecialPendingTeamsNotice() {
+  return (
+    <div className="rounded-2xl border border-white/8 bg-white/[0.025] px-4 py-5 text-sm leading-6 text-text-secondary">
+      A classificacao de equipes sera liberada junto com os resultados do bloco especial.
+    </div>
+  );
+}
+
+function SpecialClassHeader({ section, sticky = false }) {
+  return (
+    <div
+      className={[
+        "flex items-center justify-center gap-3 py-2.5",
+        sticky ? "sticky left-0 z-10 w-[min(760px,calc(100vw-3rem))]" : "w-full",
+      ].join(" ")}
+    >
+      <span
+        className="h-px flex-1"
+        style={{
+          background: `linear-gradient(90deg, transparent 0%, ${section.color}4d 58%, ${section.color}c2 100%)`,
+        }}
+      />
+      <span
+        className="shrink-0 px-3 text-center text-[17px] font-black uppercase leading-none tracking-[0.22em]"
+        style={{
+          color: section.color,
+          textShadow: `0 0 18px ${section.color}55`,
+        }}
+      >
+        {section.label}
+      </span>
+      <span
+        className="h-px flex-1"
+        style={{
+          background: `linear-gradient(90deg, ${section.color}c2 0%, ${section.color}4d 42%, transparent 100%)`,
+        }}
+      />
+    </div>
+  );
+}
+
+function TeamStandingCard({ team, position, index, isRelegationZone = false }) {
+  const cardClassName = [
+    "flex items-center justify-between rounded-2xl border px-4 py-3 transition-glass",
+    isRelegationZone
+      ? "border-status-red/35 bg-status-red/[0.12] shadow-[inset_3px_0_0_0_rgba(248,81,73,0.75)] hover:bg-status-red/[0.18]"
+      : "border-white/6 bg-white/[0.03] hover:bg-white/[0.05]",
+  ].join(" ");
+
+  return (
+    <div
+      className={cardClassName}
+      data-relegation-zone={isRelegationZone ? "true" : undefined}
+    >
+      <div className="flex min-w-0 flex-1 items-center gap-3">
+        <span
+          className={[
+            "w-7 text-center text-sm font-semibold",
+            isRelegationZone ? "text-status-red" : podiumClass(index),
+          ].join(" ")}
+        >
+          {position}
+        </span>
+        <span
+          className="h-8 w-2 rounded-full border border-white/10"
+          style={{ backgroundColor: team.cor_primaria }}
+        />
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5">
+            <p
+              className="block truncate text-sm font-semibold"
+              style={{ color: getReadableTeamColor(team.cor_primaria) }}
+            >
+              {team.nome}
+            </p>
+            {(team.trofeus ?? []).map((trofeu, trophyIndex) => (
+              <TrophyBadge key={`${team.id}-t${trophyIndex}`} trofeu={trofeu} />
+            ))}
+          </div>
+          <TeamDriverLine team={team} />
+        </div>
+      </div>
+      <div className="shrink-0 pl-4 text-right">
+        <p className="font-mono text-base font-semibold text-text-primary">{team.pontos}</p>
+        <p className="text-xs text-text-secondary">{team.vitorias} vit.</p>
+      </div>
+    </div>
+  );
+}
+
+function buildSpecialStandingSections(items, classGroups) {
+  if (!classGroups) {
+    return [{ id: "all", label: null, color: "#7d8590", items }];
+  }
+
+  const knownIds = new Set(classGroups.map((group) => group.id));
+  const sections = classGroups
+    .map((group) => ({
+      ...group,
+      items: items.filter((item) => normalizeClassId(item.classe) === group.id),
+    }))
+    .filter((section) => section.items.length > 0);
+
+  const unknownItems = items.filter((item) => !knownIds.has(normalizeClassId(item.classe)));
+  if (unknownItems.length > 0) {
+    sections.push({
+      id: "outros",
+      label: "Outros",
+      color: "#7d8590",
+      items: unknownItems,
+    });
+  }
+
+  return sections;
+}
+
+function normalizeClassId(value) {
+  return typeof value === "string" ? value.trim().toLowerCase() : "";
 }
 
 function buildPositionDeltaMap(drivers, completedRounds) {

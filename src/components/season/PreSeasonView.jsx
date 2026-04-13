@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import useCareerStore from "../../stores/useCareerStore";
 import { formatSalary } from "../../utils/formatters";
+import SeasonSectionHeader from "./SeasonSectionHeader";
 
 // ─── Category Definitions ─────────────────────────────────────────────────────
 
@@ -74,22 +75,84 @@ const REGULAR_MARKET_CATEGORY_IDS = new Set([
   "gt3",
 ]);
 
+const WEEKLY_CLOSING_EVENT_TYPES = new Set([
+  "ContractExpired",
+  "PlayerProposalReceived",
+  "TransferCompleted",
+  "RookieSigned",
+]);
+
+const CATEGORY_TIER = {
+  mazda_rookie: 1,
+  toyota_rookie: 1,
+  mazda_amador: 2,
+  toyota_amador: 2,
+  bmw_m2: 2,
+  production_challenger: 3,
+  gt4: 4,
+  gt3: 5,
+  endurance: 6,
+};
+
+const WEEKLY_MARKET_MOVEMENT_BADGES = {
+  rookie: {
+    label: "Estreia",
+    symbol: "\u2605",
+    color: "#58a6ff",
+    bg: "rgba(88,166,255,0.15)",
+    border: "rgba(88,166,255,0.42)",
+  },
+  lateral: {
+    label: "Troca lateral",
+    symbol: "\u2192",
+    color: "#d0d7de",
+    bg: "rgba(208,215,222,0.11)",
+    border: "rgba(208,215,222,0.32)",
+  },
+  signing: {
+    label: "Contratação",
+    symbol: "+",
+    color: "#79c0ff",
+    bg: "rgba(121,192,255,0.13)",
+    border: "rgba(121,192,255,0.36)",
+  },
+  proposal: {
+    label: "Proposta recebida",
+    symbol: "!",
+    color: "#f2cc60",
+    bg: "rgba(242,204,96,0.13)",
+    border: "rgba(242,204,96,0.36)",
+  },
+  departure: {
+    label: "Saiu da equipe",
+    symbol: "\u00d7",
+    color: "#f2cc60",
+    bg: "rgba(242,204,96,0.13)",
+    border: "rgba(242,204,96,0.36)",
+  },
+  promotion: {
+    label: "Promoção",
+    symbol: "\u2191",
+    color: "#3fb950",
+    bg: "rgba(63,185,80,0.13)",
+    border: "rgba(63,185,80,0.36)",
+  },
+  relegation: {
+    label: "Rebaixamento",
+    symbol: "\u2193",
+    color: "#f85149",
+    bg: "rgba(248,81,73,0.13)",
+    border: "rgba(248,81,73,0.36)",
+  },
+};
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function getMovementBadge(categoriaAnterior, categoriaAtual) {
   if (!categoriaAnterior || categoriaAnterior === categoriaAtual) return null;
 
-  const TIER = {
-    mazda_rookie: 1, toyota_rookie: 1,
-    mazda_amador: 2, toyota_amador: 2, bmw_m2: 2,
-    production_challenger: 3,
-    gt4: 4,
-    gt3: 5,
-    endurance: 6,
-  };
-
-  const from = TIER[categoriaAnterior] ?? 0;
-  const to   = TIER[categoriaAtual]    ?? 0;
+  const from = CATEGORY_TIER[categoriaAnterior] ?? 0;
+  const to   = CATEGORY_TIER[categoriaAtual]    ?? 0;
 
   if (to > from) return { label: "Promovida", arrow: "↑", color: "#3fb950", bg: "rgba(63,185,80,0.12)", border: "rgba(63,185,80,0.35)" };
   if (to < from) return { label: "Rebaixada",  arrow: "↓", color: "#f85149", bg: "rgba(248,81,73,0.12)", border: "rgba(248,81,73,0.35)" };
@@ -181,6 +244,129 @@ function count_team_vacancies(team) {
   return total;
 }
 
+function formatSafeLastChampionshipResult(driver) {
+  if (!driver?.last_championship_position || !driver?.last_championship_total_drivers) {
+    return null;
+  }
+  return `${driver.last_championship_position}º/${driver.last_championship_total_drivers}`;
+}
+
+function formatSafeWeeklyClosingPosition(position) {
+  if (!position) return "--";
+  return `${position}Âº`;
+}
+
+function formatLastChampionshipResult(driver) {
+  if (!driver?.last_championship_position || !driver?.last_championship_total_drivers) {
+    return null;
+  }
+  return `${driver.last_championship_position}\u00ba/${driver.last_championship_total_drivers}`;
+}
+
+function formatWeeklyClosingPosition(position) {
+  if (!position) return "--";
+  return `${position}\u00ba`;
+}
+
+function isRealCareerDebutCategory(category) {
+  return category === "mazda_rookie" || category === "toyota_rookie";
+}
+
+function inferWeeklyMovementKind(event) {
+  if (event.movement_kind && WEEKLY_MARKET_MOVEMENT_BADGES[event.movement_kind]) {
+    return event.movement_kind;
+  }
+
+  if (event.event_type === "RookieSigned") {
+    return isRealCareerDebutCategory(event.categoria) ? "rookie" : "signing";
+  }
+  if (event.event_type === "PlayerProposalReceived") return "proposal";
+  if (event.event_type === "ContractExpired") return "departure";
+  if (event.event_type !== "TransferCompleted") return null;
+
+  const from = CATEGORY_TIER[event.from_categoria] ?? 0;
+  const to = CATEGORY_TIER[event.categoria] ?? 0;
+  if (!from || !to) return "signing";
+  if (from === to) return "lateral";
+  return to > from ? "promotion" : "relegation";
+}
+
+function buildWeeklyClosingGroups(weekResult) {
+  const grouped = {};
+
+  (weekResult?.events ?? []).forEach((event) => {
+    if (!WEEKLY_CLOSING_EVENT_TYPES.has(event.event_type)) return;
+    if (!event.driver_name) return;
+    const movementKind = inferWeeklyMovementKind(event);
+    if (!movementKind) return;
+    const category = event.categoria || "outras";
+    if (!is_regular_market_category(category)) return;
+    grouped[category] = grouped[category] ?? [];
+    grouped[category].push({ ...event, movement_kind: movementKind });
+  });
+
+  return Object.entries(grouped)
+    .sort(([a], [b]) => {
+      const pa = FREE_AGENT_ORDER.indexOf(a);
+      const pb = FREE_AGENT_ORDER.indexOf(b);
+      if (pa !== -1 && pb !== -1) return pa - pb;
+      if (pa !== -1) return -1;
+      if (pb !== -1) return 1;
+      return a.localeCompare(b);
+    })
+    .map(([category, events]) => ({
+      category,
+      color: subcatColor(category),
+      label: subcatLabel(category),
+      events: [...events].sort((a, b) => {
+        const posA = a.championship_position ?? 999;
+        const posB = b.championship_position ?? 999;
+        if (posA !== posB) return posA - posB;
+        return (a.driver_name ?? "").localeCompare(b.driver_name ?? "");
+      }),
+    }));
+}
+
+function WeeklyClosingMovement({ event, color }) {
+  const movementBadge = WEEKLY_MARKET_MOVEMENT_BADGES[event.movement_kind];
+
+  return (
+    <article
+      className="rounded-lg border px-2.5 py-2"
+      style={{
+        borderColor: `${color}26`,
+        background: `linear-gradient(135deg, ${color}0f 0%, rgba(255,255,255,0.02) 100%)`,
+      }}
+    >
+      <div className="flex min-w-0 items-center gap-2.5">
+        {movementBadge && (
+          <span
+            aria-label={movementBadge.label}
+            title={movementBadge.label}
+            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md border text-[13px] font-black leading-none"
+            style={{
+              color: movementBadge.color,
+              background: movementBadge.bg,
+              borderColor: movementBadge.border,
+            }}
+          >
+            {movementBadge.symbol}
+          </span>
+        )}
+        <span
+          className="w-8 shrink-0 text-right text-[13px] font-black leading-none"
+          style={{ color }}
+        >
+          {formatWeeklyClosingPosition(event.championship_position)}
+        </span>
+        <p className="min-w-0 flex-1 truncate text-[13px] font-extrabold leading-[1.05] text-[color:var(--text-primary)]">
+          {event.driver_name}
+        </p>
+      </div>
+    </article>
+  );
+}
+
 function TeamDriverRow({ driverName, tenureSeasons, isPrimarySlot = false }) {
   const isOpenSlot = !driverName;
   const tenureCounter = !isOpenSlot ? formatTenureCounter(tenureSeasons) : null;
@@ -251,6 +437,7 @@ function FreeAgentCard({ driver, color, isRookie }) {
 export default function PreSeasonView() {
   const careerId             = useCareerStore((s) => s.careerId);
   const preseasonState       = useCareerStore((s) => s.preseasonState);
+  const lastMarketWeekResult = useCareerStore((s) => s.lastMarketWeekResult);
   const playerProposals      = useCareerStore((s) => s.playerProposals);
   const preseasonFreeAgents  = useCareerStore((s) => s.preseasonFreeAgents);
   const isAdvancingWeek      = useCareerStore((s) => s.isAdvancingWeek);
@@ -421,6 +608,11 @@ export default function PreSeasonView() {
         drivers,
       }));
   }, [displacedVeterans]);
+
+  const weeklyClosingGroups = useMemo(
+    () => buildWeeklyClosingGroups(lastMarketWeekResult),
+    [lastMarketWeekResult],
+  );
 
   // ── Auto-scroll para categoria do jogador ao carregar ──────────────────────
   useEffect(() => {
@@ -681,30 +873,12 @@ export default function PreSeasonView() {
 
                   return (
                     <section key={teamClass} className={classIndex > 0 ? "mt-10" : ""}>
-                      <div
-                        className="mb-5 flex items-center justify-between gap-3 rounded-xl px-4 py-3.5"
-                        style={{
-                          background: `linear-gradient(135deg, ${accent}22 0%, ${accent}0a 100%)`,
-                          borderLeft: `3px solid ${accent}`,
-                          boxShadow: `0 0 18px ${accent}18`,
-                        }}
-                      >
-                        <span
-                          className="text-[17px] font-bold uppercase tracking-[0.18em]"
-                          style={{ color: accent }}
-                        >
-                          {subcatLabel(teamClass)}
-                        </span>
-                        <span
-                          className="shrink-0 rounded-full border px-3 py-1 text-[11px] font-bold uppercase tracking-[0.12em]"
-                          style={{
-                            color: accent,
-                            borderColor: `${accent}55`,
-                            backgroundColor: `${accent}14`,
-                          }}
-                        >
-                          {totalVacancies} {totalVacancies === 1 ? "vaga" : "vagas"}
-                        </span>
+                      <div className="mb-5">
+                        <SeasonSectionHeader
+                          title={subcatLabel(teamClass)}
+                          color={accent}
+                          detail={`${totalVacancies} ${totalVacancies === 1 ? "vaga" : "vagas"}`}
+                        />
                       </div>
 
                       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
@@ -889,6 +1063,50 @@ export default function PreSeasonView() {
                 ))}
               </div>
             )}
+
+            <div
+              data-testid="weekly-closing-market"
+              className="mt-4 rounded-xl border border-white/8 bg-black/18 px-4 py-4"
+            >
+              <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[color:var(--text-muted)]">
+                Fechamento da semana
+              </p>
+              {weeklyClosingGroups.length ? (
+                <div className="mt-3 space-y-3">
+                  {weeklyClosingGroups.map((group) => (
+                    <section key={group.category} className="space-y-2">
+                      <div
+                        className="flex items-center justify-center rounded-lg border px-3 py-2"
+                        style={{
+                          borderColor: `${group.color}30`,
+                          background: `linear-gradient(135deg, ${group.color}16 0%, rgba(255,255,255,0.025) 100%)`,
+                        }}
+                      >
+                        <p
+                          className="text-center text-[11px] font-black uppercase tracking-[0.16em]"
+                          style={{ color: group.color }}
+                        >
+                          {group.label}
+                        </p>
+                      </div>
+                      <div className="space-y-2">
+                        {group.events.map((event, index) => (
+                          <WeeklyClosingMovement
+                            key={`${event.event_type}-${event.driver_id ?? event.driver_name}-${index}`}
+                            event={event}
+                            color={group.color}
+                          />
+                        ))}
+                      </div>
+                    </section>
+                  ))}
+                </div>
+              ) : (
+                <p className="mt-2 text-body text-[color:var(--text-secondary)]">
+                  As movimentações do mercado vão aparecer aqui após avançar a semana.
+                </p>
+              )}
+            </div>
           </aside>
 
         </div>
@@ -941,34 +1159,51 @@ export default function PreSeasonView() {
                   <div className="grid grid-cols-1 gap-2 xl:grid-cols-2">
                     {group.drivers.map((d) => {
                       const lic = LICENSE_COLORS[d.license_sigla] ?? LICENSE_COLORS.R;
+                      const lastChampionshipResult = formatLastChampionshipResult(d);
 
                       return (
-                        <div key={d.driver_id} className="glass-light flex items-center gap-3 rounded-xl px-3 py-2.5">
+                        <div
+                          key={d.driver_id}
+                          className="flex items-center gap-3 rounded-xl px-3.5 py-3 shadow-[0_10px_24px_rgba(0,0,0,0.18)]"
+                          style={{
+                            background: "rgba(8, 13, 24, 0.76)",
+                            border: "1px solid rgba(255, 255, 255, 0.12)",
+                            boxShadow:
+                              "inset 0 1px 0 rgba(255,255,255,0.05), 0 10px 24px rgba(0,0,0,0.18)",
+                          }}
+                        >
                           <div className="min-w-0 flex-1">
                             <div className="flex flex-wrap items-center gap-2">
-                              <p className="text-[15px] font-semibold text-[color:var(--text-primary)]">
+                              <p className="text-[17px] font-bold leading-tight text-[color:var(--text-primary)]">
                                 {d.driver_name}
                               </p>
-                              <span
-                                className="rounded-full px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.12em]"
-                                style={{ background: `${group.color}22`, color: group.color }}
-                              >
-                                {group.label}
-                              </span>
                             </div>
-                            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-body-sm text-[color:var(--text-muted)]">
+                            <div className="mt-1.5 space-y-0.5 text-body-sm text-[color:var(--text-muted)]">
                               {d.previous_team_name && d.seasons_at_last_team > 0 && (
-                                <>
-                                  <span style={{ color: d.previous_team_color ?? "var(--text-secondary)" }}>
-                                    {d.previous_team_name}
-                                  </span>
-                                  <span>{`${d.seasons_at_last_team} ${d.seasons_at_last_team === 1 ? "temporada" : "temporadas"}`}</span>
-                                </>
+                                <div className="min-w-0">
+                                  <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-[color:var(--text-muted)]">
+                                    Ex-equipe
+                                  </div>
+                                  <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1">
+                                    <span
+                                      className="block truncate text-[14px] font-semibold"
+                                      style={{ color: d.previous_team_color ?? "var(--text-secondary)" }}
+                                    >
+                                      {d.previous_team_name}
+                                    </span>
+                                    {lastChampionshipResult && (
+                                      <span className="text-[13px] font-bold text-[color:var(--text-secondary)]">
+                                        {`• ${lastChampionshipResult}`}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <span className="text-[12px]">{`${d.seasons_at_last_team} ${d.seasons_at_last_team === 1 ? "temporada" : "temporadas"}`}</span>
+                                </div>
                               )}
                             </div>
                           </div>
                           <span
-                            className="shrink-0 rounded-md px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-[0.1em]"
+                            className="shrink-0 rounded-lg px-2 py-1.5 text-[11px] text-[10px] font-black uppercase tracking-[0.12em] min-w-[3.25rem] min-w-[2.4rem] text-center shadow-[inset_0_1px_0_rgba(255,255,255,0.18)]"
                             style={{ background: lic.bg, color: lic.text }}
                           >
                             {d.license_sigla}

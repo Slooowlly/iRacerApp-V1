@@ -7,6 +7,8 @@ const mockStartCalendarAdvance = vi.fn();
 const mockCloseRaceBriefing = vi.fn();
 const mockAdvanceSeason = vi.fn();
 const mockSkipAllPendingRaces = vi.fn();
+const mockRunConvocationWindow = vi.fn();
+const mockFinishSpecialBlock = vi.fn();
 
 let mockState = {};
 
@@ -25,6 +27,8 @@ describe("Header", () => {
     mockCloseRaceBriefing.mockReset();
     mockAdvanceSeason.mockReset();
     mockSkipAllPendingRaces.mockReset();
+    mockRunConvocationWindow.mockReset();
+    mockFinishSpecialBlock.mockReset();
     invoke.mockReset();
     invoke.mockResolvedValue([]);
     mockState = {
@@ -63,6 +67,8 @@ describe("Header", () => {
       startCalendarAdvance: mockStartCalendarAdvance,
       advanceSeason: mockAdvanceSeason,
       skipAllPendingRaces: mockSkipAllPendingRaces,
+      runConvocationWindow: mockRunConvocationWindow,
+      finishSpecialBlock: mockFinishSpecialBlock,
       closeRaceBriefing: mockCloseRaceBriefing,
     };
   });
@@ -92,6 +98,18 @@ describe("Header", () => {
     render(<Header activeTab="standings" onTabChange={vi.fn()} />);
 
     expect(screen.getByText(/proxima corrida em 2 meses/i)).toBeInTheDocument();
+  });
+
+  it("maps known track names to the stored thumbnail filenames", () => {
+    mockState.nextRace = {
+      ...mockState.nextRace,
+      track_name: "Charlotte Motor Speedway - Roval",
+    };
+
+    render(<Header activeTab="standings" onTabChange={vi.fn()} />);
+
+    const image = screen.getByAltText("Charlotte Motor Speedway - Roval");
+    expect(image).toHaveAttribute("src", "/tracks/charlotte.png");
   });
 
   it("hides the standings race banner while the pre-race briefing is open", () => {
@@ -156,5 +174,90 @@ describe("Header", () => {
 
     expect(mockSkipAllPendingRaces).toHaveBeenCalledTimes(1);
     expect(mockAdvanceSeason).not.toHaveBeenCalled();
+  });
+
+  it("opens convocation from the header after the regular block ends", () => {
+    mockState.nextRace = null;
+    mockState.season = {
+      ...mockState.season,
+      fase: "BlocoRegular",
+    };
+    mockState.temporalSummary = {
+      current_display_date: "2026-09-30",
+      next_event_display_date: null,
+      days_until_next_event: null,
+      pending_in_phase: 0,
+    };
+
+    render(<Header activeTab="standings" onTabChange={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /avancar para convocacao/i }));
+
+    expect(mockRunConvocationWindow).toHaveBeenCalledTimes(1);
+    expect(mockAdvanceSeason).not.toHaveBeenCalled();
+  });
+
+  it("keeps advancing the regular calendar before opening convocation", () => {
+    mockState.nextRace = null;
+    mockState.season = {
+      ...mockState.season,
+      fase: "BlocoRegular",
+    };
+    mockState.temporalSummary = {
+      current_display_date: "2026-09-10",
+      next_event_display_date: "2026-09-17",
+      days_until_next_event: 7,
+      pending_in_phase: 3,
+    };
+
+    render(<Header activeTab="standings" onTabChange={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /avancar calendario/i }));
+
+    expect(mockStartCalendarAdvance).toHaveBeenCalledTimes(1);
+    expect(mockRunConvocationWindow).not.toHaveBeenCalled();
+  });
+
+  it("finishes the special block from the header when the player has no special race", () => {
+    mockState.nextRace = null;
+    mockState.season = {
+      ...mockState.season,
+      fase: "BlocoEspecial",
+    };
+    mockState.temporalSummary = {
+      current_display_date: "2026-11-20",
+      next_event_display_date: null,
+      days_until_next_event: null,
+      pending_in_phase: 0,
+    };
+
+    render(<Header activeTab="standings" onTabChange={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /pular bloco especial/i }));
+
+    expect(mockFinishSpecialBlock).toHaveBeenCalledTimes(1);
+    expect(mockAdvanceSeason).not.toHaveBeenCalled();
+  });
+
+  it("only advances the season from the header after PosEspecial", () => {
+    mockState.nextRace = null;
+    mockState.season = {
+      ...mockState.season,
+      fase: "PosEspecial",
+    };
+    mockState.temporalSummary = {
+      current_display_date: "2026-12-15",
+      next_event_display_date: null,
+      days_until_next_event: null,
+      pending_in_phase: 0,
+    };
+
+    render(<Header activeTab="standings" onTabChange={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /encerrar temporada/i }));
+
+    expect(mockAdvanceSeason).toHaveBeenCalledTimes(1);
+    expect(mockRunConvocationWindow).not.toHaveBeenCalled();
+    expect(mockFinishSpecialBlock).not.toHaveBeenCalled();
   });
 });

@@ -21,7 +21,7 @@ use crate::market::pipeline::run_market;
 use crate::market::pit_strategy::{
     recalculate_pit_crew_quality, recalculate_pit_strategy_risk, PreviousTeamStanding,
 };
-use crate::market::proposals::{MarketProposal, ProposalStatus};
+use crate::market::proposals::{is_real_career_debut_category, MarketProposal, ProposalStatus};
 use crate::market::sync::sync_team_slots_from_active_regular_contracts;
 use crate::models::contract::Contract;
 use crate::models::driver::Driver;
@@ -81,6 +81,12 @@ pub struct MarketEvent {
     pub from_team: Option<String>,
     pub to_team: Option<String>,
     pub categoria: Option<String>,
+    #[serde(default)]
+    pub from_categoria: Option<String>,
+    #[serde(default)]
+    pub movement_kind: Option<String>,
+    #[serde(default)]
+    pub championship_position: Option<i32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -134,6 +140,8 @@ pub enum PendingAction {
         driver_name: String,
         from_team_id: Option<String>,
         from_team_name: Option<String>,
+        #[serde(default)]
+        from_categoria: Option<String>,
         to_team_id: String,
         to_team_name: String,
         salary: f64,
@@ -602,6 +610,9 @@ pub fn advance_week(conn: &Connection, plan: &mut PreSeasonPlan) -> Result<WeekR
             from_team: None,
             to_team: None,
             categoria: None,
+            from_categoria: None,
+            movement_kind: None,
+            championship_position: None,
         });
         update_market_state(conn, &season_id, "Fechado", &PreSeasonPhase::Complete, true)?;
     } else {
@@ -897,6 +908,7 @@ fn build_transfer_events(
                 driver_name: signing.driver_name,
                 from_team_id: previous_team.map(|contract| contract.equipe_id.clone()),
                 from_team_name: previous_team.map(|contract| contract.equipe_nome.clone()),
+                from_categoria: previous_team.map(|contract| contract.categoria.clone()),
                 to_team_id: signing.team_id,
                 to_team_name: signing.team_name,
                 salary: contract.salario_anual,
@@ -1152,6 +1164,10 @@ fn execute_action(
             contract_queries::update_contract_status(conn, contract_id, &status)
                 .map_err(|e| format!("Falha ao encerrar contrato '{}': {e}", contract_id))?;
             clear_driver_from_team(conn, team_id, driver_id)?;
+            let category = team_queries::get_team_by_id(conn, team_id)
+                .ok()
+                .flatten()
+                .map(|team| team.categoria);
             events.push(MarketEvent {
                 event_type: MarketEventType::ContractExpired,
                 headline: format!("{driver_name} deixa {team_name}"),
@@ -1162,10 +1178,19 @@ fn execute_action(
                 team_name: Some(team_name.clone()),
                 from_team: Some(team_name.clone()),
                 to_team: None,
-                categoria: team_queries::get_team_by_id(conn, team_id)
-                    .ok()
-                    .flatten()
-                    .map(|team| team.categoria),
+                categoria: category.clone(),
+                from_categoria: category.clone(),
+                movement_kind: classify_market_movement(
+                    &MarketEventType::ContractExpired,
+                    category.as_deref(),
+                    None,
+                ),
+                championship_position: market_event_championship_position(
+                    conn,
+                    driver_id,
+                    category.as_deref(),
+                    season_number,
+                ),
             });
         }
         PendingAction::RenewContract {
@@ -1204,6 +1229,7 @@ fn execute_action(
                 contract_queries::insert_contract(conn, &contract)
                     .map_err(|e| format!("Falha ao inserir renovacao '{}': {e}", driver_id))?;
             }
+            let category = team.categoria.clone();
             events.push(MarketEvent {
                 event_type: MarketEventType::ContractRenewed,
                 headline: format!("{driver_name} renova com {team_name}"),
@@ -1217,13 +1243,26 @@ fn execute_action(
                 team_name: Some(team_name.clone()),
                 from_team: Some(team_name.clone()),
                 to_team: Some(team_name.clone()),
-                categoria: Some(team.categoria),
+                categoria: Some(category.clone()),
+                from_categoria: Some(category.clone()),
+                movement_kind: classify_market_movement(
+                    &MarketEventType::ContractRenewed,
+                    Some(&category),
+                    Some(&category),
+                ),
+                championship_position: market_event_championship_position(
+                    conn,
+                    driver_id,
+                    Some(&category),
+                    season_number,
+                ),
             });
         }
         PendingAction::Transfer {
             driver_id,
             driver_name,
             from_team_name,
+            from_categoria,
             to_team_id,
             to_team_name,
             salary,
@@ -1241,6 +1280,10 @@ fn execute_action(
                 *duration,
                 role,
             )?;
+            let to_category = team_queries::get_team_by_id(conn, to_team_id)
+                .ok()
+                .flatten()
+                .map(|team| team.categoria);
             events.push(MarketEvent {
                 event_type: MarketEventType::TransferCompleted,
                 headline: format!("{driver_name} assina com {to_team_name}"),
@@ -1256,10 +1299,19 @@ fn execute_action(
                 team_name: Some(to_team_name.clone()),
                 from_team: from_team_name.clone(),
                 to_team: Some(to_team_name.clone()),
-                categoria: team_queries::get_team_by_id(conn, to_team_id)
-                    .ok()
-                    .flatten()
-                    .map(|team| team.categoria),
+                categoria: to_category.clone(),
+                from_categoria: from_categoria.clone(),
+                movement_kind: classify_market_movement(
+                    &MarketEventType::TransferCompleted,
+                    from_categoria.as_deref(),
+                    to_category.as_deref(),
+                ),
+                championship_position: market_event_championship_position(
+                    conn,
+                    driver_id,
+                    from_categoria.as_deref().or(to_category.as_deref()),
+                    season_number,
+                ),
             });
         }
         PendingAction::PlayerProposal { proposal } => {
@@ -1284,6 +1336,14 @@ fn execute_action(
                 from_team: None,
                 to_team: Some(proposal.equipe_nome.clone()),
                 categoria: Some(proposal.categoria.clone()),
+                from_categoria: None,
+                movement_kind: None,
+                championship_position: market_event_championship_position(
+                    conn,
+                    &proposal.piloto_id,
+                    Some(&proposal.categoria),
+                    season_number,
+                ),
             });
         }
         PendingAction::PlaceRookie {
@@ -1309,8 +1369,14 @@ fn execute_action(
                 *duration,
                 role,
             )?;
+            let category = team.categoria.clone();
+            let event_type = if is_real_career_debut_category(&category) {
+                MarketEventType::RookieSigned
+            } else {
+                MarketEventType::TransferCompleted
+            };
             events.push(MarketEvent {
-                event_type: MarketEventType::RookieSigned,
+                event_type: event_type.clone(),
                 headline: format!("Rookie {} assina com {team_name}", driver.nome),
                 description: format!("{} e o novo piloto da {team_name}.", driver.nome),
                 driver_id: Some(driver.id.clone()),
@@ -1319,10 +1385,15 @@ fn execute_action(
                 team_name: Some(team_name.clone()),
                 from_team: None,
                 to_team: Some(team_name.clone()),
-                categoria: team_queries::get_team_by_id(conn, team_id)
-                    .ok()
-                    .flatten()
-                    .map(|team| team.categoria),
+                categoria: Some(category.clone()),
+                from_categoria: None,
+                movement_kind: classify_market_movement(&event_type, None, Some(&category)),
+                championship_position: market_event_championship_position(
+                    conn,
+                    &driver.id,
+                    Some(&category),
+                    season_number,
+                ),
             });
         }
         PendingAction::UpdateHierarchy {
@@ -1402,10 +1473,163 @@ fn execute_action(
                     .ok()
                     .flatten()
                     .map(|team| team.categoria),
+                from_categoria: None,
+                movement_kind: None,
+                championship_position: None,
             });
         }
     }
     Ok(())
+}
+
+fn market_category_tier(category: &str) -> i32 {
+    match category {
+        "mazda_rookie" | "toyota_rookie" => 1,
+        "mazda_amador" | "toyota_amador" | "bmw_m2" | "mazda" | "toyota" | "bmw" => 2,
+        "production_challenger" => 3,
+        "gt4" => 4,
+        "gt3" => 5,
+        "endurance" => 6,
+        _ => 0,
+    }
+}
+
+fn classify_market_movement(
+    event_type: &MarketEventType,
+    from_category: Option<&str>,
+    to_category: Option<&str>,
+) -> Option<String> {
+    match event_type {
+        MarketEventType::ContractExpired => Some("departure".to_string()),
+        MarketEventType::RookieSigned => {
+            if to_category.is_some_and(is_real_career_debut_category) {
+                Some("rookie".to_string())
+            } else {
+                Some("signing".to_string())
+            }
+        }
+        MarketEventType::ContractRenewed => Some("renewal".to_string()),
+        MarketEventType::TransferCompleted => {
+            let Some(to_category) = to_category else {
+                return Some("signing".to_string());
+            };
+            let Some(from_category) = from_category else {
+                return Some("signing".to_string());
+            };
+            let from_tier = market_category_tier(from_category);
+            let to_tier = market_category_tier(to_category);
+            if from_tier == 0 || to_tier == 0 || from_tier == to_tier {
+                return Some("lateral".to_string());
+            }
+            if to_tier > from_tier {
+                Some("promotion".to_string())
+            } else {
+                Some("relegation".to_string())
+            }
+        }
+        _ => None,
+    }
+}
+
+fn latest_standing_position_for_market_event(
+    conn: &Connection,
+    driver_id: &str,
+    category: Option<&str>,
+    season_number: i32,
+) -> Option<i32> {
+    if let Some(category) = category {
+        return conn
+            .query_row(
+                "SELECT st.posicao
+                 FROM standings st
+                 JOIN seasons s ON s.id = st.temporada_id
+                 WHERE st.piloto_id = ?1
+                   AND st.categoria = ?2
+                   AND st.posicao > 0
+                   AND s.numero < ?3
+                 ORDER BY s.numero DESC
+                 LIMIT 1",
+                rusqlite::params![driver_id, category, season_number],
+                |row| row.get::<_, i32>(0),
+            )
+            .optional()
+            .ok()
+            .flatten();
+    }
+
+    conn.query_row(
+        "SELECT st.posicao
+         FROM standings st
+         JOIN seasons s ON s.id = st.temporada_id
+         WHERE st.piloto_id = ?1
+           AND st.posicao > 0
+           AND s.numero < ?2
+         ORDER BY s.numero DESC
+         LIMIT 1",
+        rusqlite::params![driver_id, season_number],
+        |row| row.get::<_, i32>(0),
+    )
+    .optional()
+    .ok()
+    .flatten()
+}
+
+fn market_event_championship_position(
+    conn: &Connection,
+    driver_id: &str,
+    result_category: Option<&str>,
+    season_number: i32,
+) -> Option<i32> {
+    if let Some(position) =
+        latest_standing_position_for_market_event(conn, driver_id, result_category, season_number)
+    {
+        return Some(position);
+    }
+
+    let driver = driver_queries::get_driver(conn, driver_id).ok()?;
+
+    let contract_category =
+        contract_queries::get_active_regular_contract_for_pilot(conn, driver_id)
+            .ok()
+            .flatten()
+            .map(|contract| contract.categoria);
+    let category = result_category.or_else(|| {
+        driver
+            .categoria_atual
+            .as_deref()
+            .or(contract_category.as_deref())
+    })?;
+    let mut drivers = driver_queries::get_drivers_by_category(conn, category).ok()?;
+    drivers.sort_by(|left, right| {
+        right
+            .stats_temporada
+            .pontos
+            .total_cmp(&left.stats_temporada.pontos)
+            .then_with(|| {
+                right
+                    .stats_temporada
+                    .vitorias
+                    .cmp(&left.stats_temporada.vitorias)
+            })
+            .then_with(|| {
+                right
+                    .stats_temporada
+                    .podios
+                    .cmp(&left.stats_temporada.podios)
+            })
+            .then_with(|| {
+                left.stats_temporada
+                    .posicao_media
+                    .total_cmp(&right.stats_temporada.posicao_media)
+            })
+            .then_with(|| left.nome.cmp(&right.nome))
+    });
+
+    drivers
+        .iter()
+        .position(|candidate| candidate.id == driver_id)
+        .map(|index| index as i32 + 1)
+        .or_else(|| driver.melhor_resultado_temp.map(|position| position as i32))
 }
 
 fn persist_player_proposal(
@@ -2054,6 +2278,132 @@ mod tests {
     }
 
     #[test]
+    fn test_classify_market_movement_distinguishes_weekly_closing_types() {
+        assert_eq!(
+            classify_market_movement(&MarketEventType::RookieSigned, None, Some("mazda_rookie")),
+            Some("rookie".to_string())
+        );
+        assert_eq!(
+            classify_market_movement(&MarketEventType::RookieSigned, None, Some("gt4")),
+            Some("signing".to_string())
+        );
+        assert_eq!(
+            classify_market_movement(&MarketEventType::ContractExpired, Some("gt4"), None),
+            Some("departure".to_string())
+        );
+        assert_eq!(
+            classify_market_movement(&MarketEventType::TransferCompleted, None, Some("gt3")),
+            Some("signing".to_string())
+        );
+        assert_eq!(
+            classify_market_movement(
+                &MarketEventType::TransferCompleted,
+                Some("gt4"),
+                Some("gt4")
+            ),
+            Some("lateral".to_string())
+        );
+        assert_eq!(
+            classify_market_movement(
+                &MarketEventType::TransferCompleted,
+                Some("bmw_m2"),
+                Some("gt4")
+            ),
+            Some("promotion".to_string())
+        );
+        assert_eq!(
+            classify_market_movement(
+                &MarketEventType::TransferCompleted,
+                Some("gt4"),
+                Some("bmw_m2")
+            ),
+            Some("relegation".to_string())
+        );
+        assert_eq!(
+            classify_market_movement(&MarketEventType::ContractRenewed, Some("gt4"), Some("gt4")),
+            Some("renewal".to_string())
+        );
+    }
+
+    #[test]
+    fn test_build_transfer_events_preserves_previous_category_for_weekly_closing() {
+        let mut simulated_contracts_by_driver = std::collections::HashMap::new();
+        let mut original_contracts_by_driver = std::collections::HashMap::new();
+        let original = Contract::new(
+            "C100".to_string(),
+            "P100".to_string(),
+            "Piloto Transfer".to_string(),
+            "T100".to_string(),
+            "Equipe Antiga".to_string(),
+            1,
+            1,
+            80_000.0,
+            TeamRole::Numero1,
+            "gt4".to_string(),
+        );
+        let simulated = Contract::new(
+            "C101".to_string(),
+            "P100".to_string(),
+            "Piloto Transfer".to_string(),
+            "T200".to_string(),
+            "Equipe Nova".to_string(),
+            2,
+            1,
+            120_000.0,
+            TeamRole::Numero1,
+            "gt3".to_string(),
+        );
+        original_contracts_by_driver.insert("P100".to_string(), original);
+        simulated_contracts_by_driver.insert("P100".to_string(), simulated);
+
+        let signings = vec![crate::market::proposals::SigningInfo {
+            driver_id: "P100".to_string(),
+            driver_name: "Piloto Transfer".to_string(),
+            team_id: "T200".to_string(),
+            team_name: "Equipe Nova".to_string(),
+            categoria: "gt3".to_string(),
+            papel: TeamRole::Numero1.as_str().to_string(),
+            tipo: "transferencia".to_string(),
+        }];
+
+        let events = build_transfer_events(
+            &simulated_contracts_by_driver,
+            &signings,
+            &original_contracts_by_driver,
+        )
+        .expect("transfer events");
+
+        assert!(matches!(
+            &events[0].event,
+            PendingAction::Transfer {
+                from_categoria,
+                ..
+            } if from_categoria.as_deref() == Some("gt4")
+        ));
+    }
+
+    #[test]
+    fn test_market_event_position_uses_latest_category_standing_before_cached_best_result() {
+        let conn = setup_market_fixture();
+        conn.execute(
+            "UPDATE drivers
+             SET melhor_resultado_temp = 3
+             WHERE id IN ('P001', 'P002')",
+            [],
+        )
+        .expect("set duplicated cached best result");
+
+        assert_eq!(
+            market_event_championship_position(&conn, "P001", Some("gt4"), 2),
+            Some(1)
+        );
+        assert_eq!(
+            market_event_championship_position(&conn, "P002", Some("gt4"), 2),
+            Some(4)
+        );
+    }
+
+    #[test]
     fn test_preseason_reduces_vacancies_before_final_week() {
         let conn = setup_market_fixture();
         let mut rng = StdRng::seed_from_u64(508);
@@ -2143,7 +2493,11 @@ mod tests {
 
         let result = advance_week(&conn, &mut plan).expect("rookie placement should succeed");
 
-        assert!(result
+        assert!(result.events.iter().any(|event| {
+            event.event_type == MarketEventType::TransferCompleted
+                && event.movement_kind.as_deref() == Some("signing")
+        }));
+        assert!(!result
             .events
             .iter()
             .any(|event| event.event_type == MarketEventType::RookieSigned));
@@ -2292,6 +2646,7 @@ mod tests {
                     driver_name: "Piloto D".to_string(),
                     from_team_id: None,
                     from_team_name: None,
+                    from_categoria: None,
                     to_team_id: extra_team.id.clone(),
                     to_team_name: extra_team.nome.clone(),
                     salary: 110_000.0,

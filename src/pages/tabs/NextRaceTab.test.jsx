@@ -6,6 +6,9 @@ import NextRaceTab from "./NextRaceTab";
 const mockSimulateRace = vi.fn();
 const mockFinishSpecialBlock = vi.fn();
 const mockSkipAllPendingRaces = vi.fn();
+const mockRunConvocationWindow = vi.fn();
+const mockAdvanceSeason = vi.fn();
+const mockStartCalendarAdvance = vi.fn();
 let mockState = {};
 
 vi.mock("@tauri-apps/api/core", () => ({
@@ -21,6 +24,9 @@ describe("NextRaceTab", () => {
     mockSimulateRace.mockReset();
     mockFinishSpecialBlock.mockReset();
     mockSkipAllPendingRaces.mockReset();
+    mockRunConvocationWindow.mockReset();
+    mockAdvanceSeason.mockReset();
+    mockStartCalendarAdvance.mockReset();
     invoke.mockReset();
     invoke.mockImplementation((command, args) => {
       if (command === "get_drivers_by_category") {
@@ -270,13 +276,18 @@ describe("NextRaceTab", () => {
           },
         ],
       },
+      temporalSummary: {
+        pending_in_phase: 0,
+      },
       isSimulating: false,
       isAdvancing: false,
       isConvocating: false,
       simulateRace: mockSimulateRace,
       finishSpecialBlock: mockFinishSpecialBlock,
       skipAllPendingRaces: mockSkipAllPendingRaces,
-      advanceSeason: vi.fn(),
+      runConvocationWindow: mockRunConvocationWindow,
+      advanceSeason: mockAdvanceSeason,
+      startCalendarAdvance: mockStartCalendarAdvance,
       enterPreseason: vi.fn(),
     };
   });
@@ -340,6 +351,60 @@ describe("NextRaceTab", () => {
     await waitFor(() => {
       expect(mockFinishSpecialBlock).toHaveBeenCalledTimes(1);
     });
+  });
+
+  it("abre a janela de convocacao manualmente ao fim do bloco regular", async () => {
+    mockState.nextRace = null;
+    mockState.season = {
+      ...mockState.season,
+      fase: "BlocoRegular",
+    };
+
+    render(<NextRaceTab />);
+
+    fireEvent.click(screen.getByRole("button", { name: /avancar para convocacao/i }));
+
+    await waitFor(() => {
+      expect(mockRunConvocationWindow).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("nao abre convocacao enquanto ainda existem corridas regulares pendentes", async () => {
+    mockState.nextRace = null;
+    mockState.season = {
+      ...mockState.season,
+      fase: "BlocoRegular",
+    };
+    mockState.temporalSummary = {
+      pending_in_phase: 4,
+    };
+
+    render(<NextRaceTab />);
+
+    fireEvent.click(screen.getByRole("button", { name: /avancar calendario/i }));
+
+    await waitFor(() => {
+      expect(mockStartCalendarAdvance).toHaveBeenCalledTimes(1);
+    });
+    expect(mockRunConvocationWindow).not.toHaveBeenCalled();
+  });
+
+  it("encerra a temporada apenas depois do PosEspecial", async () => {
+    mockState.nextRace = null;
+    mockState.season = {
+      ...mockState.season,
+      fase: "PosEspecial",
+    };
+
+    render(<NextRaceTab />);
+
+    fireEvent.click(screen.getByRole("button", { name: /encerrar temporada/i }));
+
+    await waitFor(() => {
+      expect(mockAdvanceSeason).toHaveBeenCalledTimes(1);
+    });
+    expect(mockRunConvocationWindow).not.toHaveBeenCalled();
+    expect(mockFinishSpecialBlock).not.toHaveBeenCalled();
   });
 
   it("mostra o erro detalhado ao falhar ao pular a temporada sem equipe", async () => {

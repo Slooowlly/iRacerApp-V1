@@ -25,6 +25,7 @@ describe("PreSeasonView", () => {
         current_display_date: "2026-03-07",
       },
       preseasonWeeks: [],
+      lastMarketWeekResult: null,
       playerProposals: [],
       preseasonFreeAgents: [],
       isAdvancingWeek: false,
@@ -117,7 +118,7 @@ describe("PreSeasonView", () => {
       .map((node) => node.textContent);
 
     expect(teamName).toHaveClass("text-[19px]", "font-bold");
-    expect(categorySeparator).toHaveClass("text-[17px]", "font-bold");
+    expect(categorySeparator).toHaveClass("text-center", "font-black", "text-[18px]");
     expect(primaryDriver).toHaveClass("text-[15px]", "font-bold");
     expect(primaryDriver).toHaveClass("text-[color:var(--text-primary)]");
     expect(screen.getByText("3 anos")).toBeInTheDocument();
@@ -180,8 +181,11 @@ describe("PreSeasonView", () => {
 
     render(<PreSeasonView />);
 
-    expect(await screen.findByText("GT4 Championship")).toBeInTheDocument();
-    expect(await screen.findByText("3 vagas")).toBeInTheDocument();
+    const title = await screen.findByText("GT4 Championship");
+    const count = await screen.findByText("3 vagas");
+
+    expect(title).toHaveClass("text-center", "font-black", "text-[18px]");
+    expect(count).toHaveClass("text-center", "text-[10px]");
   });
 
   it("keeps special categories out of the normal preseason market", async () => {
@@ -199,6 +203,109 @@ describe("PreSeasonView", () => {
       "get_teams_standings",
       expect.objectContaining({ category: "endurance" }),
     );
+  });
+
+  it("shows a compact weekly closing panel grouped by destination category", async () => {
+    mockState = {
+      ...mockState,
+      lastMarketWeekResult: {
+        week_number: 2,
+        events: [
+          {
+            event_type: "TransferCompleted",
+            driver_name: "Marta Bianco",
+            categoria: "gt3",
+            from_categoria: "gt4",
+            movement_kind: "promotion",
+            championship_position: 1,
+          },
+          {
+            event_type: "TransferCompleted",
+            driver_name: "Colin Smith",
+            categoria: "gt3",
+            from_categoria: "gt3",
+            movement_kind: "lateral",
+            championship_position: 4,
+          },
+          {
+            event_type: "RookieSigned",
+            driver_name: "Giovanni Conti",
+            categoria: "mazda_rookie",
+            movement_kind: "rookie",
+            championship_position: 3,
+            team_name: "Vertex BMW",
+          },
+          {
+            event_type: "RookieSigned",
+            driver_name: "Victor Almeida",
+            categoria: "gt3",
+            championship_position: 12,
+          },
+          {
+            event_type: "ContractExpired",
+            driver_name: "Nicolas Meyer",
+            categoria: "bmw_m2",
+            movement_kind: "departure",
+            championship_position: 11,
+          },
+          {
+            event_type: "TransferCompleted",
+            driver_name: "Lucas Prado",
+            categoria: "bmw_m2",
+            from_categoria: "gt4",
+            movement_kind: "relegation",
+            championship_position: 8,
+          },
+          {
+            event_type: "PlayerProposalReceived",
+            driver_name: "Rodrigo Vieira",
+            categoria: "gt4",
+            championship_position: 6,
+            team_name: "Apex GT4",
+          },
+          {
+            event_type: "ContractRenewed",
+            driver_name: "Austin Williams",
+            categoria: "gt4",
+            movement_kind: "renewal",
+            championship_position: 2,
+          },
+        ],
+      },
+    };
+
+    render(<PreSeasonView />);
+
+    const weeklyClosing = within(await screen.findByTestId("weekly-closing-market"));
+
+    expect(weeklyClosing.getByText(/fechamento da semana/i)).toBeInTheDocument();
+    expect(weeklyClosing.getByText(/gt3 championship/i)).toBeInTheDocument();
+    expect(weeklyClosing.getByText(/mazda rookie/i)).toBeInTheDocument();
+    expect(weeklyClosing.getByText(/bmw m2 cup/i)).toBeInTheDocument();
+    expect(weeklyClosing.getByText(new RegExp("^1\\u00ba$"))).toBeInTheDocument();
+    expect(weeklyClosing.getByText(new RegExp("^4\\u00ba$"))).toBeInTheDocument();
+    expect(weeklyClosing.getByText(new RegExp("^3\\u00ba$"))).toBeInTheDocument();
+    expect(weeklyClosing.getByText(/marta bianco/i)).toBeInTheDocument();
+    expect(weeklyClosing.getByText(/colin smith/i)).toBeInTheDocument();
+    expect(weeklyClosing.getByText(/giovanni conti/i)).toBeInTheDocument();
+    expect(weeklyClosing.getByText(/victor almeida/i)).toBeInTheDocument();
+    expect(weeklyClosing.getByText(/nicolas meyer/i)).toBeInTheDocument();
+    expect(weeklyClosing.getByText(/lucas prado/i)).toBeInTheDocument();
+    expect(weeklyClosing.getByText(/rodrigo vieira/i)).toBeInTheDocument();
+    expect(weeklyClosing.getByTitle("Promoção")).toBeInTheDocument();
+    expect(weeklyClosing.getByTitle("Troca lateral")).toBeInTheDocument();
+    expect(weeklyClosing.getByTitle("Estreia")).toBeInTheDocument();
+    expect(weeklyClosing.getByTitle("Contratação")).toBeInTheDocument();
+    expect(weeklyClosing.getByTitle("Saiu da equipe")).toBeInTheDocument();
+    expect(weeklyClosing.getByTitle("Rebaixamento")).toBeInTheDocument();
+    expect(weeklyClosing.getByTitle("Proposta recebida")).toBeInTheDocument();
+    expect(weeklyClosing.getByText(new RegExp("^6\\u00ba$"))).toBeInTheDocument();
+    expect(weeklyClosing.getByText(new RegExp("^11\\u00ba$"))).toBeInTheDocument();
+    expect(screen.getByTestId("weekly-closing-market").textContent).not.toContain("Ã");
+    expect(weeklyClosing.queryByText(/austin williams/i)).not.toBeInTheDocument();
+    expect(weeklyClosing.queryByText(/vertex bmw/i)).not.toBeInTheDocument();
+    expect(weeklyClosing.queryByText(/apex gt4/i)).not.toBeInTheDocument();
+    expect(weeklyClosing.queryByText(/^SP$/i)).not.toBeInTheDocument();
   });
 
   it("groups displaced drivers by category in a larger end-of-preseason modal", async () => {
@@ -221,6 +328,8 @@ describe("PreSeasonView", () => {
           seasons_at_last_team: 3,
           total_career_seasons: 8,
           license_sigla: "SP",
+          last_championship_position: 12,
+          last_championship_total_drivers: 20,
           is_rookie: false,
         },
         {
@@ -233,6 +342,8 @@ describe("PreSeasonView", () => {
           seasons_at_last_team: 2,
           total_career_seasons: 5,
           license_sigla: "P",
+          last_championship_position: 7,
+          last_championship_total_drivers: 18,
           is_rookie: false,
         },
         {
@@ -245,6 +356,8 @@ describe("PreSeasonView", () => {
           seasons_at_last_team: 1,
           total_career_seasons: 4,
           license_sigla: "A",
+          last_championship_position: 14,
+          last_championship_total_drivers: 20,
           is_rookie: false,
         },
       ],
@@ -258,16 +371,23 @@ describe("PreSeasonView", () => {
     const modal = modalTitle.closest("div");
 
     expect(modalTitle).toBeInTheDocument();
-    expect(within(modal).getAllByText("GT3 Championship").length).toBeGreaterThan(0);
-    expect(within(modal).getAllByText("GT4 Championship").length).toBeGreaterThan(0);
+    expect(within(modal).getAllByText("GT3 Championship")).toHaveLength(1);
+    expect(within(modal).getAllByText("GT4 Championship")).toHaveLength(1);
+    expect(within(modal).getAllByText("Ex-equipe").length).toBeGreaterThan(0);
     const displacedDriver = within(modal).getByText("Luca Bianchi");
-    expect(displacedDriver).toHaveClass("text-[15px]");
-    expect(within(modal).getByText("Vortex Racing")).toHaveStyle({ color: "#ff8000" });
+    expect(displacedDriver).toHaveClass("text-[17px]");
+    const previousTeamLine = within(modal).getByText("Vortex Racing").closest("div");
+    expect(within(previousTeamLine).getByText("Vortex Racing")).toHaveStyle({ color: "#ff8000" });
+    expect(within(previousTeamLine).getByText("Vortex Racing")).toHaveClass("text-[14px]", "font-semibold");
+    expect(within(previousTeamLine).getByText(/12º\/20/)).toBeInTheDocument();
     expect(within(modal).getByText("3 temporadas")).toBeInTheDocument();
+    expect(within(modal).getByText(/7º\/18/)).toBeInTheDocument();
     expect(within(modal).getByText("Racing Spirit")).toHaveStyle({ color: "#58a6ff" });
     expect(within(modal).getByText("2 temporadas")).toBeInTheDocument();
+    expect(within(modal).getByText(/14º\/20/)).toBeInTheDocument();
     expect(within(modal).getByText("Wolf Racing Team")).toHaveStyle({ color: "#3fb950" });
     expect(within(modal).getByText("1 temporada")).toBeInTheDocument();
+    expect(within(modal).getByText("SP")).toHaveClass("min-w-[3.25rem]", "text-[11px]");
     expect(within(modal).queryByText(/Correu pela equipe/i)).not.toBeInTheDocument();
     expect(within(modal).queryByText(/Categoria:/i)).not.toBeInTheDocument();
     expect(within(modal).queryByText(/Carreira:/i)).not.toBeInTheDocument();

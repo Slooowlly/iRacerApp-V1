@@ -627,6 +627,21 @@ mod tests {
         db.conn
             .execute("UPDATE calendar SET status = 'Concluida'", [])
             .expect("mark all races completed");
+        db.conn
+            .execute(
+                "UPDATE seasons SET fase = 'PosEspecial' WHERE status = 'EmAndamento'",
+                [],
+            )
+            .expect("mark season as post-special");
+    }
+
+    fn mark_regular_races_completed(db: &Database) {
+        db.conn
+            .execute(
+                "UPDATE calendar SET status = 'Concluida' WHERE season_phase = 'BlocoRegular'",
+                [],
+            )
+            .expect("complete regular block");
     }
 
     fn mark_remaining_special_races_completed(db_path: &Path, season_id: &str) {
@@ -923,6 +938,7 @@ mod tests {
         player.atributos.skill = 98.0;
         driver_queries::update_driver(&db.conn, &player).expect("update player");
 
+        mark_regular_races_completed(&db);
         crate::convocation::advance_to_convocation_window(&db.conn).expect("advance convocation");
         crate::convocation::run_convocation_window(&db.conn).expect("run convocation");
         drop(db);

@@ -1942,6 +1942,7 @@ mod tests {
         player.atributos.skill = 98.0;
         driver_queries::update_driver(&db.conn, &player).expect("update player");
 
+        mark_regular_races_completed(&db);
         crate::convocation::advance_to_convocation_window(&db.conn).expect("advance convocation");
         crate::convocation::run_convocation_window(&db.conn).expect("run convocation");
         let offers = crate::commands::convocation::get_player_special_offers_in_base_dir(
@@ -2051,6 +2052,7 @@ mod tests {
         player.atributos.skill = 98.0;
         driver_queries::update_driver(&db.conn, &player).expect("update player");
 
+        mark_regular_races_completed(&db);
         crate::convocation::advance_to_convocation_window(&db.conn).expect("advance convocation");
         crate::convocation::run_convocation_window(&db.conn).expect("run convocation");
         crate::convocation::iniciar_bloco_especial(&db.conn).expect("start special block");
@@ -2113,6 +2115,7 @@ mod tests {
         player.atributos.skill = 98.0;
         driver_queries::update_driver(&db.conn, &player).expect("update player");
 
+        mark_regular_races_completed(&db);
         crate::convocation::advance_to_convocation_window(&db.conn).expect("advance convocation");
         crate::convocation::run_convocation_window(&db.conn).expect("run convocation");
         let offers = crate::commands::convocation::get_player_special_offers_in_base_dir(
@@ -2143,5 +2146,14 @@ mod tests {
             .expect("time")
             .as_nanos();
         std::env::temp_dir().join(format!("iracerapp_{label}_{nanos}"))
+    }
+
+    fn mark_regular_races_completed(db: &Database) {
+        db.conn
+            .execute(
+                "UPDATE calendar SET status = 'Concluida' WHERE season_phase = 'BlocoRegular'",
+                [],
+            )
+            .expect("complete regular block");
     }
 }

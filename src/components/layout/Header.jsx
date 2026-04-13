@@ -22,18 +22,26 @@ function Header({ activeTab, onTabChange }) {
   const displayDaysUntilNextEvent = useCareerStore((state) => state.displayDaysUntilNextEvent);
   const isCalendarAdvancing = useCareerStore((state) => state.isCalendarAdvancing);
   const isAdvancing = useCareerStore((state) => state.isAdvancing);
+  const isConvocating = useCareerStore((state) => state.isConvocating);
   const showRaceBriefing = useCareerStore((state) => state.showRaceBriefing);
   const startCalendarAdvance = useCareerStore((state) => state.startCalendarAdvance);
   const advanceSeason = useCareerStore((state) => state.advanceSeason);
   const skipAllPendingRaces = useCareerStore((state) => state.skipAllPendingRaces);
+  const runConvocationWindow = useCareerStore((state) => state.runConvocationWindow);
+  const finishSpecialBlock = useCareerStore((state) => state.finishSpecialBlock);
   const closeRaceBriefing = useCareerStore((state) => state.closeRaceBriefing);
   const [seasonChampion, setSeasonChampion] = useState(null);
 
   const visibleDate = calendarDisplayDate ?? temporalSummary?.current_display_date;
   const visibleCountdown = displayDaysUntilNextEvent ?? temporalSummary?.days_until_next_event;
-  const canAdvanceCalendar = nextRace || (temporalSummary?.pending_in_phase > 0);
   const hasNoPendingRace = !nextRace;
   const isFreeAgent = !playerTeam;
+  const phase = season?.fase;
+  const canAdvanceCalendar = Boolean(nextRace) || (
+    !isFreeAgent &&
+    phase === "BlocoRegular" &&
+    (temporalSummary?.pending_in_phase ?? 0) > 0
+  );
 
   useEffect(() => {
     let mounted = true;
@@ -87,10 +95,48 @@ function Header({ activeTab, onTabChange }) {
         return;
       }
 
+      if (hasNoPendingRace && phase === "BlocoRegular") {
+        await runConvocationWindow?.();
+        return;
+      }
+
+      if (hasNoPendingRace && phase === "BlocoEspecial") {
+        await finishSpecialBlock?.();
+        return;
+      }
+
       await advanceSeason?.();
     } catch (error) {
       console.error("Erro ao avancar temporada pelo header:", error);
     }
+  }
+
+  function getAdvanceButtonLabel() {
+    if (isCalendarAdvancing || isAdvancing || isConvocating) {
+      return "Avancando...";
+    }
+
+    if (canAdvanceCalendar) {
+      return "Avancar calendario";
+    }
+
+    if (isFreeAgent && hasNoPendingRace) {
+      return "Pular temporada";
+    }
+
+    if (hasNoPendingRace && phase === "BlocoRegular") {
+      return "Avancar para convocacao";
+    }
+
+    if (hasNoPendingRace && phase === "BlocoEspecial") {
+      return "Pular bloco especial";
+    }
+
+    if (hasNoPendingRace && phase === "PosEspecial") {
+      return "Encerrar temporada";
+    }
+
+    return "Avancar temporada";
   }
 
   function handleBackToBriefingOrigin() {
@@ -150,17 +196,11 @@ function Header({ activeTab, onTabChange }) {
               ) : (
                 <GlassButton
                   variant="primary"
-                  disabled={isCalendarAdvancing || isAdvancing}
+                  disabled={isCalendarAdvancing || isAdvancing || isConvocating}
                   className="rounded-full px-5 py-2.5"
                   onClick={canAdvanceCalendar ? handleNextRace : handleAdvanceSeason}
                 >
-                  {isCalendarAdvancing || isAdvancing
-                    ? "Avancando..."
-                    : canAdvanceCalendar
-                      ? "Avancar calendario"
-                      : isFreeAgent && hasNoPendingRace
-                        ? "Pular temporada"
-                        : "Avancar temporada"}
+                  {getAdvanceButtonLabel()}
                 </GlassButton>
               )}
             </div>
@@ -262,7 +302,7 @@ function SeasonFinishedBanner({ season, category, champion }) {
 }
 
 function TrackImage({ trackName, rodada, totalRodadas }) {
-  const src = `/tracks/${encodeURIComponent(trackName)}.png`;
+  const src = getTrackImageSrc(trackName);
 
   return (
     <div className="relative my-3 w-64 shrink-0 self-stretch overflow-hidden rounded-2xl border border-white/10 bg-white/5">
@@ -281,6 +321,44 @@ function TrackImage({ trackName, rodada, totalRodadas }) {
       </div>
     </div>
   );
+}
+
+const TRACK_IMAGE_FILES = [
+  { match: ["charlotte"], file: "charlotte.png" },
+  { match: ["laguna seca"], file: "lagunaseca.png" },
+  { match: ["lime rock"], file: "limerock.jpeg" },
+  { match: ["okayama"], file: "okayama.png" },
+  { match: ["oulton park"], file: "oultonpark.jpeg" },
+  { match: ["snetterton"], file: "snetterton.jpeg" },
+  { match: ["summit point", "jefferson"], file: "summitpoint.png" },
+  { match: ["tsukuba"], file: "Tsukuba.png" },
+  { match: ["virginia international raceway", "vir full", "vir patriot"], file: "virginia.jpeg" },
+  { match: ["ledenon"], file: "ledenon.png" },
+  { match: ["oschersleben", "motorsport arena"], file: "motorsport arena.png" },
+  { match: ["navarra"], file: "Navarra.png" },
+  { match: ["oran park"], file: "oranpark.png" },
+  { match: ["rudskogen"], file: "rudskogen.jpeg" },
+  { match: ["winton"], file: "winton.jpeg" },
+];
+
+function getTrackImageSrc(trackName) {
+  const normalizedName = normalizeTrackName(trackName);
+  const entry = TRACK_IMAGE_FILES.find(({ match }) =>
+    match.some((candidate) => normalizedName.includes(candidate)),
+  );
+
+  if (entry) {
+    return `/tracks/${encodeURIComponent(entry.file)}`;
+  }
+
+  return `/tracks/${encodeURIComponent(trackName)}.png`;
+}
+
+function normalizeTrackName(trackName) {
+  return (trackName ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
 }
 
 function StatBlock({ label, value, icon }) {

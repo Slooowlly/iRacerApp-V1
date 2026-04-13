@@ -63,8 +63,8 @@ pub(crate) fn eligible_regions_for_category(
 // ── Pools de pistas por região e família ──────────────────────────────────────
 
 /// Pool free regional por região geográfica.
-/// VIR (58) e Snetterton (316) são paid no sistema iRacing, mas incluídos
-/// intencionalmente — o gerador temático usa pools diretamente, sem checar gratuita.
+/// VIR (58) e Snetterton (316) são incluídos intencionalmente no regional free
+/// do modo carreira, mesmo quando a origem externa muda a classificação comercial.
 pub(crate) fn free_tracks_for_region(region: CalendarRegion) -> &'static [u32] {
     match region {
         CalendarRegion::Usa => &[
@@ -77,17 +77,16 @@ pub(crate) fn free_tracks_for_region(region: CalendarRegion) -> &'static [u32] {
         CalendarRegion::Europa => &[
             261, // Oulton Park – Fosters
             316, // Snetterton Circuit – 300
-            300, // Brands Hatch – Grand Prix (free track, added to reach production pool minimum)
-                 // TODO: Circuit de Lédenon (not yet in DB)
-                 // TODO: Circuito de Navarra (not yet in DB)
-                 // TODO: Motorsport Arena Oschersleben (not yet in DB)
-                 // TODO: Rudskogen Motorsenter (not yet in DB)
+            489, // Circuit de Lédenon
+            515, // Circuito de Navarra – Speed Circuit
+            449, // Motorsport Arena Oschersleben – Grand Prix
+            451, // Rudskogen Motorsenter
         ],
         CalendarRegion::JapaoOceania => &[
             166, // Okayama International Circuit
             325, // Tsukuba Circuit – 2000 Full Course
-                 // TODO: Oran Park Raceway (not yet in DB)
-                 // TODO: Winton Motor Raceway (not yet in DB)
+            202, // Oran Park Raceway – Grand Prix
+            440, // Winton Motor Raceway – Club Circuit
         ],
     }
 }
@@ -98,9 +97,8 @@ pub(crate) fn production_free_mix_pool() -> &'static [u32] {
     &[
         // USA
         554, 14, 9, 58, 47, // Europa
-        261, 316, 300, // Japão/Oceania
-        166, 325,
-        // TODO: tracks ausentes das 3 regiões quando entrarem no DB
+        261, 316, 489, 515, 449, 451, // Japão/Oceania
+        166, 325, 202, 440,
     ]
 }
 
@@ -493,6 +491,39 @@ mod tests {
                 assert!(prod.contains(id), "prod pool missing track {id}");
             }
         }
+    }
+
+    #[test]
+    fn regional_free_pools_include_current_free_tracks_and_exclude_brands() {
+        let europa = free_tracks_for_region(CalendarRegion::Europa);
+        for track_id in [449, 451, 489, 515] {
+            assert!(
+                europa.contains(&track_id),
+                "Europa pool missing free track {track_id}"
+            );
+        }
+        assert!(!europa.contains(&300), "Brands GP should not be free");
+        assert!(!europa.contains(&301), "Brands Indy should not be free");
+
+        let japao_oceania = free_tracks_for_region(CalendarRegion::JapaoOceania);
+        for track_id in [202, 440] {
+            assert!(
+                japao_oceania.contains(&track_id),
+                "JapaoOceania pool missing free track {track_id}"
+            );
+        }
+
+        let production = production_free_mix_pool();
+        for track_id in [202, 440, 449, 451, 489, 515] {
+            assert!(
+                production.contains(&track_id),
+                "Production pool missing free track {track_id}"
+            );
+        }
+        assert!(
+            !production.contains(&300) && !production.contains(&301),
+            "Production free pool should not include Brands Hatch"
+        );
     }
 
     #[test]
