@@ -8,7 +8,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const projectRoot = path.resolve(__dirname, "..", "..");
 
-test("window controls drawer separates hover zone from visual tray", async () => {
+test("window controls drawer keeps a dedicated hover target separate from the visual tray", async () => {
   const drawerSource = await readFile(
     path.join(projectRoot, "src/components/layout/WindowControlsDrawer.jsx"),
     "utf8",
@@ -21,8 +21,13 @@ test("window controls drawer separates hover zone from visual tray", async () =>
   );
   assert.match(
     drawerSource,
-    /className="absolute -left-\[32px\] top-0 h-\[390px\] w-\[188px\]"/,
-    "expected a dedicated invisible hover zone",
+    /data-testid="window-controls-hover-target"/,
+    "expected a dedicated hover target outside the visible tray",
+  );
+  assert.match(
+    drawerSource,
+    /className=\{\[\s*"absolute right-0 top-\[8px\] z-20 flex h-10 w-10 items-center justify-center rounded-xl/,
+    "expected the hover target to stay compact and positioned beside the tray",
   );
   assert.match(
     drawerSource,

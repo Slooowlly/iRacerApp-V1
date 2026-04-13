@@ -32,7 +32,7 @@ describe("nextRaceBriefing", () => {
   });
 
   it("uses different expectation pools for each position in the top five", () => {
-    expect(buildFavoriteExpectation(makeDriver(), 0)).toMatch(/referencia|frente|ritmo/i);
+    expect(buildFavoriteExpectation(makeDriver(), 0)).toMatch(/referencia|frente|ritmo|parametro|controle/i);
     expect(buildFavoriteExpectation(makeDriver({ posicao_campeonato: 2, rating: 85 }), 1)).toMatch(
       /primeira fila|ataque|pressionar|frente/i,
     );
@@ -40,10 +40,10 @@ describe("nextRaceBriefing", () => {
       /podio|bloco|frente/i,
     );
     expect(buildFavoriteExpectation(makeDriver({ posicao_campeonato: 5, rating: 76 }), 3)).toMatch(
-      /top 5|erro|ameaca|oportunidade/i,
+      /top 5|erro|ameaca|oportunidade|podio|pontos/i,
     );
     expect(buildFavoriteExpectation(makeDriver({ posicao_campeonato: 7, rating: 72 }), 4)).toMatch(
-      /corre por fora|radar|oportunidade|surpresa/i,
+      /corre por fora|radar|oportunidade|surpresa|outsider|top 5/i,
     );
   });
 

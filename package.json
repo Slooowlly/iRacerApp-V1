@@ -8,8 +8,11 @@
     "build": "vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "test": "vitest run",
-    "test:watch": "vitest"
+    "test": "npm run test:ui",
+    "test:ui": "vitest run",
+    "test:watch": "vitest",
+    "test:structure": "node --test \"scripts/tests/*.test.mjs\"",
+    "test:all": "npm run test:ui && npm run test:structure"
   },
   "dependencies": {
     "@fontsource-variable/space-grotesk": "^5.2.10",

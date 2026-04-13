@@ -12,26 +12,18 @@ async function readProjectFile(relativePath) {
   return readFile(path.join(projectRoot, relativePath), "utf8");
 }
 
-test("window controls drawer defines the approved route widgets", async () => {
+test("window controls drawer defines the approved route widget and save-aware menu exit flow", async () => {
   const drawerSource = await readProjectFile("src/components/layout/WindowControlsDrawer.jsx");
 
   assert.match(drawerSource, /useNavigate/, "expected route navigation in the drawer");
   assert.match(drawerSource, /useLocation/, "expected route awareness in the drawer");
   assert.match(drawerSource, /clearCareer/, "expected menu widget to clear the active career");
+  assert.match(drawerSource, /flushSave/, "expected the drawer to offer a save-before-exit path");
+  assert.match(drawerSource, /SaveConfirmModal/, "expected the drawer to confirm leaving the career");
   assert.match(
     drawerSource,
-    /emoji:\s*"⚙️"[\s\S]*route:\s*"\/settings"[\s\S]*title:\s*"Configurações"/,
-    "expected a settings widget",
-  );
-  assert.match(
-    drawerSource,
-    /emoji:\s*"📂"[\s\S]*route:\s*"\/load-save"[\s\S]*title:\s*"Carregar save"/,
-    "expected a load-save widget",
-  );
-  assert.match(
-    drawerSource,
-    /emoji:\s*"🏠"[\s\S]*route:\s*"\/menu"[\s\S]*title:\s*"Menu principal"/,
-    "expected a menu widget",
+    /const widgetItems = \[\{\s*emoji:\s*"[^"]+"\s*,\s*route:\s*"\/menu"\s*,\s*title:\s*"Home"\s*,\s*clearsCareer:\s*true\s*\}\];/s,
+    "expected the drawer widget tray to keep the home shortcut back to the menu",
   );
 });
 

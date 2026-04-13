@@ -41,7 +41,7 @@ test("window controls drawer defines a delayed secondary widget panel", async ()
   );
   assert.match(
     drawerSource,
-    /left-1\/2 -translate-x-1\/2/,
+    /left-1\/2 top-\[84px\][\s\S]*-translate-x-1\/2/,
     "expected the widget panel to be centered below the main tray",
   );
   assert.match(
@@ -51,7 +51,7 @@ test("window controls drawer defines a delayed secondary widget panel", async ()
   );
   assert.match(
     drawerSource,
-    /pointer-events-none mt-2 w-full text-center/,
-    "expected the iRacerApp text block to stay close to the main tray",
+    /pointer-events-none mt-0 w-full text-center/,
+    "expected the iRacerApp text block to stay directly attached to the main tray",
   );
 });

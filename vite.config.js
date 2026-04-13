@@ -10,6 +10,8 @@ export default defineConfig(async () => ({
     environment: "jsdom",
     globals: true,
     setupFiles: "./src/test/setup.js",
+    include: ["src/**/*.{test,spec}.{js,jsx,ts,tsx}"],
+    exclude: ["scripts/tests/**", "src-tauri/**", "dist/**", "node_modules/**"],
   },
   server: {
     port: 1420,

@@ -12,15 +12,20 @@ async function readProjectFile(relativePath) {
   return readFile(path.join(projectRoot, relativePath), "utf8");
 }
 
-test("dashboard navigation promotes News instead of Next Race", async () => {
+test("dashboard navigation promotes News in the main tab bar while keeping the dedicated race briefing flow", async () => {
   const dashboardSource = await readProjectFile("src/pages/Dashboard.jsx");
   const navSource = await readProjectFile("src/components/layout/TabNavigation.jsx");
 
   assert.match(dashboardSource, /NewsTab/, "expected Dashboard to render NewsTab");
-  assert.doesNotMatch(
+  assert.match(
     dashboardSource,
     /NextRaceTab/,
-    "expected Dashboard to stop importing the dedicated next race tab",
+    "expected Dashboard to keep the dedicated next race briefing flow outside the main tab bar",
+  );
+  assert.match(
+    dashboardSource,
+    /showRaceBriefing/,
+    "expected Dashboard to guard the dedicated race briefing with a store flag",
   );
   assert.match(navSource, /label:\s*"Noticias"/, "expected top nav to include Noticias");
   assert.doesNotMatch(
@@ -32,24 +37,34 @@ test("dashboard navigation promotes News instead of Next Race", async () => {
 
 test("news tab renders the editorial section hierarchy in order", async () => {
   const source = await readProjectFile("src/pages/tabs/NewsTab.jsx");
+  const drawersSource = await readProjectFile("src/pages/tabs/NewsScopeDrawers.jsx");
 
-  const markers = [
-    'data-news-section="hero"',
-    'data-news-section="scope-tabs"',
-    'data-news-section="primary-filters"',
-    'data-news-section="context-filters"',
-    'data-news-section="main-reader"',
-  ];
+  const heroIndex = source.indexOf('data-news-section="hero"');
+  const mainReaderIndex = source.indexOf('data-news-section="main-reader"');
+  const dashboardIndex = drawersSource.indexOf('data-news-section="dashboard"');
 
-  let lastIndex = -1;
-  for (const marker of markers) {
-    const index = source.indexOf(marker);
-    assert.notEqual(index, -1, `expected NewsTab to include ${marker}`);
-    assert.ok(index > lastIndex, `expected ${marker} to appear after the previous section`);
-    lastIndex = index;
-  }
+  assert.notEqual(heroIndex, -1, 'expected NewsTab to include data-news-section="hero"');
+  assert.notEqual(
+    mainReaderIndex,
+    -1,
+    'expected NewsTab to include data-news-section="main-reader"',
+  );
+  assert.ok(
+    mainReaderIndex > heroIndex,
+    'expected the main reader section to appear after the hero wrapper',
+  );
+  assert.notEqual(
+    dashboardIndex,
+    -1,
+    'expected NewsScopeDrawers to expose data-news-section="dashboard"',
+  );
+  assert.match(
+    source,
+    /<section data-news-section="hero"[\s\S]*<NewsScopeDrawers[\s\S]*<\/section>[\s\S]*<section data-news-section="main-reader"/,
+    "expected the hero wrapper to host the drawer dashboard before the main reader section",
+  );
 
-   assert.equal(
+  assert.equal(
     source.includes('data-news-section="cover"'),
     false,
     "expected NewsTab to drop the old cover section",
@@ -59,25 +74,35 @@ test("news tab renders the editorial section hierarchy in order", async () => {
     false,
     "expected NewsTab to drop the old feed section",
   );
+  assert.match(
+    drawersSource,
+    /renderPrimaryFilters/,
+    "expected the drawer dashboard to host the top-level primary filters",
+  );
+  assert.match(
+    drawersSource,
+    /renderContextualFilters/,
+    "expected the drawer dashboard to host the contextual filter pills",
+  );
 });
 
-test("news tab includes the famous scope and reduced special-mode filters", async () => {
+test("news tab exposes the rankings special scope and delegates filter definitions to the shared helpers", async () => {
   const source = await readProjectFile("src/pages/tabs/NewsTab.jsx");
+  const drawersSource = await readProjectFile("src/pages/tabs/NewsScopeDrawers.jsx");
 
-  assert.match(source, /Mais famosos/, "expected NewsTab to expose the special Mais famosos scope");
   assert.match(
-    source,
-    /const PRIMARY_FILTER_IDS = \["Corridas", "Pilotos", "Equipes", "Mercado"\]/,
-    "expected NewsTab to remove Expectativas from the visible primary filters",
+    drawersSource,
+    /const SPECIAL_SCOPE_LABEL = "Rankings"/,
+    "expected the special editorial scope to be labeled as Rankings",
   );
   assert.match(
     source,
-    /const FAMOUS_FILTER_IDS = \["Pilotos", "Equipes", "Mercado"\]/,
-    "expected NewsTab to define the reduced filter set for the famous scope",
+    /buildFallbackPrimaryFilters/,
+    "expected NewsTab to derive primary filters through the shared helper layer",
   );
   assert.doesNotMatch(
     source,
-    /const PRIMARY_FILTER_IDS = \["Corridas", "Pilotos", "Equipes", "Mercado", "Expectativas"\]/,
-    "expected NewsTab to stop defining Expectativas as a top-level filter",
+    /Expectativas/,
+    "expected NewsTab not to hard-code the removed Expectativas filter in the surface",
   );
 });

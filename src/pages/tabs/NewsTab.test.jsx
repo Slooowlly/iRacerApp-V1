@@ -304,18 +304,19 @@ describe("NewsTab", () => {
                     color_secondary: null,
                   },
                 ]
-            : [];
+              : [];
+
         return Promise.resolve(
           buildSnapshot({
             contextual_filters: contextualFilters,
             scope_meta: {
-            scope_type: scopeType,
-            scope_id: scopeId,
-            scope_label: scopeLabelFor(scopeId),
-            scope_class: payload?.request?.scope_class ?? null,
-            primary_filter: filter,
-            context_type: null,
-            context_id: null,
+              scope_type: scopeType,
+              scope_id: scopeId,
+              scope_label: scopeLabelFor(scopeId),
+              scope_class: payload?.request?.scope_class ?? null,
+              primary_filter: filter,
+              context_type: null,
+              context_id: null,
               context_label: null,
               is_special: scopeType === "famous",
             },
@@ -331,17 +332,15 @@ describe("NewsTab", () => {
     const { container } = render(<NewsTab />);
 
     await screen.findByRole("button", { name: "Mazda" });
-    expect(screen.queryByText("Situação do campeonato")).not.toBeInTheDocument();
-    expect(screen.queryByText("O paddock chega aquecido para a próxima etapa da categoria.")).not.toBeInTheDocument();
+
+    expect(screen.getByRole("heading", { name: "Panorama do Campeonato" })).toBeInTheDocument();
+    expect(screen.getByText(/Próxima Etapa/i)).toBeInTheDocument();
     expect(screen.queryByText("Mazda MX-5 Rookie Cup")).not.toBeInTheDocument();
-    expect(screen.getAllByText("Próxima etapa")[0].parentElement).toHaveClass('absolute', 'right-0', 'top-0');
-    expect(container.querySelector('[data-news-section="hero"] > div')).toHaveClass('rounded-[26px]');
-    expect(container.querySelector('[data-news-section="hero"] > div > div.relative.flex.items-center.justify-between')).toHaveClass('pt-3');
-    expect(container.querySelector('.grid-cols-\\[1fr_auto\\]')).toBeNull();
-    expect(container.querySelector('[data-news-hero-body]')).toHaveClass('space-y-0', 'px-5', 'pb-3', 'pt-1');
-    expect(container.querySelector('[data-news-hero-summary]')).toHaveClass('gap-2', 'pr-[220px]');
-    expect(screen.getByRole('heading', { name: 'Panorama do Campeonato' })).toHaveClass('text-[2rem]');
-    expect(container.querySelector('[data-news-section="main-reader"]')).not.toBeNull();
+    expect(container.querySelector('[data-news-section="hero"] > div')).toHaveClass("rounded-[32px]");
+    expect(container.querySelector('[data-news-section="hero"] > div > div.relative.z-10')).toHaveClass("px-6", "pt-10");
+    await waitFor(() => {
+      expect(container.querySelector('[data-news-section="main-reader"]')).not.toBeNull();
+    });
     expect(screen.queryByRole("button", { name: "Expectativas" })).not.toBeInTheDocument();
 
     await waitFor(() => {
@@ -363,7 +362,6 @@ describe("NewsTab", () => {
     await screen.findByRole("button", { name: "Corridas" });
 
     mockInvoke.mockClear();
-
     fireEvent.click(screen.getByRole("button", { name: "Corridas" }));
 
     await waitFor(() => {
@@ -376,7 +374,6 @@ describe("NewsTab", () => {
     });
 
     mockInvoke.mockClear();
-
     fireEvent.click(screen.getByRole("button", { name: "Corridas" }));
 
     await waitFor(() => {
@@ -389,8 +386,8 @@ describe("NewsTab", () => {
     });
   });
 
-  it("renders the unified context panel with compact pill tabs and dims future races", async () => {
-    const { container } = render(<NewsTab />);
+  it("renders the context controls inline and dims future races", async () => {
+    render(<NewsTab />);
 
     await screen.findByRole("button", { name: "Mazda" });
     fireEvent.click(screen.getAllByRole("button", { name: "Mazda" })[0]);
@@ -398,26 +395,19 @@ describe("NewsTab", () => {
 
     await screen.findByRole("button", { name: "Okayama" });
 
-    expect(container.querySelector('[data-news-section="primary-filters"]')).toBeNull();
+    const futureRaceButton = screen.getByRole("button", { name: "Laguna Seca" });
+    const inlineDrawer = screen.getByRole("button", { name: "Rookie" }).closest("div.rounded-2xl");
+    const activePrimaryFilter = screen.getByRole("button", { name: "Corridas" });
+
     expect(screen.queryByText("Filtro contextual")).not.toBeInTheDocument();
     expect(screen.queryByText("Leitura da Temporada")).not.toBeInTheDocument();
     expect(screen.queryByText("Recorte em Foco")).not.toBeInTheDocument();
-
-    const contextPanel = container.querySelector('[data-news-section="context-panel"]');
-    const primaryPill = container.querySelector("[data-news-primary-pill]");
-    const contextResults = container.querySelector("[data-news-context-results]");
-    const futureRaceButton = screen.getByRole("button", { name: "Laguna Seca" });
-
-    expect(contextPanel).not.toBeNull();
-    expect(primaryPill).not.toBeNull();
-    expect(contextResults).not.toBeNull();
-    expect(primaryPill.className).toContain("mx-auto");
-    expect(contextResults.className).toContain("justify-center");
-    expect(futureRaceButton.className).toContain("text-center");
+    expect(inlineDrawer).not.toBeNull();
+    expect(activePrimaryFilter.className).toContain("bg-accent-primary/10");
+    expect(screen.getByRole("button", { name: "Rookie" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Cup" })).toBeInTheDocument();
     expect(futureRaceButton.className).toContain("opacity-35");
     expect(futureRaceButton).toBeDisabled();
-    expect(screen.queryByRole("button", { name: "Narrativa" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Consequências" })).not.toBeInTheDocument();
   });
 
   it("uses medal tones for the top three driver filters", async () => {
@@ -445,24 +435,25 @@ describe("NewsTab", () => {
     await screen.findByRole("button", { name: "Mazda" });
     fireEvent.click(screen.getAllByRole("button", { name: "Mazda" })[0]);
     await screen.findByText("Okayama abriu a temporada com o grid embaralhado logo na primeira volta.");
-    expect(screen.getByText("Capítulos paralelos")).toBeInTheDocument();
-    const openStory = document.querySelector("[data-news-open-story]");
+
+    const mainReader = document.querySelector('[data-news-section="main-reader"]');
+    const openStory = within(mainReader).getByRole("heading", {
+      level: 2,
+      name: "Abertura forte em Okayama",
+    }).closest("div.space-y-4");
+
     expect(openStory).not.toBeNull();
     expect(within(openStory).getByText("Abertura forte em Okayama")).toBeInTheDocument();
     expect(within(openStory).getByText("Resumo")).toBeInTheDocument();
     expect(within(openStory).getByText("Impacto")).toBeInTheDocument();
     expect(within(openStory).getAllByText("Leitura").length).toBeGreaterThan(0);
-    expect(within(openStory).getByText("Publicada em")).toBeInTheDocument();
-    expect(within(openStory).getAllByText("Leitura").length).toBeGreaterThan(1);
-    expect(within(openStory).getByText("Contexto")).toBeInTheDocument();
     expect(screen.getAllByText("A etapa inicial redefiniu o humor do grid.").length).toBeGreaterThan(0);
     expect(screen.queryByText("LEGADO_OPENING_TITLE")).not.toBeInTheDocument();
     expect(screen.queryByText("LEGADO_OPENING_SUMMARY")).not.toBeInTheDocument();
     expect(screen.queryByText("LEGADO_OPENING_BODY_TEXT")).not.toBeInTheDocument();
 
     mockInvoke.mockClear();
-
-    fireEvent.click(screen.getByRole("button", { name: /Mercado observa pilotos em ascensao/i }));
+    fireEvent.click(screen.getByText(/Mercado observa pilotos em ascensao/i));
 
     expect(screen.getAllByText("O paddock comenta nomes que chegam valorizados.").length).toBeGreaterThan(0);
     expect(screen.getByText("Movimento")).toBeInTheDocument();
@@ -483,8 +474,8 @@ describe("NewsTab", () => {
     expect(screen.getByRole("button", { name: "Toyota" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "BMW" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "GT4" })).toBeInTheDocument();
-    mockInvoke.mockClear();
 
+    mockInvoke.mockClear();
     fireEvent.click(screen.getByRole("button", { name: "Toyota" }));
 
     await waitFor(() => {
@@ -501,125 +492,40 @@ describe("NewsTab", () => {
     expect(container.querySelector('[data-news-section="main-reader"]')).not.toBeNull();
   });
 
-  it("anchors the family drawer under the clicked category card", async () => {
-    const { container } = render(<NewsTab />);
+  it("shows inline family scope controls for the active family", async () => {
+    render(<NewsTab />);
+
+    await screen.findByRole("button", { name: "GT3" });
+    fireEvent.click(screen.getAllByRole("button", { name: "GT3" })[0]);
+
+    expect(await screen.findByRole("button", { name: "Endurance" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Rookie" })).toBeInTheDocument();
+  });
+
+  it("switches the inline family scope controls when the active family changes", async () => {
+    render(<NewsTab />);
 
     await screen.findByRole("button", { name: "GT3" });
 
-    const scopeRow = container.querySelector("[data-news-scope-row]");
-    const gt3Button = screen.getAllByRole("button", { name: "GT3" })[0];
+    fireEvent.click(screen.getAllByRole("button", { name: "GT3" })[0]);
+    expect(await screen.findByRole("button", { name: "Endurance" })).toBeInTheDocument();
 
-    fireEvent.click(gt3Button);
-
-    const drawerPanel = await screen.findByRole("button", { name: "Endurance" });
-    const drawerCard = drawerPanel.closest("[data-news-scope-drawer-panel]");
-
-    vi.spyOn(scopeRow, "getBoundingClientRect").mockReturnValue({
-      x: 80,
-      y: 0,
-      left: 80,
-      top: 0,
-      width: 900,
-      height: 64,
-      right: 980,
-      bottom: 64,
-      toJSON: () => ({}),
-    });
-    vi.spyOn(gt3Button, "getBoundingClientRect").mockReturnValue({
-      x: 356,
-      y: 0,
-      left: 356,
-      top: 0,
-      width: 138,
-      height: 64,
-      right: 494,
-      bottom: 64,
-      toJSON: () => ({}),
-    });
-    vi.spyOn(drawerCard, "getBoundingClientRect").mockReturnValue({
-      x: 0,
-      y: 0,
-      left: 0,
-      top: 0,
-      width: 228,
-      height: 46,
-      right: 228,
-      bottom: 46,
-      toJSON: () => ({}),
-    });
-
-    fireEvent(window, new Event("resize"));
+    fireEvent.click(screen.getByRole("button", { name: "Toyota" }));
 
     await waitFor(() => {
-      const drawerTrack = container.querySelector("[data-news-scope-drawer-track]");
-      expect(drawerTrack).not.toBeNull();
-      expect(drawerTrack.style.left).toBe("231px");
-      expect(drawerTrack.style.top).toBe("72px");
-    });
-  });
-
-  it("drops the drawer under the clicked row when categories wrap", async () => {
-    const { container } = render(<NewsTab />);
-
-    await screen.findByRole("button", { name: "LMP2" });
-
-    const scopeRow = container.querySelector("[data-news-scope-row]");
-    const lmp2Button = screen.getAllByRole("button", { name: "LMP2" })[0];
-
-    fireEvent.click(lmp2Button);
-
-    const drawerPanel = await screen.findByRole("button", { name: "Endurance" });
-    const drawerCard = drawerPanel.closest("[data-news-scope-drawer-panel]");
-
-    vi.spyOn(scopeRow, "getBoundingClientRect").mockReturnValue({
-      x: 80,
-      y: 100,
-      left: 80,
-      top: 100,
-      width: 900,
-      height: 140,
-      right: 980,
-      bottom: 240,
-      toJSON: () => ({}),
-    });
-    vi.spyOn(lmp2Button, "getBoundingClientRect").mockReturnValue({
-      x: 760,
-      y: 176,
-      left: 760,
-      top: 176,
-      width: 138,
-      height: 64,
-      right: 898,
-      bottom: 240,
-      toJSON: () => ({}),
-    });
-    vi.spyOn(drawerCard, "getBoundingClientRect").mockReturnValue({
-      x: 0,
-      y: 0,
-      left: 0,
-      top: 0,
-      width: 190,
-      height: 46,
-      right: 190,
-      bottom: 46,
-      toJSON: () => ({}),
-    });
-
-    fireEvent(window, new Event("resize"));
-
-    await waitFor(() => {
-      const drawerTrack = container.querySelector("[data-news-scope-drawer-track]");
-      expect(drawerTrack).not.toBeNull();
-      expect(drawerTrack.style.left).toBe("654px");
-      expect(drawerTrack.style.top).toBe("148px");
+      expect(screen.getByRole("button", { name: "Cup" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Production" })).toBeInTheDocument();
     });
   });
 
   it("uses the simplified scope labels and rankings naming in the family drawer", async () => {
-    const { container } = render(<NewsTab />);
+    render(<NewsTab />);
 
     await screen.findByRole("button", { name: "Mazda" });
     fireEvent.click(screen.getAllByRole("button", { name: "Mazda" })[0]);
+
+    const familyStrip = screen.getAllByRole("button", { name: "Mazda" })[0].parentElement;
+    const inlineDrawer = screen.getByRole("button", { name: "Rookie" }).closest("div.rounded-2xl");
 
     expect(screen.getByRole("button", { name: "Rankings" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Mais famosos" })).not.toBeInTheDocument();
@@ -629,45 +535,17 @@ describe("NewsTab", () => {
     expect(screen.getByRole("button", { name: "Rookie" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Cup" })).toBeInTheDocument();
     expect(screen.getByText("Production")).toBeInTheDocument();
-    expect(screen.getAllByRole("button", { name: "Mazda" })[0].className).toContain("justify-center");
-    expect(screen.getAllByRole("button", { name: "Mazda" })[0].className).toContain("text-center");
-    expect(screen.getAllByRole("button", { name: "Mazda" })[0].className).toContain("min-h-[48px]");
+    expect(screen.getAllByRole("button", { name: "Mazda" })[0].className).toContain("font-bold");
     expect(screen.getAllByRole("button", { name: "Mazda" })[0].className).toContain("rounded-full");
-    expect(screen.getAllByRole("button", { name: "Mazda" })[0].className).toContain("min-w-[120px]");
-    expect(screen.getAllByRole("button", { name: "Mazda" })[0].className).toContain("px-4");
+    expect(screen.getAllByRole("button", { name: "Mazda" })[0].className).toContain("px-5");
     expect(screen.getAllByRole("button", { name: "Mazda" })[0].className).toContain("py-2");
-    expect(screen.getAllByRole("button", { name: "Mazda" })[0].className).not.toContain("rounded-[16px]");
-    expect(screen.getByRole("button", { name: "Rankings" }).className).toContain("min-h-[48px]");
     expect(screen.getByRole("button", { name: "Rankings" }).className).toContain("rounded-full");
-    const drawerPanel = container.querySelector("[data-news-scope-drawer-panel]");
-    const drawerPill = container.querySelector("[data-news-scope-pill]");
-    const scopeTabsSection = container.querySelector("[data-news-section='scope-tabs']");
-    const heroScopeTabsSection = container.querySelector('[data-news-section="hero"] [data-news-section="scope-tabs"]');
-    const summaryScopeTabsSection = container.querySelector('[data-news-hero-summary] [data-news-section="scope-tabs"]');
-    const heroScopeTabsSlot = heroScopeTabsSection?.parentElement;
-    const scopeTopPill = container.querySelector("[data-news-scope-top-pill]");
-    const scopeRow = container.querySelector("[data-news-scope-row]");
-    expect(drawerPanel).not.toBeNull();
-    expect(drawerPill).not.toBeNull();
-    expect(scopeTabsSection).not.toBeNull();
-    expect(heroScopeTabsSection).not.toBeNull();
-    expect(heroScopeTabsSlot).not.toBeNull();
-    expect(summaryScopeTabsSection).toBeNull();
-    expect(scopeTopPill).not.toBeNull();
-    expect(scopeRow).not.toBeNull();
-    expect(scopeTabsSection.className).toContain("flex");
-    expect(scopeTabsSection.className).toContain("justify-center");
-    expect(scopeTopPill.className).toContain("mx-auto");
-    expect(scopeTopPill.className).toContain("w-fit");
-    expect(scopeTopPill.className).toContain("flex");
-    expect(scopeTopPill.className).not.toContain("inline-flex");
-    expect(scopeTopPill.className).toContain("rounded-full");
-    expect(scopeTopPill.className).toContain("border");
-    expect(scopeRow.className).toContain("justify-center");
-    expect(drawerPill.className).toContain("rounded-full");
-    expect(drawerPanel.className).toContain("w-fit");
-    expect(drawerPanel.className).toContain("max-w-full");
-    expect(drawerPanel.className).not.toContain("glass");
+    expect(familyStrip).not.toBeNull();
+    expect(familyStrip.className).toContain("inline-flex");
+    expect(familyStrip.className).toContain("rounded-full");
+    expect(inlineDrawer).not.toBeNull();
+    expect(inlineDrawer.className).toContain("rounded-2xl");
+    expect(inlineDrawer.className).toContain("bg-black/40");
   });
 
   it("uses rookie as the first drawer step for the non-mazda families", async () => {
@@ -679,7 +557,6 @@ describe("NewsTab", () => {
       expect(screen.getByRole("button", { name: "Rookie" })).toBeInTheDocument();
       expect(screen.getByRole("button", { name: "Cup" })).toBeInTheDocument();
     });
-    expect(screen.queryByRole("button", { name: "Toyota" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "BMW" }));
     await waitFor(() => {
@@ -715,7 +592,6 @@ describe("NewsTab", () => {
     await screen.findByRole("button", { name: "Cup" });
 
     mockInvoke.mockClear();
-
     fireEvent.click(screen.getByRole("button", { name: "Cup" }));
 
     await waitFor(() => {
@@ -737,7 +613,6 @@ describe("NewsTab", () => {
     await screen.findByRole("button", { name: "Okayama" });
 
     mockInvoke.mockClear();
-
     fireEvent.click(screen.getByRole("button", { name: "Cup" }));
 
     await waitFor(() => {
@@ -759,7 +634,6 @@ describe("NewsTab", () => {
     await screen.findByRole("button", { name: "Mazda" });
 
     mockInvoke.mockClear();
-
     fireEvent.click(screen.getAllByRole("button", { name: "Mazda" })[0]);
     fireEvent.click(screen.getByRole("button", { name: "Production" }));
 
@@ -780,7 +654,6 @@ describe("NewsTab", () => {
     await screen.findByRole("button", { name: "GT3" });
 
     mockInvoke.mockClear();
-
     fireEvent.click(screen.getByRole("button", { name: "GT3" }));
     fireEvent.click(screen.getByRole("button", { name: "Endurance" }));
 
