@@ -433,6 +433,37 @@ pub fn update_team_duel_counters(
     Ok(())
 }
 
+pub fn update_team_finance_snapshot(
+    conn: &Connection,
+    team: &Team,
+) -> Result<(), DbError> {
+    let affected = conn.execute(
+        "UPDATE teams
+         SET cash_balance = ?1,
+             debt_balance = ?2,
+             financial_state = ?3,
+             season_strategy = ?4,
+             last_round_income = ?5,
+             last_round_expenses = ?6,
+             last_round_net = ?7,
+             parachute_payment_remaining = ?8
+         WHERE id = ?9",
+        params![
+            team.cash_balance,
+            team.debt_balance,
+            &team.financial_state,
+            &team.season_strategy,
+            team.last_round_income,
+            team.last_round_expenses,
+            team.last_round_net,
+            team.parachute_payment_remaining,
+            &team.id,
+        ],
+    )?;
+    ensure_team_rows_affected(affected, &team.id, "atualizar snapshot financeiro da equipe")?;
+    Ok(())
+}
+
 pub fn remove_pilot_from_team(
     conn: &Connection,
     driver_id: &str,

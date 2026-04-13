@@ -15,6 +15,7 @@ use crate::db::queries::drivers as driver_queries;
 use crate::db::queries::teams as team_queries;
 use crate::generators::ids::{next_id, IdType};
 use crate::market::car_build_strategy::choose_car_build_profile;
+use crate::finance::state::{choose_season_strategy, refresh_team_financial_state};
 use crate::market::pipeline::run_market;
 use crate::market::pit_strategy::{
     recalculate_pit_crew_quality, recalculate_pit_strategy_risk, PreviousTeamStanding,
@@ -469,6 +470,8 @@ fn assign_seasonal_team_attributes(
             updated_team.budget =
                 (updated_team.budget - profile_budget_cost(updated_team.car_build_profile))
                     .clamp(0.0, 100.0);
+            updated_team.season_strategy = choose_season_strategy(&updated_team).to_string();
+            refresh_team_financial_state(&mut updated_team);
             team_queries::update_team(conn, &updated_team).map_err(|e| {
                 format!(
                     "Falha ao salvar perfil sazonal do carro para equipe {}: {e}",
@@ -1686,6 +1689,11 @@ mod tests {
             updated_team_a.pit_crew_quality,
             updated_team_b.pit_crew_quality
         );
+        assert_eq!(updated_team_a.season_strategy, "balanced");
+        assert!(matches!(
+            updated_team_b.season_strategy.as_str(),
+            "all_in" | "survival" | "austerity"
+        ));
     }
 
     #[test]

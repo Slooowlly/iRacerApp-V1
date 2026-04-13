@@ -24,6 +24,9 @@ use crate::event_interest::{
 };
 use crate::models::injury::Injury;
 use crate::models::season::Season;
+use crate::finance::cashflow::{apply_round_cashflow, TeamRoundFinanceContext};
+use crate::finance::events::debt_service;
+use crate::finance::state::refresh_team_financial_state;
 use crate::simulation::batch::{
     BriefRaceResult, CategorySimResult, SimHighlight, SimultaneousResults,
 };
@@ -714,6 +717,7 @@ fn apply_race_result_to_database(
     result: &RaceResult,
     teams: &[Team],
 ) -> Result<(), DbError> {
+    let active_contracts = contract_queries::get_all_active_regular_contracts(tx)?;
     for race_driver in &result.race_results {
         let mut driver = driver_queries::get_driver(tx, &race_driver.pilot_id)?;
         let mut season_stats = driver.stats_temporada.clone();
@@ -758,6 +762,13 @@ fn apply_race_result_to_database(
     }
 
     let race_results_by_team = group_results_by_team(result);
+    let category_id = teams
+        .first()
+        .map(|team| team.categoria.as_str())
+        .unwrap_or("");
+    let rounds_in_season = get_category_config(category_id)
+        .map(|config| f64::from(config.corridas_por_temporada.max(1)))
+        .unwrap_or(1.0);
     for team in teams {
         let Some(team_results) = race_results_by_team.get(&team.id) else {
             continue;
@@ -797,6 +808,44 @@ fn apply_race_result_to_database(
             team.stats_pontos + added_points,
             current_best.min(best_result),
         )?;
+
+        let team_salary_total: f64 = active_contracts
+            .iter()
+            .filter(|contract| contract.equipe_id == team.id)
+            .map(|contract| contract.salario_anual)
+            .sum();
+        let salary_expense = team_salary_total / rounds_in_season;
+        let sponsorship_income = 18_000.0 + team.reputacao * 420.0 + team.budget * 215.0;
+        let result_bonus = added_points as f64 * 650.0
+            + added_victories as f64 * 4_000.0
+            + added_podiums as f64 * 1_250.0
+            + if best_result <= 5 { 1_000.0 } else { 0.0 };
+        let partial_prize_income = added_points as f64 * 120.0;
+        let aid_income = team.parachute_payment_remaining.min(25_000.0);
+        let event_operations_cost = 11_000.0 + team.facilities * 140.0 + team.engineering * 95.0;
+        let structural_maintenance_cost =
+            4_500.0 + team.facilities * 65.0 + team.engineering * 60.0 + team.pit_crew_quality * 35.0;
+        let technical_investment_cost =
+            6_000.0 + team.budget * 160.0 + team.car_performance.max(0.0) * 900.0;
+        let debt_service_cost = debt_service(team.debt_balance, 0.015);
+
+        let mut updated_team = team.clone();
+        apply_round_cashflow(
+            &mut updated_team,
+            TeamRoundFinanceContext {
+                sponsorship_income,
+                result_bonus,
+                partial_prize_income,
+                aid_income,
+                salary_expense,
+                event_operations_cost,
+                structural_maintenance_cost,
+                technical_investment_cost,
+                debt_service_cost,
+            },
+        );
+        refresh_team_financial_state(&mut updated_team);
+        team_queries::update_team_finance_snapshot(tx, &updated_team)?;
     }
 
     Ok(())
@@ -1272,6 +1321,67 @@ mod tests {
 
         let driver = driver_queries::get_player_driver(&updated_db.conn).expect("player driver");
         assert!(driver.stats_temporada.corridas >= 1);
+
+        let _ = fs::remove_dir_all(base_dir);
+    }
+
+    #[test]
+    fn test_simulate_race_weekend_updates_team_finance_snapshot() {
+        let base_dir = unique_test_dir("simulate_team_finance");
+        fs::create_dir_all(&base_dir).expect("base dir");
+
+        create_career_in_base_dir(
+            &base_dir,
+            CreateCareerInput {
+                player_name: "Joao Silva".to_string(),
+                player_nationality: "br".to_string(),
+                player_age: Some(20),
+                category: "mazda_rookie".to_string(),
+                team_index: 0,
+                difficulty: "medio".to_string(),
+            },
+        )
+        .expect("career");
+
+        let config = AppConfig::load_or_default(&base_dir);
+        let db_path = config.saves_dir().join("career_001").join("career.db");
+        let db = Database::open_existing(&db_path).expect("db");
+        let season = season_queries::get_active_season(&db.conn)
+            .expect("season")
+            .expect("active season");
+        let player = driver_queries::get_player_driver(&db.conn).expect("player");
+        let contract = contract_queries::get_active_regular_contract_for_pilot(&db.conn, &player.id)
+            .expect("active contract")
+            .expect("player contract");
+        let team_before = team_queries::get_team_by_id(&db.conn, &contract.equipe_id)
+            .expect("team before")
+            .expect("existing team before");
+        let next_race = get_next_race(&db.conn, &season.id, "mazda_rookie")
+            .expect("next race")
+            .expect("pending race");
+        drop(db);
+
+        simulate_race_weekend_in_base_dir(&base_dir, "career_001", &next_race.id)
+            .expect("simulate");
+
+        let updated_db = Database::open_existing(&db_path).expect("updated db");
+        let team_after = team_queries::get_team_by_id(&updated_db.conn, &contract.equipe_id)
+            .expect("team after")
+            .expect("existing team after");
+
+        assert_ne!(team_after.cash_balance, team_before.cash_balance);
+        assert!(
+            team_after.last_round_income > 0.0,
+            "team should record round income"
+        );
+        assert!(
+            team_after.last_round_expenses > 0.0,
+            "team should record round expenses"
+        );
+        assert_eq!(
+            team_after.last_round_net,
+            team_after.last_round_income - team_after.last_round_expenses
+        );
 
         let _ = fs::remove_dir_all(base_dir);
     }
