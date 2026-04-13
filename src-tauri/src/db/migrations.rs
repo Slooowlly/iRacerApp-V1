@@ -4,7 +4,7 @@ use crate::db::connection::DbError;
 
 // ── Versão atual do schema ────────────────────────────────────────────────────
 
-const CURRENT_VERSION: u32 = 22;
+const CURRENT_VERSION: u32 = 23;
 
 // ── API pública ───────────────────────────────────────────────────────────────
 
@@ -32,6 +32,7 @@ pub fn run_all(conn: &Connection) -> Result<(), DbError> {
     migrate_v20(conn)?;
     migrate_v21(conn)?;
     migrate_v22(conn)?;
+    migrate_v23(conn)?;
     set_schema_version(conn, CURRENT_VERSION)?;
     Ok(())
 }
@@ -126,6 +127,10 @@ pub fn run_pending(conn: &Connection) -> Result<(), DbError> {
     if version < 22 {
         migrate_v22(conn)?;
         set_schema_version(conn, 22)?;
+    }
+    if version < 23 {
+        migrate_v23(conn)?;
+        set_schema_version(conn, 23)?;
     }
     Ok(())
 }
@@ -1369,6 +1374,28 @@ fn migrate_v22(conn: &Connection) -> Result<(), DbError> {
 
         DROP TABLE standings_old;
         ",
+    )?;
+
+    Ok(())
+}
+
+fn migrate_v23(conn: &Connection) -> Result<(), DbError> {
+    if !table_exists(conn, "teams")? {
+        return Ok(());
+    }
+
+    ensure_column(
+        conn,
+        "teams",
+        "car_build_profile",
+        "TEXT NOT NULL DEFAULT 'balanced'",
+    )?;
+
+    conn.execute(
+        "UPDATE teams
+         SET car_build_profile = 'balanced'
+         WHERE car_build_profile IS NULL OR TRIM(car_build_profile) = ''",
+        [],
     )?;
 
     Ok(())
@@ -2850,17 +2877,19 @@ mod tests {
         assert!(column_exists(&conn, "teams", "stats_pontos"));
         assert!(column_exists(&conn, "teams", "historico_vitorias"));
         assert!(column_exists(&conn, "teams", "updated_at"));
+        assert!(column_exists(&conn, "teams", "car_build_profile"));
 
-        let row: (String, i64, i64, i64) = conn
+        let row: (String, i64, i64, i64, String) = conn
             .query_row(
-                "SELECT nome_curto, stats_vitorias, stats_pontos, historico_vitorias
+                "SELECT nome_curto, stats_vitorias, stats_pontos, historico_vitorias, car_build_profile
                  FROM teams WHERE id = 'T001'",
                 [],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
             )
             .expect("migrated row");
 
         assert_eq!(row.0, "Equipe Legada");
+        assert_eq!(row.4, "balanced");
         assert_eq!(row.1, 3);
         assert_eq!(row.2, 42);
         assert_eq!(row.3, 9);

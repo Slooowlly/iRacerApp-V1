@@ -39,6 +39,19 @@ impl CarBuildProfile {
             _ => Self::Balanced,
         }
     }
+
+    pub fn from_str_strict(value: &str) -> Result<Self, String> {
+        match value.trim().to_lowercase().as_str() {
+            "balanced" => Ok(Self::Balanced),
+            "acceleration_intermediate" => Ok(Self::AccelerationIntermediate),
+            "power_intermediate" => Ok(Self::PowerIntermediate),
+            "handling_intermediate" => Ok(Self::HandlingIntermediate),
+            "acceleration_extreme" => Ok(Self::AccelerationExtreme),
+            "power_extreme" => Ok(Self::PowerExtreme),
+            "handling_extreme" => Ok(Self::HandlingExtreme),
+            other => Err(format!("CarBuildProfile invalido: '{other}'")),
+        }
+    }
 }
 
 pub fn weights_for_profile(profile: CarBuildProfile) -> CarAttributeWeights {

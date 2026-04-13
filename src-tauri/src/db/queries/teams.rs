@@ -4,13 +4,14 @@ use rusqlite::{params, types::FromSql, Connection, OptionalExtension};
 
 use crate::db::connection::DbError;
 use crate::models::team::{placeholder_team_from_db, Team, TeamHierarchyClimate};
+use crate::simulation::car_build::CarBuildProfile;
 
 pub fn insert_team(conn: &Connection, team: &Team) -> Result<(), DbError> {
     conn.execute(
         "INSERT INTO teams (
             id, nome, nome_curto, cor_primaria, cor_secundaria, pais_sede,
             ano_fundacao, categoria, ativa, marca, classe, piloto_1_id, piloto_2_id,
-            is_player_team, car_performance, reliability, budget, facilities,
+            is_player_team, car_performance, car_build_profile, reliability, budget, facilities,
             engineering, prestige, morale, aerodinamica, motor, chassi,
             hierarquia_n1_id, hierarquia_n2_id, hierarquia_status, hierarquia_tensao,
             hierarquia_duelos_total, hierarquia_duelos_n2_vencidos, hierarquia_sequencia_n2,
@@ -24,7 +25,7 @@ pub fn insert_team(conn: &Connection, team: &Team) -> Result<(), DbError> {
         ) VALUES (
             :id, :nome, :nome_curto, :cor_primaria, :cor_secundaria, :pais_sede,
             :ano_fundacao, :categoria, :ativa, :marca, :classe, :piloto_1_id, :piloto_2_id,
-            :is_player_team, :car_performance, :reliability, :budget, :facilities,
+            :is_player_team, :car_performance, :car_build_profile, :reliability, :budget, :facilities,
             :engineering, :prestige, :morale, :aerodinamica, :motor, :chassi,
             :hierarquia_n1_id, :hierarquia_n2_id, :hierarquia_status, :hierarquia_tensao,
             :hierarquia_duelos_total, :hierarquia_duelos_n2_vencidos, :hierarquia_sequencia_n2,
@@ -52,6 +53,7 @@ pub fn insert_team(conn: &Connection, team: &Team) -> Result<(), DbError> {
             ":piloto_2_id": &team.piloto_2_id,
             ":is_player_team": team.is_player_team as i64,
             ":car_performance": team.car_performance,
+            ":car_build_profile": team.car_build_profile.as_str(),
             ":reliability": team.confiabilidade,
             ":budget": team.budget,
             ":facilities": team.facilities,
@@ -186,6 +188,7 @@ pub fn update_team(conn: &Connection, team: &Team) -> Result<(), DbError> {
             piloto_2_id = :piloto_2_id,
             is_player_team = :is_player_team,
             car_performance = :car_performance,
+            car_build_profile = :car_build_profile,
             reliability = :reliability,
             budget = :budget,
             facilities = :facilities,
@@ -242,6 +245,7 @@ pub fn update_team(conn: &Connection, team: &Team) -> Result<(), DbError> {
             ":piloto_2_id": &team.piloto_2_id,
             ":is_player_team": team.is_player_team as i64,
             ":car_performance": team.car_performance,
+            ":car_build_profile": team.car_build_profile.as_str(),
             ":reliability": team.confiabilidade,
             ":budget": team.budget,
             ":facilities": team.facilities,
@@ -521,6 +525,18 @@ fn team_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Team> {
 
     team.is_player_team = optional_column::<i64>(row, "is_player_team")?.unwrap_or(0) != 0;
     team.car_performance = optional_column::<f64>(row, "car_performance")?.unwrap_or(50.0);
+    team.car_build_profile = optional_column::<String>(row, "car_build_profile")?
+        .map(|value| {
+            CarBuildProfile::from_str_strict(&value).map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    0,
+                    rusqlite::types::Type::Text,
+                    Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, error)),
+                )
+            })
+        })
+        .transpose()?
+        .unwrap_or(CarBuildProfile::Balanced);
     team.confiabilidade = optional_column::<f64>(row, "reliability")?.unwrap_or(50.0);
     team.budget = optional_column::<f64>(row, "budget")?.unwrap_or(50.0);
     team.facilities = optional_column::<f64>(row, "facilities")?.unwrap_or(50.0);
@@ -740,6 +756,7 @@ mod tests {
         assert_eq!(loaded.pais_sede, team.pais_sede);
         assert_eq!(loaded.piloto_1_id.as_deref(), Some("P001"));
         assert_eq!(loaded.piloto_2_id.as_deref(), Some("P002"));
+        assert_eq!(loaded.car_build_profile, team.car_build_profile);
         assert_eq!(loaded.hierarquia_n1_id.as_deref(), Some("P001"));
         assert_eq!(loaded.hierarquia_n2_id.as_deref(), Some("P002"));
         assert_eq!(loaded.hierarquia_status, "competitivo");
@@ -952,6 +969,28 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_legacy_team_row_without_car_build_profile_falls_back_to_balanced() {
+        let conn = Connection::open_in_memory().expect("legacy db");
+        conn.execute_batch(
+            "CREATE TABLE teams (
+                id TEXT PRIMARY KEY,
+                nome TEXT NOT NULL,
+                categoria TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT ''
+            );
+            INSERT INTO teams (id, nome, categoria, created_at)
+            VALUES ('T_OLD', 'Equipe Legada', 'gt3', '2026-01-01');",
+        )
+        .expect("legacy schema");
+
+        let loaded = get_team_by_id(&conn, "T_OLD")
+            .expect("query team")
+            .expect("team should exist");
+
+        assert_eq!(loaded.car_build_profile, CarBuildProfile::Balanced);
+    }
+
     fn sample_team(category_id: &str, team_id: &str) -> Team {
         let template = get_team_templates(category_id)[0];
         let mut rng = StdRng::seed_from_u64(55);
@@ -977,6 +1016,7 @@ mod tests {
                 piloto_2_id TEXT,
                 is_player_team INTEGER NOT NULL DEFAULT 0,
                 car_performance REAL NOT NULL DEFAULT 0.0,
+                car_build_profile TEXT NOT NULL DEFAULT 'balanced',
                 reliability REAL NOT NULL DEFAULT 60.0,
                 budget REAL NOT NULL DEFAULT 50.0,
                 facilities REAL NOT NULL DEFAULT 50.0,

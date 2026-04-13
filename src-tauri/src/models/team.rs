@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::constants::categories::get_category_config;
 use crate::constants::teams::{get_team_templates, TeamTemplate};
+use crate::simulation::car_build::CarBuildProfile;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TeamHierarchyClimate {
@@ -89,6 +90,7 @@ pub struct Team {
     pub piloto_1_id: Option<String>,
     pub piloto_2_id: Option<String>,
     pub car_performance: f64,
+    pub car_build_profile: CarBuildProfile,
     pub confiabilidade: f64,
     pub budget: f64,
     pub facilities: f64,
@@ -169,6 +171,7 @@ impl Team {
                 -5.0,
                 16.0,
             ),
+            car_build_profile: CarBuildProfile::Balanced,
             confiabilidade: clamp_f64(60.0 + rng.gen_range(-10.0..=10.0), 0.0, 100.0),
             budget: clamp_f64(template.budget_base + rng.gen_range(-5.0..=5.0), 0.0, 100.0),
             facilities: clamp_f64(50.0 + rng.gen_range(-10.0..=15.0), 0.0, 100.0),
@@ -282,6 +285,7 @@ pub fn placeholder_team_from_db(
         piloto_1_id: None,
         piloto_2_id: None,
         car_performance: 50.0,
+        car_build_profile: CarBuildProfile::Balanced,
         confiabilidade: 50.0,
         budget: 0.0,
         facilities: 0.0,
@@ -378,6 +382,7 @@ mod tests {
         assert_eq!(team.morale, 1.0);
         assert_eq!(team.hierarquia_status, "estavel");
         assert_eq!(team.hierarquia_tensao, 0.0);
+        assert_eq!(team.car_build_profile, CarBuildProfile::Balanced);
         assert_eq!(team.stats_vitorias, 0);
         assert_eq!(team.stats_podios, 0);
         assert_eq!(team.stats_poles, 0);
