@@ -97,6 +97,14 @@ pub fn track_delta(profile: CarBuildProfile, track_weights: CarAttributeWeights)
     (track_advantage(profile, track_weights) / 2.5).clamp(-6.0, 6.0)
 }
 
+pub fn effective_car_performance(
+    base_car_performance: f64,
+    profile: CarBuildProfile,
+    track_weights: CarAttributeWeights,
+) -> f64 {
+    base_car_performance + track_delta(profile, track_weights)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

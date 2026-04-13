@@ -486,7 +486,11 @@ pub(crate) fn simulate_category_race(
         .iter()
         .filter(|d| d.status != crate::models::enums::DriverStatus::Lesionado)
         .filter_map(|driver| match team_by_driver.get(&driver.id) {
-            Some(team) => Some(SimDriver::from_driver_and_team(driver, team)),
+            Some(team) => Some(SimDriver::from_driver_team_and_track(
+                driver,
+                team,
+                race_entry.track_id,
+            )),
             None => {
                 orphaned_drivers.push(format!("{} ({})", driver.nome, driver.id));
                 None

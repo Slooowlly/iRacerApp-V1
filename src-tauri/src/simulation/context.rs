@@ -6,9 +6,10 @@ use crate::models::driver::Driver;
 use crate::models::enums::WeatherCondition;
 use crate::models::team::Team;
 
+use super::car_build::effective_car_performance;
 use super::catalog::{vehicle_class_from_category, VehicleClass};
 use super::profile::resolve_simulation_profile;
-use super::track_profile::{pack_density_factor, TrackCharacter};
+use super::track_profile::{get_track_simulation_data, pack_density_factor, TrackCharacter};
 
 #[derive(Debug, Clone)]
 pub struct SimulationContext {
@@ -176,6 +177,19 @@ impl SimDriver {
             corridas_na_categoria: driver.corridas_na_categoria as i32,
         }
     }
+
+    pub fn from_driver_team_and_track(driver: &Driver, team: &Team, track_id: u32) -> Self {
+        let track = get_track_simulation_data(track_id);
+        let track_weights = (
+            track.acceleration_weight,
+            track.power_weight,
+            track.handling_weight,
+        );
+        let mut sim_driver = Self::from_driver_and_team(driver, team);
+        sim_driver.car_performance =
+            effective_car_performance(team.car_performance, team.car_build_profile, track_weights);
+        sim_driver
+    }
 }
 
 fn as_u8(value: f64) -> u8 {
@@ -294,5 +308,49 @@ mod tests {
         assert_eq!(sim_driver.gestao_pneus, 61);
         assert_eq!(sim_driver.car_reliability, team.confiabilidade);
         assert_eq!(sim_driver.corridas_na_categoria, 7);
+    }
+
+    #[test]
+    fn test_sim_driver_uses_track_adjusted_car_performance_when_profile_matches() {
+        let driver = Driver::create_player(
+            "P002".to_string(),
+            "Carlos Match".to_string(),
+            "Brasileiro".to_string(),
+            20,
+        );
+        let mut team = placeholder_team_from_db(
+            "T002".to_string(),
+            "Team Match".to_string(),
+            "gt3".to_string(),
+            "2026-01-01T00:00:00".to_string(),
+        );
+        team.car_performance = 8.0;
+        team.car_build_profile = crate::simulation::car_build::CarBuildProfile::PowerExtreme;
+
+        let sim_driver = SimDriver::from_driver_team_and_track(&driver, &team, 93);
+
+        assert!(sim_driver.car_performance > team.car_performance);
+    }
+
+    #[test]
+    fn test_sim_driver_uses_track_adjusted_car_performance_when_profile_is_wrong() {
+        let driver = Driver::create_player(
+            "P003".to_string(),
+            "Carlos Mismatch".to_string(),
+            "Brasileiro".to_string(),
+            20,
+        );
+        let mut team = placeholder_team_from_db(
+            "T003".to_string(),
+            "Team Mismatch".to_string(),
+            "gt3".to_string(),
+            "2026-01-01T00:00:00".to_string(),
+        );
+        team.car_performance = 8.0;
+        team.car_build_profile = crate::simulation::car_build::CarBuildProfile::PowerExtreme;
+
+        let sim_driver = SimDriver::from_driver_team_and_track(&driver, &team, 325);
+
+        assert!(sim_driver.car_performance < team.car_performance);
     }
 }
